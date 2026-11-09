@@ -8,3 +8,7 @@ dist/
 /*.sql.zip
 /backups/
 /supply-docker-private/
+
+# Cachés de Python generadas por pruebas locales
+__pycache__/
+*.pyc

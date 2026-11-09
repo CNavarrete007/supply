@@ -33,11 +33,24 @@ docker volume ls --filter name=supply
 
 ## 3. Dos caminos distintos
 
-### A. Traslado fiel de la PC anterior (conserva usuarios, clientes, requisiciones)
-1. En la PC **anterior**, con la app detenida pero `db` en marcha, generar un respaldo lógico **posterior a INT03** (77 tablas) que incluya datos de `supplyflow_dev` **y**, por separado, la definición de las 4 cuentas `supplyflow_*` con sus grants (`SHOW GRANTS`), porque un dump de `supplyflow_dev` no incluye el esquema `mysql`. Requiere tu autorización explícita; no lo ejecuto yo.
-2. Copiar de forma segura (USB cifrada / canal privado, nunca Git ni chat): respaldo, directorio privado completo (`secrets/`, `evidence/`, `imports/…/files`, y `writable/supplyflow_rf1/files` del volumen `supply_supplyflow_api_writable` si hay evidencias RF1/R2 cargadas).
-3. En la PC nueva: arrancar **solo** `db` (paso 4.3) sobre volumen vacío, restaurar el respaldo, recrear las 4 cuentas con las **mismas** contraseñas de los archivos secretos y verificar con `docs/int03/verificar_cuentas_sql_SOLO_LECTURA.sql` (77 / 52 / 27 / 10+2). **No** ejecutar migraciones R3, `Provision` RF1 ni `auth_tool.py` sobre esa base.
-4. Si solo existe el respaldo **previo** a INT03 (74/38): restaurarlo y aplicar las 3 migraciones **una única vez** con un procedimiento validado y autorizado; no improvisar.
+### A. Traslado fiel de la PC anterior (conserva usuarios, clientes, requisiciones) — AUTOMATIZADO
+Herramientas versionadas (perfil Compose `int03-tools`, contenedores **sin red**, socket local):
+
+| Servicio | Archivo | Qué hace |
+|---|---|---|
+| `int03-dump-inspect` | `docker/supply-int03/dump_inspect.py` | Solo lectura: SHA-256, codificación (bloquea UTF-16), 77 tablas, R3C1-HF2/R3C2/R3C3, marcador de volcado completo, sin cuentas SQL. No imprime datos. |
+| `int03-restore-tools` | `docker/supply-int03/restore.sh` | Misma imagen fijada de MariaDB; restaura `backups\<archivo>.sql` (montado en solo lectura) **solo si `supplyflow_dev` no existe**; verifica 77 tablas. Sin copias temporales. |
+| `int03-accounts-tools` | `docker/supply-int03/accounts.py` | `inspect` / `provision` / `verify` de las 4 cuentas con contrato 77/52 (api SELECT de esquema, auth 10+2, reqwrite 27, recovery 52). Solo crea lo que falta; se detiene si hay otra contraseña, otro host o permisos de más. Sustituye a `auth_tool.py` (74/17) y `Provision` RF1 (38/74) para bases de 77 tablas. |
+
+Procedimiento en Windows (desde `C:\Dev\supply`):
+1. Mover el respaldo a `C:\Dev\supply-docker-private\backups\supplyflow_dev.sql` (fuera del proyecto).
+2. `powershell -ExecutionPolicy Bypass -File .\SupplyFlow-Restore-INT03.ps1 -Phase Inspect` (solo lectura).
+3. `... -Phase Restore -Confirmar` → levanta solo `db` en volumen vacío, restaura, crea cuentas y verifica 77/52.
+4. `... -Phase Start` → verifica 77/52, levanta `api frontend web` con los 7 archivos y comprueba 200/200/401.
+
+Si solo existe un respaldo **previo** a INT03 (74 tablas), el inspector lo bloquea: requiere migrar una única vez con autorización, no este flujo.
+
+Validación (9 nov 2026, entorno de nube con Docker real y la composición de 7 archivos, datos sintéticos): PC anterior simulada con esquema + 3 migraciones + `mariadb-dump` 11.8.9 → inspector PASS (y BLOCKED para UTF-16, truncado y 74 tablas) → restauración en proyecto `supply` vacío PASS, segunda restauración BLOCKED → cuentas 52/27/10+2 CREATED, repetición EXISTING_VERIFIED, permiso extra o contraseña distinta BLOCKED → **CHECKSUM TABLE idéntico 77/77** → API y UI sobre la base restaurada: HTTP 35/35, UI 24/24. No ejecutado aquí: el script `.ps1` en sí (sin PowerShell en este entorno; sus comandos equivalentes sí) y la compilación de las imágenes `api`/`frontend` (red de la nube sin Debian/getcomposer).
 
 ### B. Instalación nueva con datos sintéticos (para desarrollo sin datos de clientes)
 Base vacía → `01_schema.sql` + 3 migraciones → cuentas mínimas (incluido el contrato 52) → semilla ficticia. Es exactamente lo que automatiza el arnés `tests/int03d1/sandbox_sql.py` (solo para bases vacías y desechables). Nunca mezclarlo con la base comercial.

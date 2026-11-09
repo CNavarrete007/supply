@@ -66,6 +66,10 @@ Continuar el desarrollo real de SupplyFlow (módulo de Compras de Grupo Gerez), 
 
 La variable `SUPPLYFLOW_LOCAL_PRIVATE_DIR` apunta a un directorio externo al proyecto con `secrets/mariadb-root.txt`, `secrets/api-db-password.txt`, `secrets/auth-db-password.txt`, `secrets/reqwrite-db-password.txt`, `secrets/recovery-db-password.txt`, además de `evidence/` e `imports/.../files` para los documentos. El overlay de recuperación tiene una ruta de importación con identificador fijo; comprobar que existe antes de iniciar. Restaurar/configurar secretos de forma segura fuera del ZIP. Si las contraseñas se regeneran, reconciliarlas con cuentas SQL; no asumir que un dump de `supplyflow_dev` incluye usuarios/grants almacenados en el esquema `mysql`.
 
+### Traslado fiel automatizado (INT03, 9 nov. 2026)
+
+Para restaurar un respaldo posterior a INT03 en una PC sin volumen de base usar `SupplyFlow-Restore-INT03.ps1` (`-Phase Inspect`, `Restore -Confirmar`, `Start`) y las herramientas `docker/supply-int03/` (perfil Compose `int03-tools`). `accounts.py` es el contrato vigente 77/52; **no** usar `auth_tool.py` ni `docker/supply-recovery/provision.py` sobre 77 tablas. El respaldo va en `SUPPLYFLOW_LOCAL_PRIVATE_DIR\backups\`, nunca en el proyecto (`.gitignore` ignora `/*.sql`). Guía: `docs/int03/INT03_ARRANQUE_Y_D1.md`.
+
 ### Precondiciones en Windows
 
 - Docker Desktop con motor **Linux**, WSL2 configurado y Compose moderno compatible con `!override` (el proyecto exige al menos Compose 2.24.4). No se requiere Node o PHP de Windows: las aplicaciones se ejecutan en contenedores.

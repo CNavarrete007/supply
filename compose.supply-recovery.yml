@@ -49,6 +49,82 @@ services:
     read_only: true
     network_mode: none
     tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+  # INT03: cuentas SQL 77/52 para una base YA migrada/restaurada. Perfil explicito, sin red.
+  # NO ejecutar recovery-db-tools (38/74) ni auth-db-tools (74/17) sobre una base de 77 tablas.
+  int03-accounts-tools:
+    profiles: ["int03-tools"]
+    build:
+      context: ./docker/supply-dev/db-provision
+      dockerfile: Dockerfile
+    entrypoint: ["python", "/docker/supply-int03/accounts.py"]
+    environment: { PYTHONDONTWRITEBYTECODE: "1", PYTHONUNBUFFERED: "1", TZ: UTC }
+    volumes:
+      - type: volume
+        source: supplyflow_db_socket
+        target: /run/mysqld
+        read_only: true
+      - type: bind
+        source: ./docker
+        target: /docker
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Private directory required}/secrets
+        target: /run/supply-secrets
+        read_only: true
+        bind: { create_host_path: false }
+    read_only: true
+    network_mode: none
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+  # INT03: inspeccion SOLO LECTURA de backups/<archivo>.sql (no imprime datos). Sin red ni base.
+  int03-dump-inspect:
+    profiles: ["int03-tools"]
+    build:
+      context: ./docker/supply-dev/db-provision
+      dockerfile: Dockerfile
+    entrypoint: ["python", "-I", "/docker/supply-int03/dump_inspect.py"]
+    environment: { PYTHONDONTWRITEBYTECODE: "1", PYTHONUNBUFFERED: "1", TZ: UTC }
+    volumes:
+      - type: bind
+        source: ./docker
+        target: /docker
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Private directory required}/backups
+        target: /backups
+        read_only: true
+        bind: { create_host_path: false }
+    read_only: true
+    network_mode: none
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+  # INT03: restaura un respaldo en un servidor SIN supplyflow_dev. Misma imagen fijada que db,
+  # sin red, socket local y backups/ en solo lectura. Nunca sobrescribe una base existente.
+  int03-restore-tools:
+    profiles: ["int03-tools"]
+    image: mariadb:11.8.9@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa
+    entrypoint: ["sh", "/docker/supply-int03/restore.sh"]
+    environment: { TZ: UTC }
+    secrets:
+      - root_password
+    volumes:
+      - type: volume
+        source: supplyflow_db_socket
+        target: /run/mysqld
+        read_only: true
+      - type: bind
+        source: ./docker
+        target: /docker
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Private directory required}/backups
+        target: /backups
+        read_only: true
+        bind: { create_host_path: false }
+    read_only: true
+    network_mode: none
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
 secrets:
   recovery_db_password:
     file: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Private directory required}/secrets/recovery-db-password.txt
