@@ -110,8 +110,9 @@ function Test-Inspect {
   if ($vol) { Fail "Ya existe el volumen $vol. Restore solo se ejecuta sin volumen de base (no se restaura encima)." }
   if (-not $db -and -not $vol) { Say 'OK' 'Sin contenedor ni volumen de base: se puede restaurar en limpio' }
 
-  Say 'INFO' 'Analizando el respaldo (solo estructura; puede construir la imagen de herramientas la primera vez)...'
-  $r = Invoke-Json @('--profile', 'int03-tools', 'run', '--rm', 'int03-dump-inspect', "/backups/$Dump")
+  Build-Tools
+  Say 'INFO' 'Analizando el respaldo (solo estructura, sin mostrar datos)...'
+  $r = Invoke-Json @('--profile', 'int03-tools', 'run', '-T', '--rm', 'int03-dump-inspect', "/backups/$Dump")
   if (-not $r.Json) { Fail "No se pudo analizar el respaldo. Salida: $($r.Text)"; return $false }
   $d = $r.Json
   Say 'INFO' ("Respaldo: {0:N0} bytes - SHA-256 {1}" -f $d.size_bytes, $d.sha256)
@@ -121,6 +122,13 @@ function Test-Inspect {
   Say 'OK' 'Respaldo apto: 77 tablas, R3C1-HF2/R3C2/R3C3, UTF-8, completo, sin cuentas SQL'
   if ($script:Problems.Count) { return $false }
   return [bool]$true
+}
+
+function Build-Tools {
+  # Build in the console (not captured): BuildKit needs a real console on Windows.
+  Say 'INFO' 'Preparando imagenes de herramientas int03 (la primera vez descarga dependencias)...'
+  & docker @Compose --profile int03-tools build int03-dump-inspect int03-accounts-tools
+  if ($LASTEXITCODE -ne 0) { Stop-Blocked 'No se pudieron construir las imagenes de herramientas int03.' }
 }
 
 function Wait-DbHealthy {
@@ -153,10 +161,10 @@ switch ($Phase) {
     & docker @Compose up -d db
     if ($LASTEXITCODE -ne 0) { Stop-Blocked 'No se pudo iniciar db.' }
     Wait-DbHealthy
-    $r = Invoke-Json @('--profile', 'int03-tools', 'run', '--rm', 'int03-restore-tools', $Dump)
+    $r = Invoke-Json @('--profile', 'int03-tools', 'run', '-T', '--rm', 'int03-restore-tools', $Dump)
     Say 'INFO' $r.Text
     if (-not $r.Json -or $r.Json.result -ne 'PASS') { Stop-Blocked 'La restauracion no termino en PASS. No reintentes; comparte esta salida.' }
-    $a = Invoke-Json @('--profile', 'int03-tools', 'run', '--rm', 'int03-accounts-tools', 'provision')
+    $a = Invoke-Json @('--profile', 'int03-tools', 'run', '-T', '--rm', 'int03-accounts-tools', 'provision')
     if (-not $a.Json -or $a.Json.result -ne 'PASS') { Say 'INFO' $a.Text; Stop-Blocked 'Las cuentas SQL no quedaron conformes al contrato 77/52.' }
     $a.Json.accounts.PSObject.Properties | ForEach-Object { Say 'OK' ('{0}: tabla {1}/{2} - columna {3}/{4} - esquema {5}' -f $_.Name, $_.Value.table_grants, $_.Value.expected_table_grants, $_.Value.column_grants, $_.Value.expected_column_grants, ($_.Value.schema_grants -join ',')) }
     $a.Json.schema.row_counts.PSObject.Properties | ForEach-Object { Say 'INFO' ('filas {0}: {1}' -f $_.Name, $_.Value) }
@@ -167,10 +175,11 @@ switch ($Phase) {
     if (-not (Test-Prereqs $false)) { Stop-Blocked 'Comprobaciones previas no pasaron; no se levanta ningun contenedor.' }
     $vol = & docker volume ls -q --filter "name=^${Project}_supplyflow_db_data$"
     if (-not $vol) { Stop-Blocked 'No existe base restaurada. Ejecuta primero -Phase Inspect y -Phase Restore -Confirmar.' }
+    Build-Tools
     $null = & docker @Compose up -d db
     if ($LASTEXITCODE -ne 0) { Stop-Blocked 'No se pudo iniciar db.' }
     Wait-DbHealthy
-    $a = Invoke-Json @('--profile', 'int03-tools', 'run', '--rm', 'int03-accounts-tools', 'verify')
+    $a = Invoke-Json @('--profile', 'int03-tools', 'run', '-T', '--rm', 'int03-accounts-tools', 'verify')
     if (-not $a.Json -or $a.Json.result -ne 'PASS') { Say 'INFO' $a.Text; Stop-Blocked 'La base/cuentas no cumplen 77/52. No se levanta la aplicacion.' }
     Say 'OK' 'Base 77 tablas y cuentas 52/27/10+2 verificadas'
     Say 'INFO' 'Levantando api, frontend y web (la primera vez npm ci puede tardar varios minutos)...'

@@ -240,7 +240,7 @@ def main() -> int:
                 db.conn.close()
             except Exception:
                 pass
-    print(json.dumps(report, ensure_ascii=False, indent=1, default=sorted))
+    print(json.dumps(report, ensure_ascii=True, indent=1, default=sorted))
     return 0 if report['result'] == 'PASS' else 1
 
 

@@ -108,7 +108,7 @@ def main() -> int:
         print('uso: dump_inspect.py <archivo.sql>', file=sys.stderr)
         return 2
     report = inspect(Path(sys.argv[1]))
-    print(json.dumps(report, ensure_ascii=False, indent=1))
+    print(json.dumps(report, ensure_ascii=True, indent=1))
     return 0 if report['result'] == 'PASS' else 1
 
 
