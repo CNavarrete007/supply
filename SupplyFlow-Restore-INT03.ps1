@@ -43,7 +43,9 @@ function Stop-Blocked([string]$Text) { Say 'BLOCKED' $Text; Write-Host 'Detenido
 
 if (-not $Root) { $Root = (Get-Location).Path }
 $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR = $PrivateDir
-$Compose = @('compose', '-p', $Project, '--project-directory', $Root)
+# Plain progress, no ANSI: PowerShell often pipes native stdout (functions, Invoke-Json); Compose's TTY
+# progress then fails on Windows with 'failed to get console: The handle is invalid'.
+$Compose = @('compose', '--progress', 'plain', '--ansi', 'never', '-p', $Project, '--project-directory', $Root)
 foreach ($f in $Files) { $Compose += @('-f', (Join-Path $Root $f)) }
 
 function Invoke-Json([string[]]$Arguments) {
@@ -127,7 +129,7 @@ function Test-Inspect {
 function Build-Tools {
   # Build in the console (not captured): BuildKit needs a real console on Windows.
   Say 'INFO' 'Preparando imagenes de herramientas int03 (la primera vez descarga dependencias)...'
-  & docker @Compose --profile int03-tools build int03-dump-inspect int03-accounts-tools
+  & docker @Compose --profile int03-tools build int03-dump-inspect int03-accounts-tools | Out-Host
   if ($LASTEXITCODE -ne 0) { Stop-Blocked 'No se pudieron construir las imagenes de herramientas int03.' }
 }
 
@@ -158,7 +160,7 @@ switch ($Phase) {
     if (-not (Test-Inspect)) { Stop-Blocked 'Inspect no paso.' }
     $vol = & docker volume ls -q --filter "name=^${Project}_supplyflow_db_data$"
     if ($vol) { Stop-Blocked "Ya existe $vol. No se restaura encima de una base existente." }
-    & docker @Compose up -d db
+    & docker @Compose up -d db | Out-Host
     if ($LASTEXITCODE -ne 0) { Stop-Blocked 'No se pudo iniciar db.' }
     Wait-DbHealthy
     $r = Invoke-Json @('--profile', 'int03-tools', 'run', '-T', '--rm', 'int03-restore-tools', $Dump)
@@ -183,7 +185,7 @@ switch ($Phase) {
     if (-not $a.Json -or $a.Json.result -ne 'PASS') { Say 'INFO' $a.Text; Stop-Blocked 'La base/cuentas no cumplen 77/52. No se levanta la aplicacion.' }
     Say 'OK' 'Base 77 tablas y cuentas 52/27/10+2 verificadas'
     Say 'INFO' 'Levantando api, frontend y web (la primera vez npm ci puede tardar varios minutos)...'
-    & docker @Compose --profile dev up -d --build api frontend web
+    & docker @Compose --profile dev up -d --build api frontend web | Out-Host
     if ($LASTEXITCODE -ne 0) { Stop-Blocked 'docker compose up fallo. Revisa: docker compose ps -a y logs del servicio.' }
     $checks = @(@('http://localhost:8080/api/v1/health', 200), @('http://localhost:8080/api/v1/ready', 200), @('http://localhost:8080/api/v1/recovery/catalogs', 401))
     $ok = $true
@@ -191,7 +193,7 @@ switch ($Phase) {
       $s = 0; for ($i = 0; $i -lt 30 -and $s -ne $c[1]; $i++) { $s = Get-Status $c[0]; if ($s -ne $c[1]) { Start-Sleep -Seconds 3 } }
       if ($s -eq $c[1]) { Say 'OK' "$($c[0]) -> $s" } else { Say 'BLOCKED' "$($c[0]) -> $s (esperado $($c[1]))"; $ok = $false }
     }
-    & docker @Compose ps -a
+    & docker @Compose ps -a | Out-Host
     if ($ok) { Say 'PASS' 'SupplyFlow en http://localhost:8080 (inicia sesion con tu usuario de la PC anterior).'; exit 0 }
     exit 1
   }
