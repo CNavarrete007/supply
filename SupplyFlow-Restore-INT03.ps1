@@ -55,8 +55,8 @@ function Invoke-Json([string[]]$Arguments) {
   return @{ Code = $code; Json = $json; Text = $text }
 }
 
-function Test-Inspect {
-  Say 'INFO' "Fase Inspect (solo lectura) - proyecto '$Project' - raiz $Root"
+function Test-Prereqs([bool]$NeedDump) {
+  Say 'INFO' "Comprobaciones previas (solo lectura) - proyecto '$Project' - raiz $Root - privado $PrivateDir"
   $null = & docker info --format '{{.OSType}}'
   if ($LASTEXITCODE -ne 0) { Stop-Blocked 'Docker Desktop no esta en ejecucion.' }
   $os = (& docker info --format '{{.OSType}}')
@@ -88,16 +88,27 @@ function Test-Inspect {
   if (Test-Path -LiteralPath $imports -PathType Container) { Say 'OK' 'imports\...\files presente' } else { Fail 'Falta imports\<hash>\files (requerido por compose.supply-recovery.yml).' }
   if (Test-Path -LiteralPath (Join-Path $PrivateDir 'evidence') -PathType Container) { Say 'OK' 'evidence presente' } else { Fail 'Falta la carpeta evidence.' }
   $dumpPath = Join-Path (Join-Path $PrivateDir 'backups') $Dump
-  if (-not (Test-Path -LiteralPath $dumpPath -PathType Leaf)) { Fail "No existe backups\$Dump en $PrivateDir (mueve ahi el respaldo; no lo dejes en el proyecto)." }
+  if ($NeedDump -and -not (Test-Path -LiteralPath $dumpPath -PathType Leaf)) { Fail "No existe backups\$Dump en $PrivateDir (mueve ahi el respaldo; no lo dejes en el proyecto)." }
   if (Test-Path -LiteralPath (Join-Path $Root $Dump)) { Fail "El respaldo sigue dentro del proyecto ($Root\$Dump). Muevelo a $PrivateDir\backups." }
   if ($script:Problems.Count) { return $false }
 
   $null = & docker @Compose --profile dev config --quiet
   if ($LASTEXITCODE -ne 0) { Fail 'La composicion de 7 archivos no es valida.'; return $false }
   Say 'OK' 'Composicion de 7 archivos valida'
-
+  $db = & docker ps -a --filter "label=com.docker.compose.project=$Project" --filter 'label=com.docker.compose.service=db' --format '{{.Names}} {{.State}}'
+  if ($db) { Say 'INFO' "Contenedor de base existente: $db" }
   $vol = & docker volume ls -q --filter "name=^${Project}_supplyflow_db_data$"
-  if ($vol) { Say 'INFO' "Ya existe el volumen $vol (base de datos). Restore no se ejecutara sobre el." } else { Say 'OK' 'No existe volumen de base de datos: se puede restaurar en limpio' }
+  if ($vol) { Say 'INFO' "Volumen de base existente: $vol" } else { Say 'INFO' 'No existe volumen de base de datos' }
+  return [bool]$true
+}
+
+function Test-Inspect {
+  if (-not (Test-Prereqs $true)) { return $false }
+  $db = & docker ps -a --filter "label=com.docker.compose.project=$Project" --filter 'label=com.docker.compose.service=db' --format '{{.State}}'
+  if ($db -and $db -ne 'running') { Fail "Existe un contenedor db detenido o fallido ($db) de un intento anterior. Revisalo antes de restaurar (no se borra automaticamente)." }
+  $vol = & docker volume ls -q --filter "name=^${Project}_supplyflow_db_data$"
+  if ($vol) { Fail "Ya existe el volumen $vol. Restore solo se ejecuta sin volumen de base (no se restaura encima)." }
+  if (-not $db -and -not $vol) { Say 'OK' 'Sin contenedor ni volumen de base: se puede restaurar en limpio' }
 
   Say 'INFO' 'Analizando el respaldo (solo estructura; puede construir la imagen de herramientas la primera vez)...'
   $r = Invoke-Json @('--profile', 'int03-tools', 'run', '--rm', 'int03-dump-inspect', "/backups/$Dump")
@@ -108,6 +119,7 @@ function Test-Inspect {
   if ($d.header) { $d.header | ForEach-Object { Say 'INFO' $_ } }
   if ($d.result -ne 'PASS') { Fail ('Respaldo no apto: ' + (($d.reasons) -join ', ')); return $false }
   Say 'OK' 'Respaldo apto: 77 tablas, R3C1-HF2/R3C2/R3C3, UTF-8, completo, sin cuentas SQL'
+  if ($script:Problems.Count) { return $false }
   return [bool]$true
 }
 
@@ -152,6 +164,9 @@ switch ($Phase) {
     exit 0
   }
   'Start' {
+    if (-not (Test-Prereqs $false)) { Stop-Blocked 'Comprobaciones previas no pasaron; no se levanta ningun contenedor.' }
+    $vol = & docker volume ls -q --filter "name=^${Project}_supplyflow_db_data$"
+    if (-not $vol) { Stop-Blocked 'No existe base restaurada. Ejecuta primero -Phase Inspect y -Phase Restore -Confirmar.' }
     $null = & docker @Compose up -d db
     if ($LASTEXITCODE -ne 0) { Stop-Blocked 'No se pudo iniciar db.' }
     Wait-DbHealthy
