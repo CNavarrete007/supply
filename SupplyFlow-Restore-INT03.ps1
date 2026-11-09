@@ -66,6 +66,15 @@ function Test-Inspect {
   catch { Fail "No se pudo leer la version de Docker Compose ($ver)." }
 
   foreach ($f in $Files) { if (-not (Test-Path -LiteralPath (Join-Path $Root $f) -PathType Leaf)) { Fail "Falta $f en $Root" } }
+  # Secrets must live OUTSIDE the project: the legacy docker-compose.yml serves the whole project folder.
+  $sep = [IO.Path]::DirectorySeparatorChar
+  $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + $sep
+  $privFull = [IO.Path]::GetFullPath($PrivateDir).TrimEnd('\', '/') + $sep
+  if ($privFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+    Fail "El directorio privado esta DENTRO del proyecto ($PrivateDir). Muevelo fuera, p. ej. C:\Dev\supply-docker-private."
+    return $false
+  }
+  if (-not (Test-Path -LiteralPath $PrivateDir -PathType Container)) { Fail "No existe el directorio privado $PrivateDir."; return $false }
   foreach ($s in $Secrets) {
     $p = Join-Path (Join-Path $PrivateDir 'secrets') $s
     if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { Fail "Falta secrets\$s"; continue }
