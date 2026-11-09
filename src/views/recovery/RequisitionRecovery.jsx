@@ -2,6 +2,7 @@ import React from 'react';
 import { request, persist, ROOT } from './api';
 import { saveDraft } from '../../requisitionApi';
 import { FORMAL, SOURCES, STAGES, TABS, emptyForm, hydrate, payload, draftPayload, fillClient, selectRows, groupRows, amount, priorityLabel, today } from './model.mjs';
+import { Regularization } from './Regularization';
 import './legacy-scoped.css';
 
 // RF1 is an isolated recovery increment. The surrounding App, auth and other views are unchanged.
@@ -58,7 +59,7 @@ export class RequisitionRecovery extends React.Component {
    this.setState({pending:uncertain?operation:null,error:e.status===412?'La requisición cambió desde que la abriste. No se sobrescribió otra versión; tu captura se conserva. Abre la versión vigente desde la matriz para continuar.':uncertain?'No se confirmó el resultado. Presiona Guardar requisición para reintentar exactamente la misma solicitud; la captura queda protegida hasta resolverla.':e.message});
   }finally{this.inFlight=false;if(this.alive)this.setState({busy:false});}
  };
- tab(panel){if(this.inFlight||this.state.pending)return;this.setState({panel,error:''});if(panel==='matriz')this.refreshRows().catch(e=>this.setState({error:e.message}));}
+ tab(panel){if(this.inFlight||this.state.pending)return;this.setState({panel,error:''});if(panel==='matriz'||panel==='regularizacion')this.refreshRows().catch(e=>this.setState({error:e.message}));}
  input(name,label,options={}){const {type='text',span='',required=false,placeholder='',readOnly=false,step,...rest}=options;return <div className={`field ${span}`}><label htmlFor={'rf1-'+name}>{label}</label><input id={'rf1-'+name} type={type} value={this.state.form[name]??''} onChange={e=>this.field(name,e.target.value)} required={required&&!this.state.compat} placeholder={placeholder} readOnly={readOnly} step={step} {...rest}/></div>;}
  sourceInput(name,label,type='text',span='',required=false,placeholder=''){return <div className={`field ${span}`}><label htmlFor={'rf1-source-'+name}>{label}</label><input id={'rf1-source-'+name} type={type} value={this.state.form.source[name]??''} required={required} onChange={e=>this.source(name,e.target.value)} placeholder={placeholder}/></div>;}
  renderForm(){const s=this.state,f=s.form,prov=f.source.type!==FORMAL,disabled=s.mode==='locked'||s.busy||!!s.pending;
@@ -130,8 +131,8 @@ export class RequisitionRecovery extends React.Component {
   </div>;
  }
  render(){const s=this.state;return <section className="sf-rf1" aria-label="Solicitud / Requisición"><div className="module-switcher" id="reqSubnav">{TABS.map(([key,icon,title,desc])=><button type="button" key={key} className={s.panel===key?'active':''} disabled={s.busy||!!s.pending} onClick={()=>this.tab(key)}><span className="tab-icon">{icon}</span><strong>{title}</strong><small>{desc}</small></button>)}</div>
-   <div className="note warn rf1-pilot">RF1 · Desarrollo local: captura y matriz en recuperación. Histórico en consulta; Regularización, mantenimiento de categorías, Crear desde historial, Control de cambios, Continuar, eliminación y automatizaciones aún no migrados. Solo Master Admin. No es una liberación productiva.</div>
+   <div className="note warn rf1-pilot">RF1 · Desarrollo local: captura, matriz y Regularización (R2) conectadas a MariaDB. Histórico en consulta; mantenimiento de categorías, Crear desde historial, Control de cambios, Continuar, eliminación y automatizaciones aún no migrados. Solo Master Admin. No es una liberación productiva.</div>
    {s.error&&<div className="note danger" role="alert">{s.error}</div>}{s.notice&&<div className="note ok" role="status">{s.notice}</div>}
-   {!s.loaded?<div className="card"><p>{s.error?'No se pudo cargar la información.':'Cargando datos de MariaDB…'}</p><button className="btn ghost" onClick={()=>this.load()}>Reintentar</button></div>:s.panel==='registro'?this.renderForm():s.panel==='matriz'?this.renderMatrix():<div className="card"><h3>{TABS.find(t=>t[0]===s.panel)?.[2]}</h3><div className="note warn">Este flujo existe en el original y sigue pendiente de recuperación funcional. No se ha sustituido por un proceso nuevo.</div>{s.panel==='categorias'&&<div className="table-wrap"><table><thead><tr><th>Categoría</th><th>Descripción</th><th>Estatus</th></tr></thead><tbody>{s.categories.map(c=><tr key={c.code}><td>{c.name}</td><td>{c.description||'—'}</td><td>{c.active?'Activo':'Inactivo'}</td></tr>)}</tbody></table></div>}</div>}
+   {!s.loaded?<div className="card"><p>{s.error?'No se pudo cargar la información.':'Cargando datos de MariaDB…'}</p><button className="btn ghost" onClick={()=>this.load()}>Reintentar</button></div>:s.panel==='registro'?this.renderForm():s.panel==='matriz'?this.renderMatrix():s.panel==='regularizacion'?<Regularization rows={s.rows} onRefresh={()=>this.refreshRows()} onNotify={this.props.onNotify}/>:<div className="card"><h3>{TABS.find(t=>t[0]===s.panel)?.[2]}</h3><div className="note warn">Este flujo existe en el original y sigue pendiente de recuperación funcional. No se ha sustituido por un proceso nuevo.</div>{s.panel==='categorias'&&<div className="table-wrap"><table><thead><tr><th>Categoría</th><th>Descripción</th><th>Estatus</th></tr></thead><tbody>{s.categories.map(c=><tr key={c.code}><td>{c.name}</td><td>{c.description||'—'}</td><td>{c.active?'Activo':'Inactivo'}</td></tr>)}</tbody></table></div>}</div>}
   </section>;}
 }
