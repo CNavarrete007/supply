@@ -1,0 +1,79 @@
+{
+  "package": "SupplyFlow Backend R3A — Cambio pendiente y trazabilidad",
+  "base": "supply(1).zip",
+  "created": "2026-11-06",
+  "source_zip_sha256": "0b6c0588ecffd4f98846b2e58c893cb2d0d85f5705076df2c5a91e74e9ad5929",
+  "no_sql_or_runtime_changes": true,
+  "files": [
+    {
+      "path": "R3A_NOTAS.md",
+      "operation": "new",
+      "source_sha256": null,
+      "r3a_sha256": "417408998bcbad0f243079931b2db647a90b7f1804732f8d2d15f292e8ffc5f5",
+      "size_bytes": 6947
+    },
+    {
+      "path": "backend/app/Config/Routes.php",
+      "operation": "replace",
+      "source_sha256": "a0d169df680293f091f787562e3043d16b86e3758c8c0d665ea576328c1413b8",
+      "r3a_sha256": "c2280717af5215366ae69ec9cc3cb53b1a131ff161abe0febc44318bb688e667",
+      "size_bytes": 3758
+    },
+    {
+      "path": "backend/app/Controllers/RequisitionChangeController.php",
+      "operation": "new",
+      "source_sha256": null,
+      "r3a_sha256": "195a464bd7c1767960d01014a8f1972cb1ab6ab23abe7dd813ab9df8e389db80",
+      "size_bytes": 7004
+    },
+    {
+      "path": "backend/app/Libraries/RequisitionChangeConflict.php",
+      "operation": "new",
+      "source_sha256": null,
+      "r3a_sha256": "673eb6f44da728d9682e8169439fb5634ee1658b1a22e44dc9b2dbd1128e8ce4",
+      "size_bytes": 241
+    },
+    {
+      "path": "backend/app/Libraries/RequisitionChangeInput.php",
+      "operation": "new",
+      "source_sha256": null,
+      "r3a_sha256": "976f83ab13c5cb9db5de18a6a15acdb1b205434f827b6fec061dc020768cecf0",
+      "size_bytes": 5460
+    },
+    {
+      "path": "backend/app/Libraries/RequisitionChangeRepository.php",
+      "operation": "new",
+      "source_sha256": null,
+      "r3a_sha256": "9691725f04b22404ee37f69df53179996e940abc9642f804d004ad49311087b9",
+      "size_bytes": 20635
+    },
+    {
+      "path": "backend/app/Libraries/RequisitionChangeStale.php",
+      "operation": "new",
+      "source_sha256": null,
+      "r3a_sha256": "bf0233459d51c700f612ea8db3517aefbc68b0488b402ee5127c6ada90f4471f",
+      "size_bytes": 122
+    },
+    {
+      "path": "backend/app/Libraries/RequisitionRecoveryRepository.php",
+      "operation": "replace",
+      "source_sha256": "6195e0d2a95bc3b7b0b8a9e284629e3b567bb6d7b32a4dba950454f487b03b5c",
+      "r3a_sha256": "5b3e95a4fdf760e5d029de896bc01c7cefa38165684444bb975d088c806cb28b",
+      "size_bytes": 43550
+    },
+    {
+      "path": "tests/r3a_contract_check.py",
+      "operation": "new",
+      "source_sha256": null,
+      "r3a_sha256": "be12e3c68b7426623bd7a49066a2fc114960688a911dfc4901b12354da49a16c",
+      "size_bytes": 2828
+    },
+    {
+      "path": "tests/r3a_input_test.php",
+      "operation": "new",
+      "source_sha256": null,
+      "r3a_sha256": "6ad8c6659cbe232841d7e5c05950859f602129fc3f75c8974439dd4ad864ca83",
+      "size_bytes": 3729
+    }
+  ]
+}

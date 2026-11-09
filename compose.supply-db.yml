@@ -1,0 +1,70 @@
+# Complemento LOCAL: combinar despues del Compose original del proyecto.
+# El script local inicia solo db; el DDL se instala por orden explicita.
+# Las rutas relativas se resuelven desde el PRIMER archivo Compose.
+services:
+  db:
+    # Etiqueta y digest multiarch oficiales verificados el 2026-10-20.
+    image: mariadb:11.8.9@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa
+    # Argumentos directos: no dependen de permisos POSIX de un .cnf en Windows.
+    command:
+      - --socket=/run/mysqld/mysqld.sock
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_uca1400_nopad_ai_ci
+      - --default-time-zone=+00:00
+      - --sql-mode=STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE,NO_ZERO_IN_DATE
+      - --innodb-strict-mode=1
+      - --innodb-page-size=16384
+    environment:
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/root_password
+      MARIADB_ROOT_HOST: localhost
+      TZ: UTC
+    secrets:
+      - root_password
+    volumes:
+      - supplyflow_db_data:/var/lib/mysql
+      - supplyflow_db_socket:/run/mysqld
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 30s
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    stop_grace_period: 30s
+
+  db-tools:
+    profiles: ["tools"]
+    build:
+      context: ./docker/supply-db
+      dockerfile: Dockerfile
+    entrypoint: ["python", "/work/db_tools.py"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      TZ: UTC
+    secrets:
+      - root_password
+    volumes:
+      - type: volume
+        source: supplyflow_db_socket
+        target: /run/mysqld
+        read_only: true
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Ejecuta primero el script de preparacion local}/evidence
+        target: /evidence
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    network_mode: none
+
+volumes:
+  supplyflow_db_data:
+  supplyflow_db_socket:
+
+secrets:
+  root_password:
+    file: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Ejecuta primero el script de preparacion local}/secrets/mariadb-root.txt

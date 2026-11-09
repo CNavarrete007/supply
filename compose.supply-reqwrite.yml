@@ -1,0 +1,44 @@
+# v0.7: Additive Compose overlay. Does not modify db or its volumes.
+services:
+  api:
+    environment:
+      REQWRITE_DB_USERNAME: supplyflow_reqwrite_local
+      REQWRITE_DB_PASSWORD_FILE: /run/secrets/reqwrite_db_password
+    secrets:
+      - reqwrite_db_password
+
+  reqwrite-db-tools:
+    profiles: ["reqwrite-tools"]
+    build:
+      context: ./docker/supply-dev/db-provision
+      dockerfile: Dockerfile
+    entrypoint: ["python", "/reqwrite/provision.py"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      TZ: UTC
+    volumes:
+      - type: volume
+        source: supplyflow_db_socket
+        target: /run/mysqld
+        read_only: true
+      - type: bind
+        source: ./docker/supply-reqwrite
+        target: /reqwrite
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Requires private local directory}/secrets
+        target: /run/supply-secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+
+secrets:
+  reqwrite_db_password:
+    file: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Requires private local directory}/secrets/reqwrite-db-password.txt

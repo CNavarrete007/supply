@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="supplyflow-dev-stack" content="0.2">
+  <title>SupplyFlow · Entorno local</title>
+  <style>
+    :root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#18324a;background:#f3f6fa}
+    *{box-sizing:border-box}body{margin:0;padding:36px 20px}main{max-width:960px;margin:auto}
+    header{padding:32px;background:#073b5a;color:white;border-radius:18px}.eyebrow{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#95d9ef}
+    h1{font-size:32px;line-height:1.2;margin:12px 0}h2{font-size:18px;margin:0 0 14px}p{line-height:1.6;margin:10px 0}
+    .actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:24px}a,button{font:inherit}a{color:#076489}
+    .button,button{display:inline-block;text-decoration:none;border:1px solid #b5c8d7;background:white;color:#073b5a;border-radius:8px;padding:10px 16px;cursor:pointer;font-weight:600}
+    .button.primary{background:#9fe4ec;border-color:#9fe4ec}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:22px 0}
+    section{background:white;border:1px solid #dae3eb;border-radius:12px;padding:22px}.status{font-weight:700;font-size:20px;margin:14px 0}.pending{color:#5c6b78}.ok{color:#166941}.error{color:#ad3027}
+    .detail{font-size:14px;color:#5c6b78;overflow-wrap:anywhere}.note{margin-top:18px;border-left:4px solid #16819b}.note ul{padding-left:20px;line-height:1.7}
+    code{font-family:ui-monospace,monospace;font-size:.92em}pre{background:#f3f6fa;white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;border-radius:8px;font-size:12px}
+    details{margin-top:14px}summary{cursor:pointer}footer{margin-top:20px;color:#63788b;font-size:13px}button:disabled{opacity:.55;cursor:wait}
+    @media(max-width:720px){.cards{grid-template-columns:1fr}header{padding:24px}h1{font-size:27px}body{padding:20px 14px}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Grupo Gerez · SupplyFlow · Desarrollo local</div>
+    <h1>La base para continuar el backend</h1>
+    <p>React original en Vite, API PHP y MariaDB, accesibles desde un solo origen local.</p>
+    <div class="actions">
+      <a class="button primary" href="/">Abrir aplicación React</a>
+      <button id="refresh" type="button">Volver a comprobar</button>
+    </div>
+  </header>
+  <div class="cards" aria-live="polite">
+    <section>
+      <h2>Gateway</h2>
+      <div id="gateway-status" class="status pending">Comprobando…</div>
+      <p class="detail">Nginx recibe la navegación y enruta las llamadas <code>/api/</code>.</p>
+      <a href="/__supplyflow/health" target="_blank" rel="noopener">Ver respuesta JSON</a>
+    </section>
+    <section>
+      <h2>API</h2>
+      <div id="api-health-status" class="status pending">Comprobando…</div>
+      <p class="detail">Comprueba que la aplicación PHP responde.</p>
+      <a href="/api/v1/health" target="_blank" rel="noopener">Ver respuesta JSON</a>
+    </section>
+    <section>
+      <h2>Conexión a MariaDB</h2>
+      <div id="api-ready-status" class="status pending">Comprobando…</div>
+      <p class="detail">Comprueba una consulta de lectura mediante el usuario propio de la API.</p>
+      <a href="/api/v1/ready" target="_blank" rel="noopener">Ver respuesta JSON</a>
+    </section>
+  </div>
+  <section class="note">
+    <h2>Qué valida esta pantalla</h2>
+    <p>Estos indicadores validan la infraestructura local y la conectividad. La aplicación React conserva su código y su comportamiento actual.</p>
+    <ul>
+      <li>Las pantallas que hoy usan <code>localStorage</code> necesitan conectarse a los endpoints de negocio durante el desarrollo.</li>
+      <li>Autenticación, permisos, operaciones de negocio e importación del JSON se implementarán sobre esta base.</li>
+      <li>La cuenta inicial de la API tiene acceso de lectura a <code>supplyflow_dev</code>. Los permisos de escritura se incorporarán al implementar cada operación.</li>
+    </ul>
+    <details><summary>Resultados de diagnóstico</summary><pre id="results">Esperando respuestas…</pre></details>
+  </section>
+  <footer id="checked-at">Entorno de desarrollo · Disponible desde este equipo en localhost:8080</footer>
+</main>
+<script>
+  const checks = [
+    {id:'gateway-status',path:'/__supplyflow/health',service:'supplyflow-gateway',status:'ok'},
+    {id:'api-health-status',path:'/api/v1/health',service:'supplyflow-api',status:'ok'},
+    {id:'api-ready-status',path:'/api/v1/ready',service:'supplyflow-api',status:'ready'}
+  ];
+  async function refresh() {
+    const button = document.getElementById('refresh');
+    button.disabled = true;
+    const results = await Promise.all(checks.map(async check => {
+      const target = document.getElementById(check.id);
+      target.textContent = 'Comprobando…';
+      target.className = 'status pending';
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const response = await fetch(check.path, {cache:'no-store',signal:controller.signal});
+        const data = await response.json();
+        const ok = response.ok && data.status === check.status && data.service === check.service;
+        target.textContent = ok ? 'Disponible' : 'Revisar conexión';
+        target.className = 'status ' + (ok ? 'ok' : 'error');
+        return {path:check.path,http:response.status,ok,response:data};
+      } catch(error) {
+        target.textContent = 'Sin respuesta válida';
+        target.className = 'status error';
+        return {path:check.path,ok:false,error:error.name === 'AbortError' ? 'Tiempo de espera agotado' : error.message};
+      } finally { clearTimeout(timeout); }
+    }));
+    document.getElementById('results').textContent = JSON.stringify(results,null,2);
+    document.getElementById('checked-at').textContent = 'Última comprobación: ' + new Date().toLocaleString('es-MX') + ' · localhost:8080';
+    button.disabled = false;
+  }
+  document.getElementById('refresh').addEventListener('click',refresh);
+  refresh();
+</script>
+</body>
+</html>

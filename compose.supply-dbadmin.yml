@@ -1,0 +1,24 @@
+# Complemento LOCAL: combinar al final de los tres Compose existentes.
+# Se inicia exclusivamente phpmyadmin; la base y las cuentas ya existen.
+services:
+  phpmyadmin:
+    profiles: ["db-admin"]
+    # Imagen oficial: tag e indice multiarch verificados el 2026-10-21.
+    image: phpmyadmin:5.2.3-apache@sha256:cb525665c0669c74a117a63cb918a90662c786d9d4d04212717575546f6d7e29
+    restart: "no"
+    ports:
+      - "127.0.0.1:${SUPPLYFLOW_DBADMIN_PORT:-8081}:80"
+    environment:
+      PMA_HOST: db
+      PMA_PORT: "3306"
+      PMA_ARBITRARY: "0"
+      TZ: UTC
+    # PMA_USER/PMA_PASSWORD se omiten: login manual con credenciales de MariaDB.
+    # No se montan archivos de contrasena ni el socket administrativo root.
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "5", "--output", "/dev/null", "http://127.0.0.1/index.php"]
+      interval: 5s
+      timeout: 7s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 15s

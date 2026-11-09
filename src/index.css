@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+:root {
+  --gg-primary: #003366;
+  --gg-primary-dark: #00264D;
+  --gg-primary-darker: #001A33;
+  --gg-primary-light: #0A4A80;
+  --gg-primary-soft: #EAF2F8;
+  --gg-accent: #FF6633;
+  --gg-accent-dark: #E64D1F;
+  --gg-accent-light: #FF855C;
+  --gg-accent-soft: #FFF0EB;
+  --gg-white: #FFFFFF;
+  --gg-gray-50: #F8FAFC;
+  --gg-gray-100: #F1F5F9;
+  --gg-gray-200: #E2E8F0;
+  --gg-gray-300: #CBD5E1;
+  --gg-gray-400: #94A3B8;
+  --gg-gray-500: #64748B;
+  --gg-gray-600: #475569;
+  --gg-gray-700: #334155;
+  --gg-gray-800: #1E293B;
+  --gg-gray-900: #0F172A;
+  --gg-text-primary: #172033;
+  --gg-text-secondary: #64748B;
+  --gg-text-muted: #94A3B8;
+  --gg-bg: #F5F7FA;
+  --gg-surface: #FFFFFF;
+  --gg-border: #E2E8F0;
+  --gg-success: #16A34A;
+  --gg-warning: #D97706;
+  --gg-danger: #DC2626;
+  --gg-info: #0284C7;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--gg-bg);
+  color: var(--gg-text-primary);
+}
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+.scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 999px; }
+.animate-fade { animation: fade .2s ease-out; }
+@keyframes fade { from { opacity: .5; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* REGLAS EXCLUSIVAS PARA LA IMPRESIÓN DE REPORTES */
+@media print {
+  /* Oculta toda la interfaz del sistema (menús, sidebars, cabeceras) */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* Hace visible únicamente el reporte activo (Partidas, General, Cliente, Gerencial o Solicitud) */
+  #reporte-partidas-printable,
+  #reporte-partidas-printable *,
+  #reporte-general-printable,
+  #reporte-general-printable *,
+  #reporte-cliente-printable,
+  #reporte-cliente-printable *,
+  #reporte-gerencial-printable,
+  #reporte-gerencial-printable *,
+  #printable-area,
+  #printable-area * {
+    visibility: visible !important;
+  }
+
+  /* Ajusta los reportes al lienzo completo de la hoja */
+  #reporte-partidas-printable,
+  #reporte-general-printable,
+  #reporte-cliente-printable,
+  #reporte-gerencial-printable,
+  #printable-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Configura la orientación horizontal y márgenes limpios */
+  @page {
+    size: landscape;
+    margin: 10mm;
+  }
+}

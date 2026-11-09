@@ -1,0 +1,67 @@
+{
+  "name": "SupplyFlow Backend R3C2 Delta",
+  "generated_date": "2026-11-06",
+  "base_zip": "supply(2).zip + R3C1",
+  "base_supply2_sha256": "aa8ef9f82e107254c087592ffb45de3e065720b6b3a0277c9fc5c9f868689851",
+  "base_R3C1_delta_sha256": "cfb3b3011b4dbd920debcfc1f466b58bb61bd2a37002d7f6f1ae43f26574fb98",
+  "db_changed": false,
+  "docker_changed": false,
+  "manual_migrations_required": true,
+  "required_expected_table_privileges": 48,
+  "files": {
+    "backend/app/Config/Routes.php": {
+      "operation": "replace",
+      "source_sha256": "854dc8a1371831a48350ade3a5ff68c80a7bbd776a6747369cda49579ccd464c",
+      "target_sha256": "58e93682effc3a5747f131558af170b4be4aff5929a8a8c8d84ab0bbbba62bec",
+      "bytes": 4444
+    },
+    "backend/app/Controllers/RequisitionChangeController.php": {
+      "operation": "replace",
+      "source_sha256": "894e77d76861b72a7c5f49833cc4aa6206c916dab71617a176025f62820fd7b5",
+      "target_sha256": "135f944c1ca622b4e90c78edf2a1210fa0ca7e7fb15cdeacd8ac02d9dded7c26",
+      "bytes": 10926
+    },
+    "backend/app/Libraries/RequisitionCommercialAssessmentInput.php": {
+      "operation": "add",
+      "source_sha256": null,
+      "target_sha256": "4475b2d66719d5ce237084c42009f5c48edf1fe910cafd673d46c8132e48b3d4",
+      "bytes": 4310
+    },
+    "backend/app/Libraries/RequisitionCommercialInventory.php": {
+      "operation": "add",
+      "source_sha256": null,
+      "target_sha256": "a4fb023dea3e83cd1881f44c8c4dea731836c67b3461d09e3f92f2cf7379b324",
+      "bytes": 3661
+    },
+    "backend/app/Libraries/RequisitionCommercialAssessmentRepository.php": {
+      "operation": "add",
+      "source_sha256": null,
+      "target_sha256": "c8dd0f47c77a811ca93eacebf1fc8aca5f41d6c3c9fb4fddcfc7d4e33e2b5beb",
+      "bytes": 13417
+    },
+    "migrations/manual/R3C2_commercial_assessment_ledger.sql": {
+      "operation": "add",
+      "source_sha256": null,
+      "target_sha256": "7d551864a964b94428d368bcc5a2ec2e0eb42cd21a8e02dc693e5427d00c1936",
+      "bytes": 1708
+    },
+    "tests/r3c2_assessment_test.php": {
+      "operation": "add",
+      "source_sha256": null,
+      "target_sha256": "1edc31b39c6bc5b53a7ee05769827dab3dbde4dc99b359ed073d95ac90ea76a5",
+      "bytes": 6052
+    },
+    "tests/r3c2_contract_check.py": {
+      "operation": "add",
+      "source_sha256": null,
+      "target_sha256": "834c65f1be6758ff561fa3e3ca37421c54b66056d182fd1e8f6617a8cec1cb66",
+      "bytes": 3610
+    },
+    "R3C2_NOTAS.md": {
+      "operation": "add",
+      "source_sha256": null,
+      "target_sha256": "5336a6c48a6ed28aa8c076421be7bf5b88d3d11a135be022c3db5d7e7e48bfde",
+      "bytes": 7516
+    }
+  }
+}

@@ -1,0 +1,54 @@
+# RF1 LOCAL ONLY. Last overlay. No db definitions, no ports and no volume deletions.
+services:
+  api:
+    environment:
+      RECOVERY_DB_USERNAME: supplyflow_recovery_local
+      RECOVERY_DB_PASSWORD_FILE: /run/secrets/recovery_db_password
+    secrets:
+      - recovery_db_password
+    volumes:
+      - type: bind
+        source: ./docker/supply-recovery/transport.ini
+        target: /usr/local/etc/php/conf.d/zz-rf1.ini
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Private directory required}/imports/cd9a8d0eb37b7c461cc1a269f7eb554d89fd76040963d539e4c3f6fbd8754619/files
+        target: /run/supply-import-files
+        read_only: true
+        bind: { create_host_path: false }
+  web:
+    volumes:
+      - type: bind
+        source: ./docker/supply-recovery/nginx.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+        bind: { create_host_path: false }
+  recovery-db-tools:
+    profiles: ["recovery-tools"]
+    build:
+      context: ./docker/supply-dev/db-provision
+      dockerfile: Dockerfile
+    entrypoint: ["python", "/recovery/provision.py"]
+    environment: { PYTHONDONTWRITEBYTECODE: "1", PYTHONUNBUFFERED: "1", TZ: UTC }
+    volumes:
+      - type: volume
+        source: supplyflow_db_socket
+        target: /run/mysqld
+        read_only: true
+      - type: bind
+        source: ./docker/supply-recovery
+        target: /recovery
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Private directory required}/secrets
+        target: /run/supply-secrets
+        read_only: true
+        bind: { create_host_path: false }
+    read_only: true
+    network_mode: none
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+secrets:
+  recovery_db_password:
+    file: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Private directory required}/secrets/recovery-db-password.txt

@@ -1,0 +1,58 @@
+{
+  "module": "SupplyFlow Backend R3B",
+  "kind": "delta_R3B_requires_R3A",
+  "built_date": "2026-11-06",
+  "source_zip": "supply(1).zip",
+  "source_zip_sha256": "0b6c0588ecffd4f98846b2e58c893cb2d0d85f5705076df2c5a91e74e9ad5929",
+  "r3a_zip": "SupplyFlow_Backend_R3A_ControlCambios_Delta.zip",
+  "r3a_zip_sha256": "97aa9f86c4c977da7d7085b6d896a7cf7a7133cdf6c45934c0c102722ca79975",
+  "files": {
+    "R3B_NOTAS.md": {
+      "sha256": "0c67371a0ec5dcf1c6f5f4f9f7d39a27e925565b96050a8e08be38e08f5ecf85",
+      "bytes": 7288
+    },
+    "backend/app/Config/Routes.php": {
+      "sha256": "879e48486e9ca9f9102857e2e9a3b0bd4fb42287836689af22f4046bba5b1fdb",
+      "bytes": 4064
+    },
+    "backend/app/Controllers/RequisitionChangeController.php": {
+      "sha256": "45a36ba7312b044a0e4e1da8da13348872234c9c98d5fd761dd0eb6ce03ef9d5",
+      "bytes": 8741
+    },
+    "backend/app/Libraries/RequisitionChangeApplication.php": {
+      "sha256": "2b61c74fab14b1314702a661ae56f89a4139996127b9971c3905adc235452dae",
+      "bytes": 6558
+    },
+    "backend/app/Libraries/RequisitionChangeDecisionInput.php": {
+      "sha256": "26c8308edb63887805d40159057cfbd7b3cd83c3fcb2586a6f74ec268cc704e5",
+      "bytes": 2069
+    },
+    "backend/app/Libraries/RequisitionChangeDecisionRepository.php": {
+      "sha256": "7b061ac9f2923d416d492c16cf1bf1d53a3f763b593b8a2250fc0c0158748405",
+      "bytes": 20486
+    },
+    "backend/app/Libraries/RequisitionChangeRepository.php": {
+      "sha256": "c363a56e9f6b749a47bb926c7a292593e36a28d269e79f51643ff88fbfc34da8",
+      "bytes": 20639
+    },
+    "backend/app/Libraries/RequisitionRecoveryRepository.php": {
+      "sha256": "a42cee3cbf14caf811fb917d8e3adff4da7d36bb54ab96193ad4f594784358bf",
+      "bytes": 43588
+    },
+    "tests/r3b_application_test.php": {
+      "sha256": "6510c6ee1fa7a5321bb3b24c3fefb8e2ec50dca1d7e6d59a1d6395f387b68387",
+      "bytes": 6462
+    },
+    "tests/r3b_contract_check.py": {
+      "sha256": "14ecfd192b33fbd62f6c5b7c5f1374474dd0444be8e9e6ff1aa3012d19f1f2df",
+      "bytes": 5045
+    }
+  },
+  "cautions": [
+    "Not installed, no Docker/DB/network run",
+    "No SQL GRANT in kit",
+    "Requires independent Master Admin reviewer",
+    "R3B approval limited to no-downstream RF1 originals"
+  ],
+  "expected_sql_table_grants": 46
+}

@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+vendor
+tests
+validation
+qa_runtime
+*.log
+writable/*
+!writable/.gitkeep

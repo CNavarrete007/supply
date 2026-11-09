@@ -1,0 +1,73 @@
+{
+  "name": "SupplyFlow Backend R3C1 — Altas y analisis de impacto",
+  "type": "delta_from_supply(2).zip",
+  "generated_date": "2026-11-06",
+  "base_zip_sha256": "aa8ef9f82e107254c087592ffb45de3e065720b6b3a0277c9fc5c9f868689851",
+  "db_changed": false,
+  "docker_changed": false,
+  "expected_sql_table_grants_after_R3A_R3B": 46,
+  "requires_manual_ddl_authorization": true,
+  "requires_sql_provisioning_update": true,
+  "files": {
+    "backend/app/Config/Routes.php": {
+      "operation": "replace",
+      "source_sha256": "879e48486e9ca9f9102857e2e9a3b0bd4fb42287836689af22f4046bba5b1fdb",
+      "r3c_sha256": "854dc8a1371831a48350ade3a5ff68c80a7bbd776a6747369cda49579ccd464c",
+      "bytes": 4161
+    },
+    "backend/app/Controllers/RequisitionChangeController.php": {
+      "operation": "replace",
+      "source_sha256": "45a36ba7312b044a0e4e1da8da13348872234c9c98d5fd761dd0eb6ce03ef9d5",
+      "r3c_sha256": "894e77d76861b72a7c5f49833cc4aa6206c916dab71617a176025f62820fd7b5",
+      "bytes": 9365
+    },
+    "backend/app/Libraries/RequisitionChangeApplication.php": {
+      "operation": "replace",
+      "source_sha256": "2b61c74fab14b1314702a661ae56f89a4139996127b9971c3905adc235452dae",
+      "r3c_sha256": "cc5bc7b5da985d4d8796bdc9a5b9c44fca37a8426c63bf0bba62da4fa8b51e89",
+      "bytes": 8834
+    },
+    "backend/app/Libraries/RequisitionChangeDecisionRepository.php": {
+      "operation": "replace",
+      "source_sha256": "7b061ac9f2923d416d492c16cf1bf1d53a3f763b593b8a2250fc0c0158748405",
+      "r3c_sha256": "b5ee9b419347cb3dee78f81aba8e7fc672dbd22d709bc2e4304601a6b33a60d2",
+      "bytes": 24668
+    },
+    "backend/app/Libraries/RequisitionChangeInput.php": {
+      "operation": "replace",
+      "source_sha256": "976f83ab13c5cb9db5de18a6a15acdb1b205434f827b6fec061dc020768cecf0",
+      "r3c_sha256": "15a7472ab12865c861adcd767c1fdbbd4cc10e1f22f0ba766c08cbbcd78a4840",
+      "bytes": 6420
+    },
+    "backend/app/Libraries/RequisitionChangeRepository.php": {
+      "operation": "replace",
+      "source_sha256": "c363a56e9f6b749a47bb926c7a292593e36a28d269e79f51643ff88fbfc34da8",
+      "r3c_sha256": "cf6b46b6ebeb6a6a226851b176b8e96dd433999f9be3e3fc669d1747b60608c6",
+      "bytes": 21630
+    },
+    "tests/r3c_additions_test.php": {
+      "operation": "new",
+      "source_sha256": null,
+      "r3c_sha256": "4359c0c27e3c482febf284e39f9a5398505ccdbb661bddea014c5ff186713647",
+      "bytes": 7959
+    },
+    "tests/r3c_contract_check.py": {
+      "operation": "new",
+      "source_sha256": null,
+      "r3c_sha256": "d58dcebd313191f40cb33b0cfb5ff1eaf181afd1bc05d74d7c488594ebee766d",
+      "bytes": 3575
+    },
+    "migrations/manual/R3C1_requisition_change_add_check.sql": {
+      "operation": "new",
+      "source_sha256": null,
+      "r3c_sha256": "ec1b9cc707f91169679fe4690edb568264e3fd59cc1710e32b27723961ebfec4",
+      "bytes": 1493
+    },
+    "R3C_NOTAS.md": {
+      "operation": "new",
+      "source_sha256": null,
+      "r3c_sha256": "e9273ba4e5502597571b7c5a246bd39f66c3b2f3f711c570453c5f843a8f09f0",
+      "bytes": 7506
+    }
+  }
+}
