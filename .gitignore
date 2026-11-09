@@ -1,3 +1,10 @@
 node_modules/
 dist/
 .env
+# Respaldos y datos privados: NUNCA versionar (dumps de clientes, secretos, documentos).
+# Los .sql versionados viven en docker/, migrations/ y docs/; en la raíz no hay ninguno.
+/*.sql
+/*.sql.gz
+/*.sql.zip
+/backups/
+/supply-docker-private/
