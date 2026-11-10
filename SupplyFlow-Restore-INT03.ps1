@@ -127,7 +127,13 @@ function Test-Inspect {
 }
 
 function Build-Tools {
-  # Build in the console (not captured): BuildKit needs a real console on Windows.
+  # Images only hold Python + PyMySQL (hash-pinned); tool code is bind-mounted from ./docker at run time.
+  $missing = @()
+  foreach ($svc in 'int03-dump-inspect', 'int03-accounts-tools') {
+    $null = & docker image inspect "$Project-$svc" 2>$null
+    if ($LASTEXITCODE -ne 0) { $missing += $svc }
+  }
+  if (-not $missing) { Say 'OK' 'Imagenes de herramientas int03 ya disponibles'; return }
   Say 'INFO' 'Preparando imagenes de herramientas int03 (la primera vez descarga dependencias)...'
   & docker @Compose --profile int03-tools build int03-dump-inspect int03-accounts-tools | Out-Host
   if ($LASTEXITCODE -ne 0) { Stop-Blocked 'No se pudieron construir las imagenes de herramientas int03.' }
