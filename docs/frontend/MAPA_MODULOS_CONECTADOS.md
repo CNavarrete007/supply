@@ -7,7 +7,7 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 
 | Menú (App.jsx `id`) | Componente React (archivo real) | Cliente HTTP | Endpoints (todos `GET`, solo lectura) | Backend (controlador → repositorio) | Acceso |
 |---|---|---|---|---|---|
-| Inicio y Dashboard (`dashboard`) | `Dashboard` en `src/views/Dashboard.jsx` | `src/analyticsApi.js`, `src/matrixApi.js` | `/api/v1/analytics/overview`, `/api/v1/analytics/requisitions?page_size=5`, `/api/v1/matrix/clients` | `AnalyticsController` → `AnalyticsReadRepository`; `MatrixController` → `MatrixReadRepository` | Master Admin |
+| Inicio y Dashboard (`dashboard`) | `Dashboard` en `src/views/Dashboard.jsx` (cálculos en `src/views/dashboard/model.mjs`) | `src/analyticsApi.js`, `src/matrixApi.js`, `src/catalogApi.js`, `src/views/recovery/api.js` | `/api/v1/analytics/overview`, `/api/v1/analytics/requisitions?page_size=5`, `/api/v1/matrix/clients`, `/api/v1/recovery/matrix`, `/api/v1/catalogs/{clients,suppliers}?page_size=1`, `/api/v1/recovery/changes`, `/api/v1/recovery/changes/review-queue` | `AnalyticsController`, `MatrixController`, `CatalogDirectoryController`, `RequisitionRecoveryController`, `RequisitionChangeController` | Master Admin |
 | Clientes (`clients`) | `ClientsCatalog` en **`src/views/CatalogReadOnly.jsx`** | `src/catalogApi.js` (`kind='clients'`) | `/api/v1/catalogs/clients`, `/api/v1/catalogs/clients/{id}` | `CatalogDirectoryController` → `CatalogReadRepository` | Master Admin |
 | Proveedores (`suppliers`) | `SuppliersCatalog` en **`src/views/CatalogReadOnly.jsx`** | `src/catalogApi.js` (`kind='suppliers'`) | `/api/v1/catalogs/suppliers`, `/api/v1/catalogs/suppliers/{id}` | `CatalogDirectoryController` → `CatalogReadRepository` | Master Admin |
 | Matriz General (`general_matrix`) | `GeneralMatrix` en `src/views/GeneralMatrix.jsx` | `src/matrixApi.js` | `/api/v1/matrix/requisitions`, `/api/v1/matrix/requisitions/{id}`, `/api/v1/matrix/clients` | `MatrixController` → `MatrixReadRepository` | Master Admin |
@@ -50,6 +50,15 @@ Negrita = disponible pero **no usado** hoy por la vista (se puede mostrar sin to
 4. Mantener los nombres exportados y las props que usa `App.jsx` (`Dashboard`, `ClientsCatalog`, `SuppliersCatalog`, `GeneralMatrix`, `Reports`, `UsersRoles`; `onNavigate`, `onNotify`, `lang`).
 5. Estos módulos son **solo lectura**: botones de Crear/Editar/Eliminar/Importar requieren endpoints nuevos con autorización, CSRF, idempotencia y auditoría; no basta con el frontend.
 6. Un campo nuevo que **no** esté en la lista de arriba requiere cambiar el repositorio PHP (y revisar permisos SQL); no inventarlo en el frontend.
+
+## Inicio y Dashboard (rediseño 10 nov 2026)
+
+Diseño, colores, estructura y orden de las 14 secciones del archivo de referencia `clase_dashboard`, con datos reales:
+- **Etapas P2P**: 8 etapas calculadas por el servidor (`stage_index` de `/recovery/matrix`, política `apps-script-eight-stage-matrix`). El diseño original mostraba 15/14 etapas con datos fijos; no existen esas etapas en la base.
+- **Reglas**: abierto = etapa < Factura; vencido = `need_date` < hoy y etapa < Entrega y aceptación; cerrado = Factura; las requisiciones desde historial o con cambio controlado tienen etapa "pendiente de equivalencia" y se informan aparte.
+- **Filtros** (cliente, desde/hasta) aplican a la analítica en el servidor y a las filas de etapas en el cliente con la misma regla.
+- **Pendiente de integración** (sin cifras): lotes/rutas paralelas, ahorro, proveedores con mayor actividad, servicios / Service-to-Cash, Service Fee, estatus de pago, recompra/precios, enmiendas de OC, compradores y segregación de OC.
+- `Change Requests` muestra solo las solicitudes del usuario que consulta (alcance del endpoint) y la cola de revisión independiente.
 
 ## Red de seguridad
 

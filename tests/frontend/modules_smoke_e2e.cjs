@@ -31,7 +31,7 @@ const MODULES = [
   { label: 'Usuarios y roles', endpoints: ['users\\?', 'roles'],
     expect: async r => (await r('/api/v1/users?page=1')).items?.[0]?.name },
   // Dashboard is the landing page: visit it last so it remounts and its requests are observed.
-  { label: 'Inicio y Dashboard', endpoints: ['analytics/overview', 'analytics/requisitions\\?', 'matrix/clients'],
+  { label: 'Inicio y Dashboard', endpoints: ['analytics/overview', 'analytics/requisitions\\?', 'matrix/clients', 'recovery/matrix$', 'catalogs/clients\\?page=1&page_size=1', 'catalogs/suppliers\\?page=1&page_size=1', 'recovery/changes$', 'recovery/changes/review-queue'],
     expect: async r => (await r('/api/v1/analytics/overview')).top_clients?.[0]?.name },
 ];
 
