@@ -8,13 +8,13 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | Menú (App.jsx `id`) | Componente React (archivo real) | Cliente HTTP | Endpoints (todos `GET`, solo lectura) | Backend (controlador → repositorio) | Acceso |
 |---|---|---|---|---|---|
 | Inicio y Dashboard (`dashboard`) | `Dashboard` en `src/views/Dashboard.jsx` (cálculos en `src/views/dashboard/model.mjs`) | `src/analyticsApi.js`, `src/matrixApi.js`, `src/catalogApi.js`, `src/views/recovery/api.js` | `/api/v1/analytics/overview`, `/api/v1/analytics/requisitions?page_size=5`, `/api/v1/matrix/clients`, `/api/v1/recovery/matrix`, `/api/v1/catalogs/{clients,suppliers}?page_size=1`, `/api/v1/recovery/changes`, `/api/v1/recovery/changes/review-queue` | `AnalyticsController`, `MatrixController`, `CatalogDirectoryController`, `RequisitionRecoveryController`, `RequisitionChangeController` | Master Admin |
-| Clientes (`clients`) | `ClientsCatalog` en **`src/views/CatalogReadOnly.jsx`** | `src/catalogApi.js` (`kind='clients'`) | `/api/v1/catalogs/clients`, `/api/v1/catalogs/clients/{id}` | `CatalogDirectoryController` → `CatalogReadRepository` | Master Admin |
+| Clientes (`clients`) | `ClientsCatalog` en **`src/views/clients/ClientsCatalog.jsx`** (re-exportado por `CatalogReadOnly.jsx`; lógica en `src/views/clients/model.mjs`) | `src/catalogApi.js`, `src/matrixApi.js` | `/api/v1/catalogs/clients`, `/api/v1/catalogs/clients/{id}`, `/api/v1/matrix/clients` | `CatalogDirectoryController` → `CatalogReadRepository`; `MatrixController` | Master Admin |
 | Proveedores (`suppliers`) | `SuppliersCatalog` en **`src/views/CatalogReadOnly.jsx`** | `src/catalogApi.js` (`kind='suppliers'`) | `/api/v1/catalogs/suppliers`, `/api/v1/catalogs/suppliers/{id}` | `CatalogDirectoryController` → `CatalogReadRepository` | Master Admin |
 | Matriz General (`general_matrix`) | `GeneralMatrix` en `src/views/GeneralMatrix.jsx` | `src/matrixApi.js` | `/api/v1/matrix/requisitions`, `/api/v1/matrix/requisitions/{id}`, `/api/v1/matrix/clients` | `MatrixController` → `MatrixReadRepository` | Master Admin |
 | Reportes (`reports`) | `Reports` en `src/views/Reports.jsx` | `src/analyticsApi.js`, `src/matrixApi.js` | `/api/v1/analytics/requisitions`, `/api/v1/analytics/requisitions.csv`, `/api/v1/matrix/clients` | `AnalyticsController` → `AnalyticsReadRepository` | Master Admin |
 | Usuarios y roles (`users_roles`) | `UsersRoles` en `src/views/UsersRoles.jsx` | `fetch` directo en el componente | `/api/v1/users?page=`, `/api/v1/roles` | `UserDirectoryController` → `SupplyAuthRepository` | permiso `users.read` |
 
-**Importante:** `src/views/Clients.jsx` (1,541 líneas) y `src/views/Suppliers.jsx` (1,617 líneas) **no están conectados**: `App.jsx` importa `ClientsCatalog`/`SuppliersCatalog` desde `CatalogReadOnly.jsx`. Son prototipos anteriores con datos de demostración; no editarlos pensando que cambian la pantalla real. Si se quieren recuperar partes de su diseño, se trasladan a `CatalogReadOnly.jsx` (o a componentes nuevos) usando los campos reales de abajo.
+**Importante:** `src/views/Clients.jsx` (1,541 líneas; diseño de referencia ya trasladado a `clients/ClientsCatalog.jsx`) y `src/views/Suppliers.jsx` (1,617 líneas) **no están conectados**: `App.jsx` importa `ClientsCatalog`/`SuppliersCatalog` desde `CatalogReadOnly.jsx`. Son prototipos anteriores con datos de demostración; no editarlos pensando que cambian la pantalla real. Si se quieren recuperar partes de su diseño, se trasladan a `CatalogReadOnly.jsx` (o a componentes nuevos) usando los campos reales de abajo.
 
 ## Parámetros que acepta el servidor (fuera de estos, responde 422)
 
@@ -59,6 +59,15 @@ Diseño, colores, estructura y orden de las 14 secciones del archivo de referenc
 - **Filtros** (cliente, desde/hasta) aplican a la analítica en el servidor y a las filas de etapas en el cliente con la misma regla.
 - **Pendiente de integración** (sin cifras): lotes/rutas paralelas, ahorro, proveedores con mayor actividad, servicios / Service-to-Cash, Service Fee, estatus de pago, recompra/precios, enmiendas de OC, compradores y segregación de OC.
 - `Change Requests` muestra solo las solicitudes del usuario que consulta (alcance del endpoint) y la cola de revisión independiente.
+
+## Clientes (rediseño 10 nov 2026)
+
+Diseño de 4 tarjetas de `Clients.jsx` (clase_clientes) con datos reales; pestaña inicial **Matriz**:
+- **Matriz**: lista paginada en servidor (búsqueda, estatus con conteos, 25 por página), columnas del diseño, acciones Ver (detalle), Ficha y Portal (navega al módulo "Portal del Cliente"; deshabilitado si el cliente no tiene portal). Columna Acciones fija a la derecha.
+- **Registro y actualización**: ficha en modo consulta; los selectores por número y razón social cargan `/catalogs/clients/{id}`. Guardar bloqueado (no hay endpoint de escritura). La clave del portal nunca se consulta ni se muestra. El diseño original llamaba `onNavigate('ClientPortal')`, que deja la vista en blanco para administradores.
+- **Indicadores**: activos, total, incompletos, portal habilitado (exacto solo si total ≤ 50), mayor actividad por requisiciones (`/matrix/clients`), distribución por estatus y reglas verificadas en código (activo requerido en servidor; código único por organización y **sensible a mayúsculas** en MariaDB).
+- **Importar Excel**: vista previa **local** (el archivo no se envía): columnas del diseño y equivalentes en español, valores múltiples, defaults de proyecto/contrato, existentes (comparación sin mayúsculas), repetidos en archivo, incompletos; plantilla descargable. "Guardar en MariaDB" bloqueado. `xlsx` se carga bajo demanda (dependencia existente 0.18.5; tiene avisos de seguridad conocidos para archivos manipulados, por eso solo procesa archivos del propio usuario en su navegador).
+- Pruebas: `tests/frontend/clients_model.test.mjs` (5) y `tests/frontend/clients_ui_e2e.cjs` (23, solo lectura).
 
 ## Red de seguridad
 

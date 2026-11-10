@@ -20,7 +20,7 @@ const api = p => new RegExp('/api/v1/' + p);
 // Contract per module: sidebar label, endpoints that MUST answer 200, and how to obtain a value from
 // MariaDB (via the same API) that MUST appear on screen. Optional `detail`: endpoint opened by "Ver".
 const MODULES = [
-  { label: 'Clientes', endpoints: ['catalogs/clients\\?'], detail: 'catalogs/clients/[0-9a-f-]{36}',
+  { label: 'Clientes', endpoints: ['catalogs/clients\\?', 'matrix/clients'], detail: 'catalogs/clients/[0-9a-f-]{36}',
     expect: async r => (await r('/api/v1/catalogs/clients?page=1&page_size=25&q=&status=all')).items?.[0]?.name },
   { label: 'Proveedores', endpoints: ['catalogs/suppliers\\?'], detail: 'catalogs/suppliers/[0-9a-f-]{36}',
     expect: async r => (await r('/api/v1/catalogs/suppliers?page=1&page_size=25&q=&status=all')).items?.[0]?.name },
