@@ -91,6 +91,11 @@ services:
         read_only: true
         bind: { create_host_path: false }
       - type: bind
+        source: ./migrations
+        target: /migrations
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
         source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Private directory required}/backups
         target: /backups
         read_only: true
@@ -115,6 +120,11 @@ services:
       - type: bind
         source: ./docker
         target: /docker
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ./migrations
+        target: /migrations
         read_only: true
         bind: { create_host_path: false }
       - type: bind

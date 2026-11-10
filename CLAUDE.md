@@ -68,7 +68,7 @@ La variable `SUPPLYFLOW_LOCAL_PRIVATE_DIR` apunta a un directorio externo al pro
 
 ### Traslado fiel automatizado (INT03, 9 nov. 2026)
 
-Para restaurar un respaldo posterior a INT03 en una PC sin volumen de base usar `SupplyFlow-Restore-INT03.ps1` (`-Phase Inspect`, `Restore -Confirmar`, `Start`) y las herramientas `docker/supply-int03/` (perfil Compose `int03-tools`). `accounts.py` es el contrato vigente 77/52; **no** usar `auth_tool.py` ni `docker/supply-recovery/provision.py` sobre 77 tablas. El respaldo va en `SUPPLYFLOW_LOCAL_PRIVATE_DIR\backups\`, nunca en el proyecto (`.gitignore` ignora `/*.sql`). Guía: `docs/int03/INT03_ARRANQUE_Y_D1.md`.
+Para restaurar un respaldo posterior a INT03 en una PC sin volumen de base usar `SupplyFlow-Restore-INT03.ps1` (`-Phase Inspect`, `Restore -Confirmar`, `Start`) y las herramientas `docker/supply-int03/` (perfil Compose `int03-tools`). `accounts.py` es el contrato vigente 77/52; **no** usar `auth_tool.py` ni `docker/supply-recovery/provision.py` sobre 77 tablas. El respaldo va en `SUPPLYFLOW_LOCAL_PRIVATE_DIR\backups\`, nunca en el proyecto (`.gitignore` ignora `/*.sql`). Los respaldos de phpMyAdmin 5.2.3 **omiten las 55 CHECK**: `restore.sh` las repone desde el DDL versionado y valida los datos; nunca restaurar uno de esos respaldos a mano sin ese paso. Guía: `docs/int03/INT03_ARRANQUE_Y_D1.md`.
 
 ### Precondiciones en Windows
 

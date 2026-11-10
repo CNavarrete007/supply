@@ -118,10 +118,12 @@ function Test-Inspect {
   if (-not $r.Json) { Fail "No se pudo analizar el respaldo. Salida: $($r.Text)"; return $false }
   $d = $r.Json
   Say 'INFO' ("Respaldo: {0:N0} bytes - SHA-256 {1}" -f $d.size_bytes, $d.sha256)
-  Say 'INFO' ("Codificacion {0} - tablas {1} - INSERT {2} - completo {3}" -f $d.encoding, $d.tables, $d.counts.insert_statements, $d.completed_marker)
+  Say 'INFO' ("Formato {0} - codificacion {1} - tablas {2} - llaves foraneas {3} - CHECK {4} - INSERT {5} - final del archivo {6}" -f $d.format, $d.encoding, $d.tables, $d.counts.foreign_keys, $d.named_checks, $d.counts.insert_statements, $d.completed_marker)
   if ($d.header) { $d.header | ForEach-Object { Say 'INFO' $_ } }
   if ($d.result -ne 'PASS') { Fail ('Respaldo no apto: ' + (($d.reasons) -join ', ')); return $false }
-  Say 'OK' 'Respaldo apto: 77 tablas, R3C1-HF2/R3C2/R3C3, UTF-8, completo, sin cuentas SQL'
+  if ($d.notes) { $d.notes | ForEach-Object { Say 'NOTA' $_ } }
+  if ($d.format -eq 'phpmyadmin') { Say 'NOTA' 'phpMyAdmin omite las 55 reglas CHECK. Restore las repone desde el DDL versionado y MariaDB valida que tus datos las cumplan; si alguna fila no cumple, se detiene sin modificar datos.' }
+  Say 'OK' 'Respaldo apto: 77 tablas, 256 llaves foraneas, R3C2/R3C3, UTF-8, completo, sin cuentas SQL'
   if ($script:Problems.Count) { return $false }
   return [bool]$true
 }

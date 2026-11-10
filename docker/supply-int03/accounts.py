@@ -9,7 +9,7 @@ Uso (dentro del servicio Compose `int03-accounts-tools`, perfil `int03-tools`):
 Garantías:
 - Nunca crea/borra tablas, nunca modifica filas de negocio, nunca ejecuta migraciones,
   nunca usa REVOKE/DROP USER y nunca cambia la contraseña de una cuenta existente.
-- Se detiene si la base no tiene exactamente 77 tablas con R3C1-HF2/R3C2/R3C3, si una cuenta
+- Se detiene si la base no tiene exactamente 77 tablas, 55 CHECK y 256 llaves con R3C1-HF2/R3C2/R3C3, si una cuenta
   existe con otra contraseña, host distinto o permisos fuera del contrato.
 - Las contraseñas se leen de /run/supply-secrets y nunca se imprimen.
 - Sustituye, para bases 77/52, a auth_tool.py (exige 74 tablas y 17 usuarios importados)
@@ -28,6 +28,8 @@ DB = 'supplyflow_dev'
 SCHEMA_GRANT = r'supplyflow\_dev'
 HOST = '%'
 TABLES_EXPECTED = 77
+CHECKS_EXPECTED = 55   # named table-level CHECK in 01_schema + R3 migrations (phpMyAdmin omits them)
+FKS_EXPECTED = 256
 DOCKER = Path('/docker')
 SECRETS = Path('/run/supply-secrets')
 SOCKET = '/run/mysqld/mysqld.sock'
@@ -119,11 +121,14 @@ def schema_state(db: Db) -> dict:
     r3 = {t: bool(db.scalar('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s', (DB, t))) for t in R3_TABLES}
     clause = db.scalar("SELECT CHECK_CLAUSE FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=%s AND CONSTRAINT_NAME='ck_reqchangeitems_resolution'", (DB,)) or ''
     hf2 = "'add'" in clause and 'snapshot_schema_version' in clause
+    table_checks = int(db.scalar("SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=%s AND LEVEL='Table'", (DB,)) or 0)
+    foreign_keys = int(db.scalar('SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=%s', (DB,)) or 0)
     counts = {}
     if tables:
         for t in ('organizations', 'users', 'clients', 'requisitions', 'requisition_items', 'files'):
             counts[t] = int(db.scalar(f'SELECT COUNT(*) FROM `{DB}`.`{t}`') or 0)
-    return {'version': db.scalar('SELECT VERSION()'), 'tables': tables, 'r3_tables': r3, 'r3c1_hf2_check': hf2, 'row_counts': counts}
+    return {'version': db.scalar('SELECT VERSION()'), 'tables': tables, 'r3_tables': r3, 'r3c1_hf2_check': hf2,
+            'table_checks': table_checks, 'foreign_keys': foreign_keys, 'row_counts': counts}
 
 
 def account_state(db: Db, user: str) -> dict:
@@ -220,6 +225,8 @@ def main() -> int:
             require(schema['tables'] == TABLES_EXPECTED, f"SCHEMA_TABLES_{schema['tables']}_NOT_77")
             require(all(schema['r3_tables'].values()), 'R3_TABLES_MISSING')
             require(schema['r3c1_hf2_check'], 'R3C1_HF2_CHECK_MISSING')
+            require(schema['table_checks'] == CHECKS_EXPECTED, f"TABLE_CHECKS_{schema['table_checks']}_NOT_55")
+            require(schema['foreign_keys'] == FKS_EXPECTED, f"FOREIGN_KEYS_{schema['foreign_keys']}_NOT_256")
             if op == 'provision':
                 report['provision'] = provision(db, spec_all)
                 db.rows('FLUSH PRIVILEGES')

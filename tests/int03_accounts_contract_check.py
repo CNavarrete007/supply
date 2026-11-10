@@ -22,7 +22,8 @@ checks = {
     'only SELECT/INSERT/UPDATE/DELETE': all(p in {'SELECT', 'INSERT', 'UPDATE', 'DELETE'} for s in c.values() for _, p in s['tables']),
     'no REVOKE/DROP in tool SQL': not any(re.search(r'REVOKE|DROP USER|DROP DATABASE|DROP TABLE|DELETE FROM|UPDATE `|TRUNCATE', n.value)
         for n in ast.walk(ast.parse((r / 'docker/supply-int03/accounts.py').read_text())) if isinstance(n, ast.Constant) and isinstance(n.value, str) and not n.value.startswith('SupplyFlow INT03 ·')),
-    'restore never drops': not re.search(r'DROP |rm -', (r / 'docker/supply-int03/restore.sh').read_text()),
+    'restore drops only its own empty reference': (lambda t: re.findall(r'DROP \w+[^\n]*', t) == ['DROP DATABASE \\`$REF\\`"'] and 'REF=supplyflow_int03_reference' in t and not re.search(r'rm -|TRUNCATE|DELETE FROM', t))((r / 'docker/supply-int03/restore.sh').read_text()),
+    'restore requires 55 CHECK and 256 FK': all(x in (r / 'docker/supply-int03/restore.sh').read_text() for x in ('CHECKS_EXPECTED=55', 'FKS_EXPECTED=256', 'TABLES_EXPECTED=77')),
     'tools isolated (network none)': compose.count('network_mode: none') >= 4,
     'tools behind profile': compose.count('profiles: ["int03-tools"]') == 3,
 }
