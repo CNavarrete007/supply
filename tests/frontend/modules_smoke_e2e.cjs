@@ -24,7 +24,9 @@ const MODULES = [
     expect: async r => (await r('/api/v1/catalogs/clients?page=1&page_size=25&q=&status=all')).items?.[0]?.name },
   { label: 'Proveedores', endpoints: ['catalogs/suppliers\\?'], detail: 'catalogs/suppliers/[0-9a-f-]{36}',
     expect: async r => (await r('/api/v1/catalogs/suppliers?page=1&page_size=25&q=&status=all')).items?.[0]?.name },
-  { label: 'Matriz General', endpoints: ['matrix/requisitions\\?', 'matrix/clients'], detail: 'matrix/requisitions/[0-9a-f-]{36}',
+  // Matriz General: tarjetas por cliente; la matriz se abre con la tarjeta "Todos los clientes" (diseño clase_matriz_general).
+  { label: 'Matriz General', endpoints: ['matrix/requisitions\\?', 'matrix/clients', 'recovery/matrix$'], detail: 'matrix/requisitions/[0-9a-f-]{36}',
+    prepare: async page => page.getByRole('button', { name: /Abrir matriz de todos los clientes|Open matrix for all clients/ }).click(),
     expect: async r => (await r('/api/v1/matrix/requisitions?page=1&page_size=25&q=&client=all&has=all')).items?.[0]?.folio },
   { label: 'Reportes', endpoints: ['analytics/requisitions\\?', 'matrix/clients'],
     expect: async r => (await r('/api/v1/analytics/requisitions?page=1&page_size=25')).items?.[0]?.folio },
@@ -66,6 +68,7 @@ const MODULES = [
       const bad = responses.filter(r => r.status !== 200);
       check(`${m.label}: endpoints 200 (${m.endpoints.length})`, !bad.length, bad.map(b => `${b.ep}=${b.status}`).join(' '));
       await page.waitForTimeout(800);
+      if (m.prepare) await m.prepare(page);
       const alerts = await page.locator('main [role=alert]:visible, [role=alert]:visible').count();
       check(`${m.label}: sin mensajes de error`, alerts === 0, `${alerts} alerta(s)`);
       if (expected) {

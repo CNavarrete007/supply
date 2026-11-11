@@ -101,6 +101,48 @@ final class MatrixReadRepository
             SQL;
     }
 
+    /**
+     * Document references for the matrix columns (OC, winning supplier, receipt, invoice). Read-only and additive.
+     * Cancelled/superseded POs and cancelled invoices are excluded with the same rule as the eight-stage policy
+     * (RequisitionRecoveryRepository::associations/stage), so references and stage never contradict each other.
+     */
+    private static function referencesSql(): string
+    {
+        $activePo = "LOWER(COALESCE(po.legacy_status,po.operational_status,'')) NOT IN ('cancelada','sustituida','cancelled','superseded')";
+        $poJoin = 'FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id';
+        $poWhere = "WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id AND {$activePo}";
+        return <<<SQL
+            (SELECT GROUP_CONCAT(DISTINCT po.folio ORDER BY po.folio SEPARATOR '\n') {$poJoin} {$poWhere}) AS purchase_order_refs,
+            (SELECT GROUP_CONCAT(DISTINCT s.legal_name ORDER BY s.legal_name SEPARATOR '\n') {$poJoin}
+                JOIN suppliers s ON s.id=po.supplier_id AND s.organization_id=po.organization_id {$poWhere}) AS po_supplier_refs,
+            (SELECT GROUP_CONCAT(DISTINCT s.legal_name ORDER BY s.legal_name SEPARATOR '\n') FROM awards aw
+                JOIN suppliers s ON s.id=aw.supplier_id AND s.organization_id=aw.organization_id
+                WHERE aw.organization_id=r.organization_id AND aw.requisition_id=r.id AND aw.status_code='active' AND aw.superseded_at IS NULL) AS award_supplier_refs,
+            (SELECT GROUP_CONCAT(DISTINCT gr.folio ORDER BY gr.folio SEPARATOR '\n') {$poJoin}
+                JOIN goods_receipts gr ON gr.organization_id=po.organization_id AND gr.purchase_order_id=po.id {$poWhere}) AS receipt_refs,
+            (SELECT GROUP_CONCAT(DISTINCT inv.folio ORDER BY inv.folio SEPARATOR '\n') FROM invoices inv
+                WHERE inv.organization_id=r.organization_id AND inv.requisition_id=r.id
+                AND LOWER(COALESCE(inv.legacy_status,inv.status_code,'')) NOT IN ('cancelada','cancelled')) AS invoice_refs
+            SQL;
+    }
+
+    /** @return array<string,mixed> Row with *_refs converted to arrays and the winning supplier resolved (PO first, then award). */
+    private static function withReferences(array $row): array
+    {
+        $split = static fn($value): array => $value === null || $value === '' ? [] : array_slice(explode("\n", (string) $value), 0, 20);
+        $poSuppliers = $split($row['po_supplier_refs'] ?? null);
+        $awardSuppliers = $split($row['award_supplier_refs'] ?? null);
+        $row['references'] = [
+            'purchase_orders' => $split($row['purchase_order_refs'] ?? null),
+            'winning_suppliers' => $poSuppliers ?: $awardSuppliers,
+            'winning_supplier_source' => $poSuppliers ? 'purchase_order' : ($awardSuppliers ? 'award' : null),
+            'receipts' => $split($row['receipt_refs'] ?? null),
+            'invoices' => $split($row['invoice_refs'] ?? null),
+        ];
+        unset($row['purchase_order_refs'], $row['po_supplier_refs'], $row['award_supplier_refs'], $row['receipt_refs'], $row['invoice_refs']);
+        return $row;
+    }
+
     private static function headerSql(): string
     {
         return <<<'SQL'
@@ -156,9 +198,9 @@ final class MatrixReadRepository
         $counter = $this->one('SELECT COUNT(*) AS n' . $from . ' WHERE ' . $where, $binds);
         $total = (int) ($counter['n'] ?? 0);
         $offset = ($page - 1) * $pageSize;
-        $sql = 'SELECT ' . self::headerSql() . ', ' . self::countsSql() . $from . ' WHERE ' . $where .
+        $sql = 'SELECT ' . self::headerSql() . ', ' . self::countsSql() . ', ' . self::referencesSql() . $from . ' WHERE ' . $where .
             ' ORDER BY COALESCE(r.request_date, DATE(e.created_at)) DESC,r.id DESC LIMIT ? OFFSET ?';
-        $items = array_map([self::class, 'normalized'], $this->rows($sql, [...$binds, $pageSize, $offset]));
+        $items = array_map(static fn(array $row): array => self::withReferences(self::normalized($row)), $this->rows($sql, [...$binds, $pageSize, $offset]));
 
         // Summary is intentionally unfiltered, so dashboard cards always describe the source collection.
         $summarySelect = 'SELECT COUNT(*) AS total,';
@@ -246,10 +288,12 @@ final class MatrixReadRepository
                 SQL, $p),
             'purchase_orders' => $this->rows(<<<'SQL'
                 SELECT e.public_id AS id,po.folio,po.order_date AS date,po.operational_status AS status,
-                       po.approval_status,po.legacy_status,po.total_amount AS amount,po.currency_code AS currency,po.version_number
+                       po.approval_status,po.legacy_status,po.total_amount AS amount,po.currency_code AS currency,po.version_number,
+                       s.legal_name AS supplier
                 FROM purchase_order_requisitions pr
                 JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
                 JOIN business_entities e ON e.id=po.id AND e.organization_id=po.organization_id
+                LEFT JOIN suppliers s ON s.id=po.supplier_id AND s.organization_id=po.organization_id
                 WHERE pr.organization_id=? AND pr.requisition_id=? ORDER BY po.order_date DESC,po.id DESC LIMIT 100
                 SQL, $p),
             'receipts' => $this->rows(<<<'SQL'

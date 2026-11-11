@@ -1,22 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Search, RefreshCw, ChevronLeft, ChevronRight, Eye, X, FileText,
-  AlertTriangle, LockKeyhole, CheckCircle2, ClipboardList, Building2,
+  Search, RefreshCw, ChevronLeft, ChevronRight, Eye, X, FileText, Printer, FileDown,
+  AlertTriangle, LockKeyhole, CheckCircle2, ClipboardList, Loader2,
 } from 'lucide-react';
 import { listMatrix, matrixClients, matrixDetail } from '../matrixApi';
-
-const HAS_FILTERS = [
-  ['all', 'Todos los documentos', 'All documents'],
-  ['review', 'Con revisión', 'With review'],
-  ['rfq', 'Con RFQ', 'With RFQ'],
-  ['supplier_quote', 'Con oferta de proveedor', 'With supplier quote'],
-  ['customer_quote', 'Con cotización al cliente', 'With customer quote'],
-  ['purchase_order', 'Con OC', 'With purchase order'],
-  ['receipt', 'Con recepción vinculada a OC', 'With PO-linked receipt'],
-  ['delivery', 'Con entrega', 'With delivery'],
-  ['invoice', 'Con factura', 'With invoice'],
-  ['without_purchase_order', 'Sin OC vinculada', 'Without linked PO'],
-];
+import { request as recoveryRequest } from './recovery/api';
+import {
+  P2P_STAGES, PENDING_STAGE, localToday, mergeStages, riskOf, RISKS, stageLabel, clientCards, filterCards, filterRows,
+  stageCounts, DOC_FILTERS, money, projectLine, matrixCsv, matrixPrintHtml,
+} from './generalMatrix/model.mjs';
 
 const DOC_GROUPS = [
   ['reviews', 'Revisiones', 'Reviews'],
@@ -40,20 +32,6 @@ function amount(value, currency, en) {
 function ymd(value) {
   return value ? String(value).slice(0, 10) : '—';
 }
-function lastMilestone(row, en) {
-  if (row?.source_type === 'supplyflow_v07_draft') return en ? 'Draft v0.7 · not approved' : 'Borrador v0.7 · sin aprobar';
-  const names = [
-    ['invoice_count', en ? 'Invoice recorded' : 'Factura registrada'],
-    ['delivery_count', en ? 'Delivery recorded' : 'Entrega registrada'],
-    ['receipt_count', en ? 'Receipt recorded' : 'Recepción registrada'],
-    ['purchase_order_count', en ? 'PO linked' : 'OC vinculada'],
-    ['customer_quote_count', en ? 'Customer quote recorded' : 'Cotización cliente registrada'],
-    ['supplier_quote_count', en ? 'Supplier quote recorded' : 'Oferta proveedor registrada'],
-    ['rfq_count', en ? 'RFQ recorded' : 'RFQ registrada'],
-    ['review_count', en ? 'Review recorded' : 'Revisión registrada'],
-  ];
-  return names.find(([key]) => Number(row?.[key]) > 0)?.[1] ?? (en ? 'Requisition only' : 'Solo requisición');
-}
 function Message({ error, en }) {
   if (!error) return null;
   return <div role="alert" className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-red-800 text-sm flex items-center gap-2">
@@ -62,11 +40,6 @@ function Message({ error, en }) {
 }
 function InfoPair({ label, children }) {
   return <div><dt className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</dt><dd className="text-sm text-slate-800 mt-1 break-words">{children || '—'}</dd></div>;
-}
-function Count({ label, count }) {
-  return <span className="inline-flex gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] text-slate-700 border border-slate-200">
-    <span>{label}</span><strong>{count || 0}</strong>
-  </span>;
 }
 function Details({ id, en, onClose }) {
   const [data, setData] = useState(null);
@@ -143,78 +116,219 @@ function Details({ id, en, onClose }) {
   </div>;
 }
 
-/** Existing App.jsx continues to import GeneralMatrix by name; no navigation rewrite. */
-export function GeneralMatrix({ lang = 'es', language, isEnglish }) {
+// ---------------------------------------------------------------------------------------------------------
+// Matriz General · diseño Grupo Gerez (tarjetas por cliente + matriz consolidada) conectado a MariaDB.
+// Fuentes (solo GET): /matrix/clients, /matrix/requisitions (todas las páginas de 50) y /recovery/matrix
+// (etapas de la política apps-script-eight-stage-matrix). Sin datos de demostración. "Emitir OC" bloqueado:
+// la emisión de OC no está habilitada en el backend (escrituras comerciales aún sin validación integral).
+const PAGE = 25;
+const STAGE_BADGE = ['bg-emerald-100 text-emerald-800', 'bg-slate-100 text-slate-700', 'bg-sky-100 text-sky-800', 'bg-blue-100/80 text-blue-900', 'bg-blue-100 text-blue-800', 'bg-indigo-100 text-indigo-800', 'bg-teal-100 text-teal-800', 'bg-slate-200 text-slate-800'];
+const RISK_BADGE = { overdue: 'bg-blue-100 text-blue-700', on_time: 'bg-emerald-100 text-emerald-700', no_date: 'bg-amber-100 text-amber-800', delivered: 'bg-teal-100 text-teal-700', closed: 'bg-slate-100 text-slate-700', pending: 'bg-amber-100 text-amber-800' };
+const pill = 'px-2.5 py-1 rounded-full text-[10px] font-bold inline-block whitespace-nowrap';
+const RefList = ({ items }) => (items && items.length ? <div className="whitespace-pre leading-tight">{items.join('\n')}</div> : <span className="text-slate-400">—</span>);
+
+export function GeneralMatrix({ lang = 'es', language, isEnglish, onNotify }) {
   const en = Boolean(isEnglish || lang === 'en' || language === 'en');
-  const [searchInput, setSearchInput] = useState('');
-  const [q, setQ] = useState('');
-  const [client, setClient] = useState('all');
-  const [has, setHas] = useState('all');
-  const [page, setPage] = useState(1);
+  const tx = (es, e) => (en ? e : es);
+  const notify = (title, message, type = 'info') => { if (typeof onNotify === 'function') onNotify(title, message, type); };
   const [revision, setRevision] = useState(0);
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState(null);
-  const [data, setData] = useState({ items: [], total: 0, summary: {} });
-  const [clients, setClients] = useState([]);
-  const [clientError, setClientError] = useState(null);
+  const [clients, setClients] = useState({ status: 'loading', error: null, items: [] });
+  const [reqs, setReqs] = useState({ status: 'loading', error: null, items: [], total: 0 });
+  const [stages, setStages] = useState({ status: 'loading', error: null, items: null });
   const [detailId, setDetailId] = useState(null);
-  const pageSize = 25;
 
   useEffect(() => {
-    const timer = setTimeout(() => { setQ(searchInput.trim()); setPage(1); }, 320);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
+    const c = new AbortController();
+    setClients(x => ({ ...x, status: 'loading', error: null }));
+    matrixClients(c.signal).then(r => { if (!c.signal.aborted) setClients({ status: 'ready', error: null, items: r.items || [] }); })
+      .catch(e => { if (!c.signal.aborted) setClients({ status: 'error', error: e, items: [] }); });
+    return () => c.abort();
+  }, [revision]);
+  // Todas las requisiciones, en páginas de 50 (límite del servidor), para calcular tarjetas, filtros, CSV e impresión.
   useEffect(() => {
-    const controller = new AbortController();
-    matrixClients(controller.signal)
-      .then(res => { if (!controller.signal.aborted) setClients(res.items || []); })
-      .catch(err => { if (!controller.signal.aborted) setClientError(err); });
-    return () => controller.abort();
+    const c = new AbortController();
+    (async () => {
+      setReqs(x => ({ ...x, status: 'loading', error: null }));
+      try {
+        let page = 1, items = [], total = 0;
+        do {
+          const r = await listMatrix({ page, pageSize: 50, q: '', client: 'all', has: 'all' }, c.signal);
+          total = Number(r.total) || 0; items = items.concat(r.items || []); page += 1;
+          if (!c.signal.aborted) setReqs(x => ({ ...x, items, total }));
+        } while (items.length < total && page <= 400 && !c.signal.aborted);
+        if (!c.signal.aborted) setReqs({ status: 'ready', error: null, items, total });
+      } catch (e) { if (!c.signal.aborted) setReqs(x => ({ ...x, status: 'error', error: e })); }
+    })();
+    return () => c.abort();
   }, [revision]);
   useEffect(() => {
-    const controller = new AbortController();
-    setBusy(true); setError(null);
-    listMatrix({ page, pageSize, q, client, has }, controller.signal)
-      .then(res => { if (!controller.signal.aborted) setData(res); })
-      .catch(err => { if (!controller.signal.aborted) { setError(err);setData({ items: [], total: 0, summary: {} }); } })
-      .finally(() => { if (!controller.signal.aborted) setBusy(false); });
-    return () => controller.abort();
-  }, [page, q, client, has, revision]);
-  const rows = Array.isArray(data.items) ? data.items : [];
-  const summary = data.summary || {};
-  const lastPage = Math.max(1, Math.ceil(Number(data.total || 0) / pageSize));
-  const sortedClients = useMemo(() => clients, [clients]);
-  return <div className="space-y-6">
-    <header className="bg-slate-900 text-white rounded-2xl px-6 py-6 flex flex-wrap gap-4 items-center justify-between">
-      <div><h1 className="text-2xl font-black flex items-center gap-3"><ClipboardList size={26}/>{en ? 'General Process Matrix' : 'Matriz General del Proceso'}</h1><p className="text-slate-300 text-sm mt-2">{en ? 'Real imported requisitions and related documents · MariaDB read-only' : 'Requisiciones y documentos migrados reales · MariaDB · solo consulta'}</p></div>
-      <button type="button" onClick={() => setRevision(n => n + 1)} className="rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 flex gap-2 items-center"><RefreshCw size={17}/>{en ? 'Refresh' : 'Actualizar'}</button>
-    </header>
-    <section className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3" aria-label={en ? 'Requisition summary' : 'Resumen de requisiciones'}>
-      {[
-        [en ? 'Requisitions' : 'Requisiciones', summary.total],
-        [en ? 'With RFQ' : 'Con RFQ', summary.with_rfq],
-        [en ? 'With customer quote' : 'Con cotización cliente', summary.with_customer_quote],
-        [en ? 'With PO' : 'Con OC', summary.with_purchase_order],
-        [en ? 'With delivery' : 'Con entrega', summary.with_delivery],
-      ].map(([label,count]) => <div key={label} className="bg-white border border-slate-200 rounded-xl px-4 py-4"><div className="text-xs text-slate-500 font-semibold">{label}</div><div className="font-black text-3xl text-slate-900 mt-1">{error ? '—' : (count ?? '…')}</div></div>)}
-    </section>
-    <p className="text-sm text-slate-700 bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-2 items-start"><CheckCircle2 size={18} className="text-blue-600 shrink-0"/><span>{en ? 'Milestones indicate linked documents, not official workflow statuses. Receipts are linked through purchase orders, not proof of quantity received by requisition line. No cross-currency totals.' : 'Los hitos se infieren de documentos vinculados; no equivalen a estatus oficiales. Las recepciones se vinculan mediante OC y no prueban cantidades recibidas por partida. No se suman importes en diferentes monedas.'}</span></p>
-    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-      <div className="px-5 py-4 border-b flex flex-wrap justify-between items-center gap-3"><h2 className="font-bold text-slate-900 flex items-center gap-2"><Building2 size={18}/>{en ? 'Requisition records' : 'Matriz de requisiciones'}</h2><span className="text-sm text-slate-500">{data.total ?? 0} {en ? 'matches' : 'coincidencias'}</span></div>
-      <div className="p-4 grid md:grid-cols-3 gap-3 border-b bg-slate-50">
-        <div className="relative"><Search size={17} className="absolute left-3 top-3 text-slate-400"/><input type="search" value={searchInput} onChange={ev => setSearchInput(ev.target.value)} aria-label={en ? 'Search requisitions' : 'Buscar requisiciones'} placeholder={en ? 'Folio, client, project, requester...' : 'Folio, cliente, proyecto, solicitante...'} className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm bg-white"/></div>
-        <select aria-label={en ? 'Filter by client' : 'Filtrar por cliente'} value={client} onChange={ev => { setClient(ev.target.value);setPage(1); }} className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white text-sm"><option value="all">{en ? 'All clients' : 'Todos los clientes'}</option>{sortedClients.map(c => <option key={c.id} value={c.id}>{c.name} ({c.requisitions})</option>)}</select>
-        <select aria-label={en ? 'Filter by document' : 'Filtrar por documento'} value={has} onChange={ev => { setHas(ev.target.value);setPage(1); }} className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white text-sm">{HAS_FILTERS.map(([value,es,english]) => <option key={value} value={value}>{en ? english : es}</option>)}</select>
+    const c = new AbortController();
+    setStages({ status: 'loading', error: null, items: null });
+    recoveryRequest('/matrix', { signal: c.signal }).then(r => { if (!c.signal.aborted) setStages({ status: 'ready', error: null, items: r.items || [] }); })
+      .catch(e => { if (!c.signal.aborted) setStages({ status: 'error', error: e, items: null }); });
+    return () => c.abort();
+  }, [revision]);
+
+  const day = localToday();
+  const ready = reqs.status === 'ready';
+  const rows = useMemo(() => mergeStages(reqs.items, stages.items), [reqs.items, stages.items]);
+  const cards = useMemo(() => clientCards(clients.items, rows, day), [clients.items, rows, day]);
+  const [cardTerm, setCardTerm] = useState('');
+  const shownCards = useMemo(() => filterCards(cards.items, cardTerm), [cards.items, cardTerm]);
+  const [selected, setSelected] = useState(null);
+  const [term, setTerm] = useState('');
+  const [stage, setStage] = useState('all');
+  const [doc, setDoc] = useState('all');
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [selected, term, stage, doc]);
+  const scope = useMemo(() => filterRows(rows, { client: selected || 'ALL' }), [rows, selected]);
+  const counts = useMemo(() => stageCounts(scope), [scope]);
+  const visible = useMemo(() => filterRows(rows, { client: selected || 'ALL', term, stage, doc }), [rows, selected, term, stage, doc]);
+  const lastPage = Math.max(1, Math.ceil(visible.length / PAGE));
+  const pageRows = visible.slice((page - 1) * PAGE, page * PAGE);
+  const current = selected && selected !== 'ALL' ? cards.items.find(c => c.id === selected) : null;
+  const clientTitle = current?.name || tx('Todos los clientes', 'All clients');
+  const num = v => (ready ? v : '…');
+  const stop = e => e.stopPropagation();
+  const open = (e, id) => { e.stopPropagation(); setSelected(id); };
+  const stagesDenied = stages.status === 'error' && [401, 403].includes(stages.error?.status);
+
+  const exportCsv = e => {
+    e.stopPropagation();
+    if (!visible.length) { notify(tx('Exportar CSV', 'Export CSV'), tx('No hay requisiciones para este cliente o filtro.', 'No requisitions for this client or filter.'), 'warning'); return; }
+    const url = URL.createObjectURL(new Blob([matrixCsv(visible, en, day)], { type: 'text/csv;charset=utf-8;' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = `Matriz_${String(current?.code || 'GENERAL').replace(/[^\w-]+/g, '_')}_${day}.csv`;
+    document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    notify(tx('Exportar CSV', 'Export CSV'), tx(`Se exportaron ${visible.length} requisiciones (generado en tu navegador).`, `${visible.length} requisitions exported (generated in your browser).`));
+  };
+  const print = e => {
+    e.stopPropagation();
+    if (!visible.length) { notify(tx('Imprimir', 'Print'), tx('No hay requisiciones para este cliente o filtro.', 'No requisitions for this client or filter.'), 'warning'); return; }
+    const w = window.open('', '_blank', 'width=1100,height=800');
+    if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana de impresión; permite ventanas emergentes para este sitio.', 'The browser blocked the print window; allow pop-ups for this site.'), 'warning'); return; }
+    w.document.write(matrixPrintHtml(visible, { en, clientTitle, day }));
+    w.document.close(); w.focus();
+    setTimeout(() => { w.print(); w.close(); }, 250);
+  };
+
+  const renderCard = (item, isAll = false) => {
+    const isSelected = selected === item.id;
+    return <div key={item.id} role="button" tabIndex={0} aria-pressed={isSelected} aria-label={`${tx('Abrir matriz de', 'Open matrix for')} ${isAll ? tx('todos los clientes', 'all clients') : item.name}`}
+      onClick={e => open(e, item.id)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(e, item.id); } }}
+      className={`group relative bg-white border rounded-2xl p-3.5 cursor-pointer transition-all duration-200 flex flex-col justify-between hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${isSelected ? 'border-blue-500 ring-2 ring-blue-500/10 shadow-sm bg-gradient-to-b from-blue-50/30 to-white' : 'border-slate-200/90 hover:border-blue-300'}`}>
+      <div>
+        <div className="flex items-start gap-2.5 mb-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-sm shadow-blue-500/20">{isAll ? tx('TC', 'AC') : item.badge}</div>
+          <div className="min-w-0 flex-1">
+            <h4 title={isAll ? undefined : item.name} className="text-[11px] font-extrabold text-slate-800 leading-tight tracking-tight uppercase truncate group-hover:text-blue-600 transition-colors">{isAll ? tx('Todos los clientes', 'All clients') : item.name}</h4>
+            {isAll ? <p className="text-[10px] text-slate-400 font-medium">{item.clients} {tx('clientes', 'clients')}</p> : <p className="text-[10px] text-slate-400 font-medium truncate">No. {item.code}</p>}
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-1 py-1.5 border-y border-slate-100 mb-2">
+          {[[item.requisitions, tx('Requisiciones', 'Requisitions')], [item.withPO, tx('Con OC', 'With PO')], [item.withInvoice, tx('Con factura', 'With Invoice')]].map(([n, label]) =>
+            <div key={label} className="text-center"><span className="block text-sm font-black text-slate-800 tabular-nums">{num(n)}</span><span className="text-[9px] text-slate-400 block font-medium -mt-0.5 leading-tight">{label}</span></div>)}
+        </div>
       </div>
-      <Message error={clientError} en={en}/><Message error={error} en={en}/>
-      {busy && <p className="p-6 text-sm text-slate-500">{en ? 'Loading requisitions from MariaDB...' : 'Consultando requisiciones en MariaDB...'}</p>}
-      {!busy && !error && <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-100 text-slate-700 uppercase text-xs"><tr>{(en ? ['Requisition','Client / project','Description','Related docs','Budget','Required','Observed milestone','Details'] : ['Requisición','Cliente / proyecto','Descripción','Documentos vinculados','Presupuesto','Requerida','Último hito observado','Detalle']).map(text => <th key={text} scope="col" className="px-3 py-3 whitespace-nowrap">{text}</th>)}</tr></thead><tbody>
-        {rows.map(row => <tr key={row.id} className="border-t align-top hover:bg-slate-50"><td className="p-3 min-w-[130px]"><strong>{row.folio}</strong><div className="text-xs text-slate-500 mt-1">{ymd(row.request_date)}</div>{row.source_type === 'supplyflow_v07_draft' && <div className="mt-1 text-amber-700 text-xs font-semibold">{en ? 'Draft v0.7' : 'Borrador v0.7'}</div>}</td><td className="p-3 min-w-[220px]"><div className="font-semibold">{row.client_name}</div><div className="text-xs text-slate-500">{show(row.project)}</div></td><td className="p-3 min-w-[240px] max-w-sm"><p className="line-clamp-3">{show(row.description)}</p><div className="text-xs text-slate-500 mt-1">{Number(row.line_count)} {en ? 'lines' : 'partidas'}</div></td><td className="p-3 min-w-[150px]"><div className="flex flex-wrap gap-1"><Count label="RFQ" count={row.rfq_count}/><Count label={en ? 'Supplier' : 'Prov.'} count={row.supplier_quote_count}/><Count label={en ? 'Customer' : 'Cliente'} count={row.customer_quote_count}/><Count label="OC" count={row.purchase_order_count}/><Count label={en ? 'Del.' : 'Ent.'} count={row.delivery_count}/></div></td><td className="p-3 min-w-[140px]">{amount(row.budget_amount,row.currency_code,en)}</td><td className="p-3 whitespace-nowrap">{ymd(row.need_date)}</td><td className="p-3 min-w-[145px]"><span className="bg-blue-50 text-blue-900 border border-blue-200 rounded-lg px-2 py-1 text-xs inline-block">{lastMilestone(row,en)}</span></td><td className="p-3"><button type="button" onClick={() => setDetailId(row.id)} className="border border-blue-200 rounded-lg px-3 py-2 text-blue-700 hover:bg-blue-50 flex items-center gap-2"><Eye size={16}/>{en ? 'View' : 'Ver'}</button></td></tr>)}
-        {rows.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-500">{en ? 'No matching requisitions.' : 'Sin requisiciones para estos filtros.'}</td></tr>}
-      </tbody></table></div>}
-      <footer className="border-t p-4 flex flex-wrap justify-between items-center gap-3 text-sm text-slate-600"><span>{en ? 'Page' : 'Página'} {page} / {lastPage} · {Number(data.total || 0)} {en ? 'records' : 'registros'}</span><div className="flex gap-2"><button type="button" className="p-2 rounded-lg border disabled:opacity-40" disabled={busy || page <= 1} onClick={() => setPage(n => Math.max(1,n-1))} aria-label={en ? 'Previous' : 'Anterior'}><ChevronLeft size={18}/></button><button type="button" className="p-2 rounded-lg border disabled:opacity-40" disabled={busy || page >= lastPage} onClick={() => setPage(n => n+1)} aria-label={en ? 'Next' : 'Siguiente'}><ChevronRight size={18}/></button></div></footer>
+      <div>
+        {isAll
+          ? <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5"><span>{num(item.overdue)} {tx('vencidas', 'overdue')}</span><span className="font-semibold text-slate-600" title={tx('Antigüedad promedio, desde la fecha de solicitud, de las requisiciones abiertas (sin factura).', 'Average age since request date of open requisitions (not invoiced).')}>{tx('Prom.', 'Avg.')} {ready ? (item.avgAge === null ? '—' : `${item.avgAge}d`) : '…'}</span></div>
+          : <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 pt-0.5"><span>{num(item.projects)} {tx('proyectos', 'projects')} · {num(item.contracts)} {tx('contratos', 'contracts')}</span><span className="shrink-0">{num(item.overdue)} {tx('vencidas', 'overdue')}</span></div>}
+        <div className="flex items-center justify-end text-[10px] font-bold text-slate-500 group-hover:text-blue-600 mt-2 transition-colors"><span>{isAll ? tx('Abrir todo', 'Open all') : tx('Abrir cliente', 'Open client')}</span><ChevronRight className="w-3 h-3 ml-0.5" /></div>
+      </div>
+    </div>;
+  };
+
+  return <>
+    <div onClick={() => setSelected(null)} className="space-y-6 bg-slate-100/60 p-4 sm:p-6 rounded-3xl min-h-screen cursor-pointer">
+      <div className="flex flex-wrap items-center justify-between gap-3 cursor-default" onClick={stop}>
+        <div><h2 className="text-xl font-extrabold text-slate-900 tracking-tight">{tx('Matriz general del proceso', 'General Process Matrix')}</h2><p className="text-xs text-slate-500 mt-0.5">{tx('Vista consolidada de cada requisición y sus documentos relacionados.', 'Consolidated view of each requisition and its related documents.')}</p></div>
+        <div className="flex items-center gap-2">
+          <span className="px-3 py-1 bg-emerald-50 text-emerald-700 font-bold text-[10px] rounded-full border border-emerald-200">{tx('Fuente: MariaDB', 'Source: MariaDB')}</span>
+          <button type="button" onClick={() => setRevision(n => n + 1)} className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5" />{tx('Actualizar', 'Refresh')}</button>
+        </div>
+      </div>
+
+      <div onClick={stop} className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4 cursor-default">
+        <div><h3 className="text-sm font-bold text-slate-800">{tx('Matriz general por cliente', 'General Matrix by Client')}</h3><p className="text-xs text-slate-400">{tx('Selecciona un cliente para abrir su matriz consolidada. Haz clic en el fondo fuera de las tarjetas para cerrarla.', 'Select a client to open their consolidated matrix. Click the background outside the cards to close it.')}</p></div>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="relative flex-1"><Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input type="search" aria-label={tx('Buscar cliente', 'Search client')} placeholder={tx('Buscar cliente, proyecto, contrato o RFC...', 'Search client, project, contract, or RFC...')} value={cardTerm} onChange={e => setCardTerm(e.target.value)} className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" /></div>
+          <div className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-2 rounded-xl border border-blue-100 shrink-0 self-start sm:self-auto">{shownCards.length} {tx('de', 'of')} {cards.items.length} {tx('clientes', 'clients')}</div>
+        </div>
+        {clients.status === 'error' && <Message error={clients.error} en={en} />}
+        {reqs.status === 'error' && <Message error={reqs.error} en={en} />}
+        {reqs.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx(`Consultando requisiciones en MariaDB… ${reqs.items.length}${reqs.total ? ` de ${reqs.total}` : ''}`, `Loading requisitions from MariaDB… ${reqs.items.length}${reqs.total ? ` of ${reqs.total}` : ''}`)}</p>}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 gap-3.5 pt-2">
+          {!cardTerm.trim() && renderCard(cards.all, true)}
+          {shownCards.map(item => renderCard(item))}
+        </div>
+        {clients.status === 'ready' && cardTerm.trim() && !shownCards.length && <p className="text-xs text-slate-400 text-center py-4">{tx('Ningún cliente coincide con la búsqueda.', 'No client matches the search.')}</p>}
+      </div>
+
+      {selected !== null && <div onClick={stop} className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4 cursor-default" data-testid="client-matrix">
+        <div className="flex items-center justify-between gap-3 pb-2 border-b border-slate-100">
+          <div className="min-w-0"><h2 className="text-sm font-extrabold text-slate-900 tracking-tight">{clientTitle} · {tx('Matriz general del proceso', 'General Process Matrix')}</h2>
+            <p className="text-[11px] text-slate-400 mt-0.5">{visible.length} {tx('requisiciones visibles', 'visible requisitions')}{ready ? '' : tx(' (cargando…)', ' (loading…)')} · {visible.filter(r => r.purchase_order_count > 0).length} {tx('con OC', 'with PO')} · {visible.filter(r => r.invoice_count > 0).length} {tx('con factura', 'with invoice')}</p></div>
+          <button type="button" onClick={() => setSelected(null)} aria-label={tx('Cerrar matriz', 'Close matrix')} title={tx('Cerrar matriz', 'Close matrix')} className="inline-flex items-center justify-center text-xs font-semibold text-slate-700 hover:bg-slate-200 p-2 rounded-lg transition-colors cursor-pointer">❌</button>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+          <div className="flex flex-col md:flex-row md:items-center gap-3 flex-1 min-w-[min(100%,560px)] max-w-4xl">
+            <input type="search" aria-label={tx('Buscar en la matriz', 'Search the matrix')} placeholder={tx('Buscar folio, cliente, proyecto, OC, proveedor...', 'Search folio, client, project, PO, supplier...')} value={term} onChange={e => setTerm(e.target.value)} className="flex-1 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-2xs" />
+            <select aria-label={tx('Etapa', 'Stage')} value={stage} onChange={e => setStage(e.target.value)} className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-2xs md:min-w-[200px]">
+              <option value="all">{tx('Todas las etapas', 'All stages')}</option>
+              {P2P_STAGES.map((s, i) => <option key={s[0]} value={String(i)}>{en ? s[1] : s[0]} ({counts.counts[i]})</option>)}
+              {counts.pending > 0 && <option value={PENDING_STAGE}>{stageLabel(null, en)} ({counts.pending})</option>}
+            </select>
+            <select aria-label={tx('Documentos', 'Documents')} value={doc} onChange={e => setDoc(e.target.value)} className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-2xs md:min-w-[180px]">
+              {DOC_FILTERS.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2 ml-auto whitespace-nowrap">
+            <button type="button" onClick={print} className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors shadow-2xs cursor-pointer"><Printer className="w-3.5 h-3.5" />{tx('Imprimir', 'Print')}</button>
+            <button type="button" onClick={exportCsv} className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors shadow-2xs shadow-emerald-600/20 cursor-pointer"><FileDown className="w-3.5 h-3.5" />{tx('Exportar CSV', 'Export CSV')}</button>
+          </div>
+        </div>
+        {stagesDenied && <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">{tx('Las etapas requieren acceso al módulo de Requisiciones; el riesgo se estima con la fecha requerida y los documentos registrados.', 'Stages require access to the Requisitions module; risk is estimated from the required date and recorded documents.')}</p>}
+        {stages.status === 'error' && !stagesDenied && <Message error={stages.error} en={en} />}
+        <div className="overflow-x-auto rounded-xl border border-slate-200/80 shadow-2xs">
+          <table className="w-full text-left border-collapse">
+            <thead><tr className="bg-slate-50/90 text-[10px] font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200">
+              <th className="py-3 px-2.5">{tx('Requisición', 'Requisition')}</th><th className="py-3 px-2.5">{tx('Cliente / Proyecto', 'Client / Project')}</th><th className="py-3 px-2.5 whitespace-nowrap">{tx('Folio interno', 'Internal folio')}</th>
+              <th className="py-3 px-2.5 text-center">{tx('Cotizaciones', 'Quotes')}</th><th className="py-3 px-2.5">{tx('Proveedor ganador', 'Winning supplier')}</th><th className="py-3 px-2.5">{tx('OC', 'PO')}</th>
+              <th className="py-3 px-2.5">{tx('Recepción', 'Reception')}</th><th className="py-3 px-2.5">{tx('Factura', 'Invoice')}</th><th className="py-3 px-2.5" title={tx('Presupuesto de la requisición; no es gasto real.', 'Requisition budget; not actual spending.')}>{tx('Monto', 'Amount')}</th>
+              <th className="py-3 px-2.5 whitespace-nowrap">{tx('Fecha requerida', 'Required date')}</th><th className="py-3 px-2.5">{tx('Etapa', 'Stage')}</th>
+              <th className="py-3 px-2.5 text-center sticky right-0 bg-slate-50 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]">{tx('Riesgo / Acción', 'Risk / Action')}</th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-100 text-[11px] font-medium text-slate-700">
+              {pageRows.map(r => { const ref = r.references || {}; const risk = riskOf(r, day); return <tr key={r.id} className="hover:bg-slate-50/70 transition-colors align-top">
+                <td className="py-3 px-2.5 whitespace-nowrap"><div className="font-black text-slate-900">{r.folio}</div>{r.client_reference && <div className="text-[9.5px] text-slate-400">{tx('Ref. cliente', 'Client ref.')}: {r.client_reference}</div>}{r.source_type === 'supplyflow_v07_draft' && <div className="text-[9.5px] text-amber-700 font-semibold">{tx('Borrador v0.7', 'Draft v0.7')}</div>}</td>
+                <td className="py-3 px-2.5 min-w-[180px] max-w-[240px]"><p className="font-extrabold text-slate-800 leading-tight uppercase text-[10.5px]">{r.client_name}</p><p className="text-[9.5px] text-slate-400 font-medium mt-0.5">{projectLine(r, en) || '—'}</p></td>
+                <td className="py-3 px-2.5 text-slate-500 whitespace-nowrap">{show(r.internal_reference)}</td>
+                <td className="py-3 px-2.5 text-center"><div className="font-bold text-slate-800">{Number(r.supplier_quote_count) || 0}</div>{r.rfq_count > 0 && <div className="text-[9.5px] text-slate-400 whitespace-nowrap">RFQ {r.rfq_count}</div>}</td>
+                <td className="py-3 px-2.5 text-slate-600 font-semibold text-[10.5px] min-w-[140px]"><RefList items={ref.winning_suppliers} />{ref.winning_supplier_source === 'award' && <div className="text-[9.5px] text-slate-400 font-medium">{tx('por adjudicación', 'by award')}</div>}</td>
+                <td className="py-3 px-2.5 text-slate-600 font-medium text-[10px] whitespace-nowrap"><RefList items={ref.purchase_orders} /></td>
+                <td className="py-3 px-2.5 text-slate-500 whitespace-nowrap"><RefList items={ref.receipts} /></td>
+                <td className="py-3 px-2.5 text-slate-500 whitespace-nowrap"><RefList items={ref.invoices} /></td>
+                <td className="py-3 px-2.5 font-bold text-slate-800 whitespace-nowrap">{money(r.budget_amount, r.currency_code, en)}</td>
+                <td className="py-3 px-2.5 text-slate-600 font-semibold whitespace-nowrap">{ymd(r.need_date)}</td>
+                <td className="py-3 px-2.5 whitespace-nowrap">{r.stage_index === undefined ? <span className="text-slate-400" title={tx('Etapa no disponible', 'Stage not available')}>—</span> : <span className={`${pill} ${r.stage_index === null ? 'bg-amber-100 text-amber-800' : STAGE_BADGE[r.stage_index]}`}>{stageLabel(r.stage_index, en)}</span>}</td>
+                <td className="py-3 px-2.5 sticky right-0 bg-white shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]"><div className="flex flex-col items-stretch gap-1 whitespace-nowrap min-w-[96px]">
+                  <span className={`${pill} text-center ${RISK_BADGE[risk]}`}>{RISKS[risk][en ? 1 : 0]}</span>
+                  <button type="button" onClick={() => setDetailId(r.id)} className="px-2 py-1 bg-white border border-blue-200 hover:bg-blue-50 text-blue-700 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer"><Eye className="w-3 h-3" />{tx('Ver', 'View')}</button>
+                  <button type="button" disabled title={tx('Emisión de OC deshabilitada: las escrituras comerciales (RFQ, cotizaciones y OC) siguen bloqueadas hasta su validación integral.', 'PO issuance disabled: commercial writes (RFQ, quotes and POs) remain blocked until fully validated.')} className="px-2 py-1 bg-slate-200 text-slate-500 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-not-allowed"><LockKeyhole className="w-3 h-3" />{tx('Emitir OC', 'Issue PO')}</button>
+                </div></td>
+              </tr>; })}
+              {!pageRows.length && <tr><td colSpan={12} className="py-8 text-center text-slate-400 text-xs font-semibold">{ready ? tx('No se encontraron requisiciones para este cliente o filtro seleccionado.', 'No requisitions found for this client or selected filter.') : tx('Consultando requisiciones…', 'Loading requisitions…')}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex flex-wrap gap-3 items-center justify-between text-xs text-slate-600"><span>{tx('Página', 'Page')} {page} / {lastPage} · {visible.length} {tx('registros', 'records')}</span>
+          <div className="flex gap-2"><button type="button" className="p-2 rounded-lg border border-slate-200 disabled:opacity-40" disabled={page <= 1} onClick={() => setPage(n => Math.max(1, n - 1))} aria-label={tx('Anterior', 'Previous')}><ChevronLeft size={16} /></button><button type="button" className="p-2 rounded-lg border border-slate-200 disabled:opacity-40" disabled={page >= lastPage} onClick={() => setPage(n => n + 1)} aria-label={tx('Siguiente', 'Next')}><ChevronRight size={16} /></button></div></div>
+        <p className="text-[11px] text-slate-600 bg-blue-50 border border-blue-200 rounded-xl p-3 flex gap-2 items-start"><CheckCircle2 size={16} className="text-blue-600 shrink-0" /><span>{tx('Etapas calculadas por el servidor con la política de 8 etapas del proceso original. OC, recepción y factura excluyen documentos cancelados o sustituidos; el proveedor ganador es el de la OC vigente o, si aún no hay OC, el de la adjudicación. El monto es el presupuesto de la requisición, no gasto real. Las recepciones se vinculan mediante OC y no prueban cantidades recibidas por partida.', 'Stages computed by the server with the original eight-stage policy. PO, reception and invoice exclude cancelled or superseded documents; the winning supplier is the one on the current PO or, if there is no PO yet, the awarded one. Amount is the requisition budget, not actual spending. Receipts are linked through POs and do not prove quantities received per line.')}</span></p>
+        <div className="text-[11px] text-amber-900 bg-amber-50 rounded-xl border border-amber-200 p-3 flex items-start gap-2"><LockKeyhole size={15} className="shrink-0" /><span>{tx('Solo consulta. Emitir OC, aprobar, editar y descargar adjuntos privados siguen deshabilitados; los documentos en conciliación (referencias faltantes) no se presentan como vínculos validados.', 'Read-only. Issuing POs, approving, editing and downloading private files remain disabled; documents under reconciliation (missing references) are not shown as validated links.')}</span></div>
+      </div>}
     </div>
-    <div className="text-xs text-amber-900 bg-amber-50 rounded-xl border border-amber-200 p-4 flex items-start gap-2"><LockKeyhole size={16} className="shrink-0"/><span>{en ? 'Read-only. Documents retained in import reconciliation, including records with missing parents, are not represented as validated links. Creating, approving, downloading private files and editing remain disabled.' : 'Solo consulta. Los documentos retenidos en conciliación, incluidos los que tienen referencias faltantes, no se presentan como vínculos validados. Crear, aprobar, descargar adjuntos privados y editar siguen deshabilitados.'}</span></div>
-    {detailId && <Details id={detailId} en={en} onClose={() => setDetailId(null)}/>}
-  </div>;
+    {detailId && <Details id={detailId} en={en} onClose={() => setDetailId(null)} />}
+  </>;
 }
