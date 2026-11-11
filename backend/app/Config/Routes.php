@@ -22,6 +22,15 @@ $routes->get('api/v1/catalogs/supplier-offerings', 'CatalogDirectoryController::
 $routes->get('api/v1/catalogs/suppliers', 'CatalogDirectoryController::suppliers');
 $routes->get('api/v1/catalogs/suppliers/(:segment)', 'CatalogDirectoryController::supplier/$1');
 // SupplyFlow v0.5: read-only requisition matrix scoped by Master Admin organization.
+// Cotizaciones y Comparativo: read-only, Master Admin only (RFQ sending, quote capture, awards and decisions stay blocked).
+$routes->get('api/v1/quotes/rfqs', 'QuoteController::rfqs');
+$routes->get('api/v1/quotes/rfqs/(:segment)', 'QuoteController::rfq/$1');
+$routes->get('api/v1/quotes/supplier-quotes', 'QuoteController::supplierQuotes');
+$routes->get('api/v1/quotes/supplier-quotes/(:segment)', 'QuoteController::supplierQuote/$1');
+$routes->get('api/v1/quotes/comparison', 'QuoteController::comparison');
+$routes->get('api/v1/quotes/customer-quotes', 'QuoteController::customerQuotes');
+$routes->get('api/v1/quotes/customer-quotes/(:segment)', 'QuoteController::customerQuote/$1');
+$routes->get('api/v1/quotes/awards', 'QuoteController::awards');
 // Órdenes de Compra: read-only, Master Admin only (issuing/authorizing/amending stays blocked).
 $routes->get('api/v1/purchase-orders', 'PurchaseOrderController::index');
 $routes->get('api/v1/purchase-orders/issuance', 'PurchaseOrderController::issuance');

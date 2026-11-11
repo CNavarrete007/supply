@@ -1,7 +1,8 @@
 // Reportes · E2E de interfaz (Chromium) contra Vite + API + MariaDB SINTÉTICAS. Solo lectura: toda petición /api
 // que no sea GET (salvo login/logout) se aborta y hace fallar la prueba. Los valores esperados se calculan en la
 // prueba a partir de la propia API (no se fijan cifras), con los documentos sintéticos de la Matriz General
-// (OC-QA-0001 USD 1,500 vigente en ...SF4EA4 con presupuesto USD; OC-QA-0003 USD 2,600 en ...SCF210 con presupuesto MXN).
+// (OC-QA-0001 vigente en ...SF4EA4 con presupuesto USD; OC-QA-0003 en ...SCF210 con presupuesto MXN). Los importes de esas OC
+// se toman de la versión vigente que devuelve /api/v1/purchase-orders (fuente independiente del reporte).
 // Uso: SF_UI=http://127.0.0.1:5173 SF_QA_PASSWORD=... [SF_SHOTS=<dir>] node tests/frontend/reports_ui_e2e.cjs
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -44,6 +45,8 @@ const fmt = (n, c) => `${n < 0 ? '-' : ''}$${new Intl.NumberFormat('es-MX', { mi
       return { total: rows.length, closed: rows.filter(r => stageById.get(r.id) === 7).length,
         overdue: rows.filter(r => { const s = stageById.get(r.id); return s !== null && s !== undefined && s < 6 && r.need_date && r.need_date < today; }).length, budget };
     };
+    const pos = (await api('/api/v1/purchase-orders?page=1&page_size=50')).items; const poTotal = f => Number(pos.find(x => x.folio === f).total_amount);
+    const po1 = poTotal('OC-QA-0001'), po3 = poTotal('OC-QA-0003');
     const kpi = async label => (await page.getByTestId('management-report').getByText(label, { exact: true }).locator('xpath=..').innerText()).replace(/\s+/g, ' ').trim();
 
     const waits = ['matrix/clients', 'matrix/requisitions\\?page=1&page_size=50', 'recovery/matrix$'].map(ep => page.waitForResponse(r => new RegExp('/api/v1/' + ep).test(r.url()), { timeout: 20000 }).then(r => r.status()).catch(() => 'sin respuesta'));
@@ -63,10 +66,10 @@ const fmt = (n, c) => `${n < 0 ? '-' : ''}$${new Intl.NumberFormat('es-MX', { mi
       `${await kpi('Requisiciones')} | ${await kpi('Cerradas')} | ${await kpi('Vencidas')} vs ${e.total}/${e.closed}/${e.overdue}`);
     const budgetText = await kpi('Presupuesto');
     check('presupuesto por moneda, sin mezclar', Object.entries(e.budget).every(([c, v]) => budgetText.includes(fmt(v, c))), budgetText);
-    check('comprado = OC vigentes únicas (sin la cancelada)', (await kpi('Comprado')).includes(fmt(4100, 'USD')), await kpi('Comprado'));
-    check('ahorro/desviación solo comparable (USD: 15,000 − 1,500)', (await kpi('Ahorro / desviación')).includes(fmt(13500, 'USD')) && !(await kpi('Ahorro / desviación')).includes('MXN'), await kpi('Ahorro / desviación'));
+    check('comprado = OC vigentes únicas (sin la cancelada)', (await kpi('Comprado')).includes(fmt(po1 + po3, 'USD')), await kpi('Comprado'));
+    check('ahorro/desviación solo comparable (USD: 15,000 − OC-QA-0001)', (await kpi('Ahorro / desviación')).includes(fmt(15000 - po1, 'USD')) && !(await kpi('Ahorro / desviación')).includes('MXN'), await kpi('Ahorro / desviación'));
     const summary = await rep.getByText(/Durante el periodo se gestionaron/).innerText();
-    check('resumen ejecutivo con cifras reales', summary.includes(`gestionaron ${e.total} requisiciones`) && summary.includes(`Se cerraron ${e.closed} procesos`) && summary.includes(`${e.overdue} solicitudes vencidas`) && summary.includes(`${fmt(4100, 'USD')} (2 OC)`), summary);
+    check('resumen ejecutivo con cifras reales', summary.includes(`gestionaron ${e.total} requisiciones`) && summary.includes(`Se cerraron ${e.closed} procesos`) && summary.includes(`${e.overdue} solicitudes vencidas`) && summary.includes(`${fmt(po1 + po3, 'USD')} (2 OC)`), summary);
     const concl = await page.getByTestId('report-conclusions').innerText();
     check('conclusiones generadas de los datos', (e.overdue ? concl.includes(`Priorizar las ${e.overdue} requisiciones vencidas`) : concl.includes('No hay requisiciones vencidas')) && concl.includes('En USD, el monto comprado se mantiene dentro'), concl);
     check('primera fila = orden del servidor', (await rep.locator('tbody tr').first().innerText()).includes(head.items[0].folio));
@@ -75,7 +78,7 @@ const fmt = (n, c) => `${n < 0 ? '-' : ''}$${new Intl.NumberFormat('es-MX', { mi
     const pageWith = Math.floor(all.indexOf(r1) / 25);
     for (let i = 0; i < pageWith; i++) await rep.getByRole('button', { name: 'Página siguiente' }).click();
     const row1 = (await rep.getByRole('row').filter({ hasText: r1.folio }).innerText()).replace(/\s+/g, ' ');
-    check('fila con monto est., OC (conteo · importe), folio, recepción y etapa', ['$15,000.00 USD', '1 OC · $1,500.00 USD', 'OC-QA-0001', 'REC-QA-0001', 'Factura'].every(x => row1.includes(x)), row1);
+    check('fila con monto est., OC (conteo · importe), folio, recepción y etapa', ['$15,000.00 USD', `1 OC · ${fmt(po1, 'USD')}`, 'OC-QA-0001', 'REC-QA-0001', 'Factura'].every(x => row1.includes(x)), row1);
 
     // Filtro por cliente: OC en USD con presupuesto MXN → sin base comparable
     await page.getByLabel('Cliente').selectOption(qa2.id);
@@ -83,7 +86,7 @@ const fmt = (n, c) => `${n < 0 ? '-' : ''}$${new Intl.NumberFormat('es-MX', { mi
     const e2 = expect(all.filter(r => r.client_id === qa2.id));
     await page.waitForFunction(n => document.querySelector('[data-testid="management-report"]')?.innerText.includes(`gestionaron ${n} requisiciones`), e2.total);
     check('filtro de cliente: subtítulo y conteo', (await rep.innerText()).includes(qa2.name) && (await kpi('Requisiciones')).startsWith(String(e2.total)));
-    check('sin base comparable cuando las monedas difieren', (await kpi('Ahorro / desviación')).includes('Sin base comparable') && (await kpi('Comprado')).includes(fmt(2600, 'USD')) && (await page.getByTestId('report-conclusions').innerText()).includes('no tienen presupuesto comparable'));
+    check('sin base comparable cuando las monedas difieren', (await kpi('Ahorro / desviación')).includes('Sin base comparable') && (await kpi('Comprado')).includes(fmt(po3, 'USD')) && (await page.getByTestId('report-conclusions').innerText()).includes('no tienen presupuesto comparable'));
     await shot(page, 'reportes_2_cliente');
 
     // Filtro por etapa y periodo

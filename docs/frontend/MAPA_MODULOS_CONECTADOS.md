@@ -12,6 +12,7 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | Proveedores (`suppliers`) | `SuppliersCatalog` en **`src/views/suppliers/SuppliersCatalog.jsx`** (re-exportado por `CatalogReadOnly.jsx`; lógica en `src/views/suppliers/model.mjs`) | `src/catalogApi.js` (`kind='suppliers'`) | `/api/v1/catalogs/suppliers`, `/api/v1/catalogs/suppliers/{id}` | `CatalogDirectoryController` → `CatalogReadRepository` | Master Admin |
 | Suministros de proveedores (`supply`) | `SupplierSupplyCatalog` en `src/views/supplies/SupplierSupplyCatalog.jsx` (lógica en `src/views/supplies/model.mjs`) | `src/catalogApi.js` (`listSupplierOfferings`, `getCatalogRecord`) | `/api/v1/catalogs/supplier-offerings` (`page`, `page_size` ≤ 50, `q`, `status`, `supplier`), `/api/v1/catalogs/suppliers/{id}` | `CatalogDirectoryController::supplierOfferings` → `SupplierOfferingReadRepository` (cuenta API, SELECT) | Master Admin |
 | Órdenes de Compra (`purchase_orders`) | `PurchaseOrdersModule` en `src/views/purchaseOrders/PurchaseOrdersModule.jsx` (lógica `model.mjs`, cliente `api.js`) | `src/views/purchaseOrders/api.js` | `/api/v1/purchase-orders` (`page`, `page_size` ≤ 50, `q`, `status`, `buyer`, `sort`, `scope`), `/purchase-orders/issuance`, `/purchase-orders/tasks`, `/purchase-orders/{id}` | `PurchaseOrderController` (base `ReadOnlyModuleController`) → `PurchaseOrderReadRepository` (cuenta API, SELECT) | Master Admin |
+| Cotizaciones y Comparativo (`quotes`) | `QuotesModule` en `src/views/quotes/QuotesModule.jsx` (lógica `model.mjs`, cliente `api.js`) | `src/views/quotes/api.js` | `/api/v1/quotes/rfqs`, `/quotes/rfqs/{id}`, `/quotes/supplier-quotes`, `/quotes/supplier-quotes/{id}`, `/quotes/comparison`, `/quotes/customer-quotes`, `/quotes/customer-quotes/{id}`, `/quotes/awards` | `QuoteController` (base `ReadOnlyModuleController`) → `QuoteReadRepository` (cuenta API, SELECT) | Master Admin |
 | Matriz General (`general_matrix`) | `GeneralMatrix` en `src/views/GeneralMatrix.jsx` (lógica en `src/views/generalMatrix/model.mjs`) | `src/matrixApi.js`, `src/views/recovery/api.js` | `/api/v1/matrix/requisitions` (todas las páginas de 50), `/api/v1/matrix/requisitions/{id}`, `/api/v1/matrix/clients`, `/api/v1/recovery/matrix` (etapas) | `MatrixController` → `MatrixReadRepository`; `RequisitionRecoveryController` | Master Admin |
 | Reportes (`reports`) | `Reports` en `src/views/Reports.jsx` (lógica en `src/views/reports/model.mjs`; datos con `src/views/generalMatrix/useMatrixData.js`) | `src/matrixApi.js`, `src/views/recovery/api.js` | `/api/v1/matrix/requisitions` (todas las páginas de 50), `/api/v1/matrix/clients`, `/api/v1/recovery/matrix` (mismas fuentes que la Matriz General) | `MatrixController` → `MatrixReadRepository`; `RequisitionRecoveryController` | Master Admin |
 | Usuarios y roles (`users_roles`) | `UsersRoles` en `src/views/UsersRoles.jsx` (lógica en `src/views/usersRoles/model.mjs`, cliente `src/views/usersRoles/api.js`) | `src/views/usersRoles/api.js` | `/api/v1/users?page=` (todas las páginas), `/api/v1/roles`, `/api/v1/users/functions`, `/api/v1/audit-events` | `UserDirectoryController` → `SupplyAuthRepository` (cuenta auth) y `UserActivityReadRepository` (cuenta API, SELECT) | Master Admin (`users.read`) |
@@ -28,6 +29,10 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | `matrix/requisitions` | `page`, `page_size`, `q`, `client`, `has` | `page_size` 1–50 |
 | `users` | `page` | 50 por página fijo |
 | `audit-events` | `page`, `page_size`, `from`, `to`, `actor`, `role`, `module`, `action`, `q` | `page_size` 1–50; fechas UTC |
+| `quotes/rfqs`, `quotes/supplier-quotes` | `page`, `page_size`, `q`, `status`, `supplier` (UUID o `all`) | `page_size` 1–50 |
+| `quotes/comparison` | `requisition` (UUID o `all`) | Sin paginación (`page` → 422) |
+| `quotes/customer-quotes` | `page`, `page_size`, `q`, `decision`, `client`, `scope` (`current`/`all`) | `page_size` 1–50 |
+| `quotes/awards` | `page`, `page_size`, `q`, `status` (`current`, `all` o código) | `page_size` 1–50 |
 
 ## Campos reales de cada respuesta
 
@@ -140,6 +145,20 @@ Diseño de `PurchaseOrders.jsx` (6 tarjetas) en modo consulta; pestaña inicial 
 - **Formato**: vista formal (proveedor, referencias, partidas, totales, condiciones, firmas registradas) en iframe aislado e impresión/PDF del navegador.
 - Pruebas: `tests/frontend/purchase_orders_model.test.mjs` (4), `tests/frontend/purchase_orders_ui_e2e.cjs` (27) y `tests/purchase_orders_http_check.py` (20, solo GET + comprobación de que no hay rutas de escritura).
 
+## Cotizaciones y Comparativo (conexión 11 nov 2026)
+
+Diseño de `Quotes.jsx` (11 tarjetas) en modo consulta; pestaña inicial **Matriz de RFQ**. El prototipo `src/views/Quotes.jsx` queda en el repositorio pero ya no se monta.
+- **1 Revisiones/modificaciones**: series de cotización al cliente con todas sus versiones (folio, fecha, total, decisión). "Nueva revisión" bloqueada.
+- **2 Solicitud a proveedores (RFQ)**: documento de la RFQ (proveedor, requisición, fechas, lugar de entrega, documentos, términos y partidas) **sin precios**. "Generar y enviar RFQ" bloqueado.
+- **3 Matriz de RFQ**: contadores (registradas, con respuesta, vencidas sin respuesta), búsqueda en servidor, estado de respuesta con la cotización que la contestó.
+- **4 Cotizaciones recibidas**: tarjetas por proveedor (total, adjudicadas, activas) que filtran en el servidor; total, vigencia, entrega, pago, evaluación técnica.
+- **5 Comparativo**: por requisición, ofertas por partida; resalta el menor precio unitario ofertado en la moneda predominante (nunca compara monedas distintas) y muestra la adjudicación registrada. "Guardar selección" bloqueado.
+- **6 Cotización al cliente / 7 Formato**: precio de venta y condiciones **sin costos internos** (la API del cliente no devuelve campos de costo); formato en iframe aislado e impresión/PDF.
+- **8 Matriz de cotizaciones al cliente**: versión vigente por serie (vN / total), filtro por decisión, montos por moneda, vigencia vencida en rojo.
+- **9 Decisión del cliente**: tarjetas por cliente (cotizaciones y por decidir) e historial de decisiones (canal, responsable, nota). "Registrar decisión" bloqueado.
+- **10 Adjudicación definitiva**: adjudicaciones vigentes por partida y OC generadas ("Pendiente de OC" si no hay). **11 Matriz interna**: cotizaciones de proveedor con partidas y precios del proveedor (uso interno).
+- Pruebas: `tests/frontend/quotes_model.test.mjs` (4), `tests/frontend/quotes_ui_e2e.cjs` (52) y `tests/quotes_http_check.py` (27, solo GET + comprobación de que no hay rutas de escritura).
+
 ## Red de seguridad
 
-`tests/frontend/modules_smoke_e2e.cjs` (Playwright, **solo lectura**: aborta cualquier petición que no sea GET salvo login/logout). Para cada módulo verifica: endpoints con 200, ningún `role="alert"`, un dato real de MariaDB visible y, en Clientes/Proveedores/Matriz, que el detalle "Ver" responde 200 (en Matriz General abre antes la tarjeta "Todos los clientes"; en Reportes pulsa "Generar reporte"). Resultado actual sobre base sintética: **24/24 PASS**. Se ejecuta después de cada cambio de frontend.
+`tests/frontend/modules_smoke_e2e.cjs` (Playwright, **solo lectura**: aborta cualquier petición que no sea GET salvo login/logout). Para cada módulo verifica: endpoints con 200, ningún `role="alert"`, un dato real de MariaDB visible y, en Clientes/Proveedores/Matriz, que el detalle "Ver" responde 200 (en Matriz General abre antes la tarjeta "Todos los clientes"; en Reportes pulsa "Generar reporte"). Resultado actual sobre base sintética: **33/33 PASS**. Se ejecuta después de cada cambio de frontend.
