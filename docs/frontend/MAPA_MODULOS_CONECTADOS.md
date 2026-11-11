@@ -1,6 +1,6 @@
 # SupplyFlow · Mapa de los 6 módulos conectados a MariaDB
 
-Fecha: 10 nov 2026 (Proveedores, Matriz General y Reportes: 11 nov 2026). Derivado del código real y de respuestas HTTP reales (base sintética de 77 tablas).
+Fecha: 10 nov 2026 (Proveedores, Matriz General, Reportes y Usuarios y roles: 11 nov 2026). Derivado del código real y de respuestas HTTP reales (base sintética de 77 tablas).
 Objetivo: modificar el **frontend** de estos módulos sin romper su conexión con la base.
 
 ## Cadena de cada módulo
@@ -12,7 +12,7 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | Proveedores (`suppliers`) | `SuppliersCatalog` en **`src/views/suppliers/SuppliersCatalog.jsx`** (re-exportado por `CatalogReadOnly.jsx`; lógica en `src/views/suppliers/model.mjs`) | `src/catalogApi.js` (`kind='suppliers'`) | `/api/v1/catalogs/suppliers`, `/api/v1/catalogs/suppliers/{id}` | `CatalogDirectoryController` → `CatalogReadRepository` | Master Admin |
 | Matriz General (`general_matrix`) | `GeneralMatrix` en `src/views/GeneralMatrix.jsx` (lógica en `src/views/generalMatrix/model.mjs`) | `src/matrixApi.js`, `src/views/recovery/api.js` | `/api/v1/matrix/requisitions` (todas las páginas de 50), `/api/v1/matrix/requisitions/{id}`, `/api/v1/matrix/clients`, `/api/v1/recovery/matrix` (etapas) | `MatrixController` → `MatrixReadRepository`; `RequisitionRecoveryController` | Master Admin |
 | Reportes (`reports`) | `Reports` en `src/views/Reports.jsx` (lógica en `src/views/reports/model.mjs`; datos con `src/views/generalMatrix/useMatrixData.js`) | `src/matrixApi.js`, `src/views/recovery/api.js` | `/api/v1/matrix/requisitions` (todas las páginas de 50), `/api/v1/matrix/clients`, `/api/v1/recovery/matrix` (mismas fuentes que la Matriz General) | `MatrixController` → `MatrixReadRepository`; `RequisitionRecoveryController` | Master Admin |
-| Usuarios y roles (`users_roles`) | `UsersRoles` en `src/views/UsersRoles.jsx` | `fetch` directo en el componente | `/api/v1/users?page=`, `/api/v1/roles` | `UserDirectoryController` → `SupplyAuthRepository` | permiso `users.read` |
+| Usuarios y roles (`users_roles`) | `UsersRoles` en `src/views/UsersRoles.jsx` (lógica en `src/views/usersRoles/model.mjs`, cliente `src/views/usersRoles/api.js`) | `src/views/usersRoles/api.js` | `/api/v1/users?page=` (todas las páginas), `/api/v1/roles`, `/api/v1/users/functions`, `/api/v1/audit-events` | `UserDirectoryController` → `SupplyAuthRepository` (cuenta auth) y `UserActivityReadRepository` (cuenta API, SELECT) | Master Admin (`users.read`) |
 
 **Importante:** `src/views/Clients.jsx` (1,541 líneas) y `src/views/Suppliers.jsx` (1,617 líneas) son los diseños de referencia, ya trasladados a `clients/ClientsCatalog.jsx` y `suppliers/SuppliersCatalog.jsx`; **no están conectados**: `App.jsx` importa `ClientsCatalog`/`SuppliersCatalog` desde `CatalogReadOnly.jsx`. Son prototipos anteriores con datos de demostración; no editarlos pensando que cambian la pantalla real. Si se quieren recuperar partes de su diseño, se trasladan a `CatalogReadOnly.jsx` (o a componentes nuevos) usando los campos reales de abajo.
 
@@ -25,6 +25,7 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | `catalogs/clients`, `catalogs/suppliers` | `page`, `page_size`, `q`, `status` | `page_size` 1–50 |
 | `matrix/requisitions` | `page`, `page_size`, `q`, `client`, `has` | `page_size` 1–50 |
 | `users` | `page` | 50 por página fijo |
+| `audit-events` | `page`, `page_size`, `from`, `to`, `actor`, `role`, `module`, `action`, `q` | `page_size` 1–50; fechas UTC |
 
 ## Campos reales de cada respuesta
 
@@ -36,8 +37,10 @@ Negrita = disponible pero **no usado** hoy por la vista (se puede mostrar sin to
 - **catalogs/clients**: `items[].{id, code, name, brand_name, tax_id, project, contract_reference, status, **legacy_status**, data_incomplete, portal_enabled, requisition_count, primary_contact, primary_email}`, `total`, `page`, `summary.{total, statuses[].{code,count}, incomplete}`. Detalle `item`: + `address, terms, notes, **portal_locked**, contacts[], channels[]`.
 - **catalogs/suppliers**: `items[].{id, code, supplier_key, name, tax_id, status, **legacy_status**, data_incomplete, category, currency, credit_type, credit_days, lead_time_value, lead_time_unit, rating, offerings_count, primary_contact, primary_email}`, `summary`. Detalle `item`: + `notes, **document_notes**, **rating_scale**, contacts[].{id,name,position,**is_primary**}, channels[].{type,value,**source_field**,**is_primary**}`.
 - **matrix/requisitions**: `items[].{id, folio, client_name, **client_code**, **client_id**, client_reference, internal_reference, references.{purchase_orders[], purchase_order_totals[{id, folio, currency, amount}], winning_suppliers[], winning_supplier_source, receipts[], invoices[]} (desde 11 nov 2026), request_date, need_date, priority_code, **route_code**, project, contract_reference, requester_name, currency_code, budget_amount, description, delivery_place, **current_revision_number**, notes, source_type, **created_at**, **updated_at**, line_count, review_count, rfq_count, supplier_quote_count, customer_quote_count, purchase_order_count, receipt_count, delivery_count, invoice_count}`, `summary`, **`milestone_note`**. Detalle: `item` (mismos campos), `lines[].{id, line_number, description, quantity, unit_label, **category_label_snapshot**, line_status, **legacy_id**, **history_based**}`, `documents.{reviews, rfqs, supplier_quotes, customer_quotes, purchase_orders, receipts, deliveries, invoices}`.
-- **users**: `items[].{id, name, email, position, phone, status, **access_enabled**, credential_state, roles[], **last_login_at**}`, `total`, `page`.
-- **roles**: `items[].{code, name, users}`.
+- **users**: `items[].{id, name, email, position, phone, status, access_enabled, credential_state, roles[], role_codes[], permission_overrides[{code, effect}], last_login_at (UTC)}`, `total`, `page`.
+- **roles**: `items[].{code, name, users, description, is_system, permissions[{code, description}]}`.
+- **users/functions**: `items[].{id, po_buyer, po_preparer, po_authorizer, review_buyer, rfq_contact, audit_actions, last_activity_at}` (funciones **observadas** en documentos; sin parámetros).
+- **audit-events**: `items[].{id, occurred_at, recorded_at, module, action, result, detail, source_kind, actor_id, actor_name, actor_email, actor_snapshot_name, subject_label, subject_kind, subject_user_name, changes[{field, before, after, value}]}`, `total`, `summary.{total, last_24h, actors, critical}`, `facets.{modules, actions}`. Parámetros: `page`, `page_size` (1–50), `from`/`to` (`AAAA-MM-DD HH:MM:SS` UTC), `actor` (UUID), `role`, `module`, `action`, `q` (≤120); cualquier otro → 422.
 
 ## Qué se puede cambiar libremente y qué no
 
@@ -101,6 +104,17 @@ Diseño de `clase_reportes` ("Generador de reporte gerencial") con datos reales 
 - La pantalla anterior usaba `/analytics/requisitions(.csv)` con filtros de evidencia y búsqueda; esos filtros siguen en la Matriz General (búsqueda y filtro de documentos) y los endpoints de analítica siguen disponibles (los usa el Dashboard).
 - Backend: `references.purchase_order_totals` (aditivo, solo lectura) en `/matrix/requisitions`.
 - Pruebas: `tests/frontend/reports_model.test.mjs` (5) y `tests/frontend/reports_ui_e2e.cjs` (19, solo lectura; las cifras esperadas se calculan desde la API).
+
+## Usuarios y roles (rediseño 11 nov 2026)
+
+Diseño de `clase_usuarios_y_roles` (5 tarjetas) en **modo consulta**; pestaña inicial **Matriz de usuarios**:
+- **Usuarios (ficha)**: selector de usuario; nombre, correo, puesto, teléfono, rol, estatus, "Permitir acceso" (`access_enabled`), credencial (activada / pendiente; la contraseña nunca se consulta), último acceso en hora local. Fotografía y empresa/contratista: la base no los guarda (se indica). **Funciones operativas observadas** en documentos (comprador de OC/revisiones/contacto de RFQ, preparó y autorizó OC) con número de documentos; no son una configuración. **Permisos por documento**: casillas ligadas a códigos de permiso (`customer_quote.*`, `purchase_order.*`) que hoy no existen en MariaDB; se muestran los permisos efectivos registrados (rol ∪ permitir − negar).
+- **Matriz**: todos los usuarios (páginas de 50), búsqueda por nombre, correo, puesto, rol, estatus y función; Ficha habilitada; Bloquear/Eliminar bloqueados.
+- **Roles y permisos**: catálogo real (descripción, sistema, usuarios, permisos registrados). Las "secciones permitidas" muestran el **acceso efectivo que aplica el servidor hoy**: los 7 módulos conectados exigen `master_admin`; las demás pantallas aún no consultan MariaDB ("sin BD"). `role_permissions`/`user_permissions` se muestran, pero el servidor todavía no los evalúa.
+- **Resumen de acceso**: personas, con acceso, compradores/preparó/autorizadores observados, inactivos o sin acceso; recomendaciones calculadas (Master Admin activos, credenciales pendientes). El texto de Google Sheets del diseño se reemplazó por MariaDB.
+- **Bitácora**: `audit_events` paginada en el servidor (25), filtros de fecha (hora local → UTC), usuario, rol, módulo, acción y búsqueda; KPIs total, últimas 24 h, usuarios con actividad y acciones críticas. Los valores de campos sensibles se devuelven como `[protegido]`.
+- **Backend (solo lectura, sin cambios de permisos SQL)**: `/users` y `/roles` agregan campos (cuenta `auth`, que ya tenía SELECT sobre esas tablas); rutas nuevas `GET /users/functions` y `GET /audit-events` con la misma guarda Master Admin y la cuenta API de solo SELECT.
+- Pruebas: `tests/frontend/users_roles_model.test.mjs` (5), `tests/frontend/users_roles_ui_e2e.cjs` (28) y `tests/users_audit_http_check.py` (24, solo GET; apto para la base real; 403 opcional con `SF_NONADMIN_USER`).
 
 ## Red de seguridad
 

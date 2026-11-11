@@ -12,6 +12,9 @@ $routes->get('api/v1/auth/me', 'AuthController::me');
 $routes->post('api/v1/auth/logout', 'AuthController::logout');
 $routes->get('api/v1/users', 'UserDirectoryController::users');
 $routes->get('api/v1/roles', 'UserDirectoryController::roles');
+// Usuarios y roles: functions observed in documents and audit log, Master Admin only, read-only.
+$routes->get('api/v1/users/functions', 'UserDirectoryController::functions');
+$routes->get('api/v1/audit-events', 'UserDirectoryController::auditEvents');
 // Master Admin read-only catalogs; client portal credentials are NEVER exposed here.
 $routes->get('api/v1/catalogs/clients', 'CatalogDirectoryController::clients');
 $routes->get('api/v1/catalogs/clients/(:segment)', 'CatalogDirectoryController::client/$1');

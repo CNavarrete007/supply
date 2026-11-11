@@ -65,6 +65,25 @@ final class SupplyAuthRepository
         }
     }
 
+    /** @return list<array<string, mixed>> */
+    private function many(string $sql, string $types = '', array $values = []): array
+    {
+        $stmt = $this->db->prepare($sql);
+        try {
+            if ($types !== '') {
+                $stmt->bind_param($types, ...$values);
+            }
+            $stmt->execute();
+            $result = $stmt->get_result();
+            if (! $result instanceof mysqli_result) {
+                throw new RuntimeException('AUTH_QUERY_FAILED');
+            }
+            return $result->fetch_all(MYSQLI_ASSOC);
+        } finally {
+            $stmt->close();
+        }
+    }
+
     private function execute(string $sql, string $types, array $values): void
     {
         $stmt = $this->db->prepare($sql);
@@ -177,7 +196,7 @@ final class SupplyAuthRepository
     public function users(int $orgId, int $limit, int $offset): array
     {
         $count = $this->one('SELECT COUNT(*) AS count FROM users WHERE organization_id=?', 'i', [$orgId]);
-        $stmt = $this->db->prepare('SELECT u.public_id,u.login_email,u.status_code,u.access_enabled,u.credential_state,COALESCE(u.last_login_at,(SELECT MAX(a.created_at) FROM auth_sessions a WHERE a.user_id=u.id AND a.organization_id=u.organization_id)) AS last_login_at,p.display_name,p.position_title,p.phone, GROUP_CONCAT(r.name ORDER BY r.name SEPARATOR \' | \') AS roles FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id LEFT JOIN user_roles ur ON ur.user_id=u.id AND ur.organization_id=u.organization_id LEFT JOIN roles r ON r.id=ur.role_id AND r.organization_id=ur.organization_id WHERE u.organization_id=? GROUP BY u.id ORDER BY p.display_name,u.id LIMIT ? OFFSET ?');
+        $stmt = $this->db->prepare('SELECT u.public_id,u.login_email,u.status_code,u.access_enabled,u.credential_state,COALESCE(u.last_login_at,(SELECT MAX(a.created_at) FROM auth_sessions a WHERE a.user_id=u.id AND a.organization_id=u.organization_id)) AS last_login_at,p.display_name,p.position_title,p.phone, GROUP_CONCAT(r.name ORDER BY r.name SEPARATOR \' | \') AS roles,GROUP_CONCAT(r.code ORDER BY r.name SEPARATOR \' | \') AS role_codes FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id LEFT JOIN user_roles ur ON ur.user_id=u.id AND ur.organization_id=u.organization_id LEFT JOIN roles r ON r.id=ur.role_id AND r.organization_id=ur.organization_id WHERE u.organization_id=? GROUP BY u.id ORDER BY p.display_name,u.id LIMIT ? OFFSET ?');
         try {
             $stmt->bind_param('iii', $orgId, $limit, $offset);
             $stmt->execute();
@@ -185,22 +204,28 @@ final class SupplyAuthRepository
         } finally {
             $stmt->close();
         }
+        // Per-user permission overrides (allow/deny). Codes only; no secrets are stored in these tables.
+        $overrides = [];
+        foreach ($this->many('SELECT u.public_id,p.code,up.effect FROM user_permissions up JOIN users u ON u.id=up.user_id AND u.organization_id=up.organization_id JOIN permissions p ON p.id=up.permission_id WHERE up.organization_id=? ORDER BY p.code', 'i', [$orgId]) as $o) {
+            $overrides[(string) $o['public_id']][] = ['code' => (string) $o['code'], 'effect' => (string) $o['effect']];
+        }
         return ['total' => (int) ($count['count'] ?? 0), 'items' => array_map(static fn ($r) => [
             'id' => $r['public_id'], 'name' => $r['display_name'], 'email' => $r['login_email'], 'position' => $r['position_title'], 'phone' => $r['phone'], 'status' => $r['status_code'], 'access_enabled' => (bool) $r['access_enabled'], 'credential_state' => $r['credential_state'], 'roles' => $r['roles'] ? explode(' | ', $r['roles']) : [], 'last_login_at' => $r['last_login_at'],
+            'role_codes' => $r['role_codes'] ? explode(' | ', $r['role_codes']) : [], 'permission_overrides' => $overrides[(string) $r['public_id']] ?? [],
         ], $records)];
     }
 
     /** @return list<array<string,mixed>> */
     public function allRoles(int $orgId): array
     {
-        $stmt = $this->db->prepare('SELECT r.code,r.name,COUNT(ur.user_id) AS user_count FROM roles r LEFT JOIN user_roles ur ON ur.organization_id=r.organization_id AND ur.role_id=r.id WHERE r.organization_id=? GROUP BY r.id ORDER BY r.name');
-        try {
-            $stmt->bind_param('i', $orgId);
-            $stmt->execute();
-            return array_map(static fn ($r) => ['code' => $r['code'], 'name' => $r['name'], 'users' => (int) $r['user_count']], $stmt->get_result()->fetch_all(MYSQLI_ASSOC));
-        } finally {
-            $stmt->close();
+        $permissions = [];
+        foreach ($this->many('SELECT rp.role_id,p.code,p.description FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.organization_id=? ORDER BY p.code', 'i', [$orgId]) as $p) {
+            $permissions[(int) $p['role_id']][] = ['code' => (string) $p['code'], 'description' => (string) $p['description']];
         }
+        return array_map(static fn ($r) => [
+            'code' => $r['code'], 'name' => $r['name'], 'users' => (int) $r['user_count'],
+            'description' => $r['description'], 'is_system' => (bool) $r['is_system'], 'permissions' => $permissions[(int) $r['id']] ?? [],
+        ], $this->many('SELECT r.id,r.code,r.name,r.description,r.is_system,COUNT(ur.user_id) AS user_count FROM roles r LEFT JOIN user_roles ur ON ur.organization_id=r.organization_id AND ur.role_id=r.id WHERE r.organization_id=? GROUP BY r.id ORDER BY r.name', 'i', [$orgId]));
     }
 
     private function uuid(): string

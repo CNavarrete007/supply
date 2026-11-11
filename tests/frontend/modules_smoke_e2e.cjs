@@ -32,7 +32,7 @@ const MODULES = [
   { label: 'Reportes', endpoints: ['matrix/requisitions\\?', 'matrix/clients', 'recovery/matrix$'],
     prepare: async page => page.getByRole('button', { name: /Generar reporte|Generate report/ }).click(),
     expect: async r => (await r('/api/v1/matrix/requisitions?page=1&page_size=25&q=&client=all&has=all')).items?.[0]?.folio },
-  { label: 'Usuarios y roles', endpoints: ['users\\?', 'roles'],
+  { label: 'Usuarios y roles', endpoints: ['users\\?', 'roles$', 'users/functions$'],
     expect: async r => (await r('/api/v1/users?page=1')).items?.[0]?.name },
   // Dashboard is the landing page: visit it last so it remounts and its requests are observed.
   { label: 'Inicio y Dashboard', endpoints: ['analytics/overview', 'analytics/requisitions\\?', 'matrix/clients', 'recovery/matrix$', 'catalogs/clients\\?page=1&page_size=1', 'catalogs/suppliers\\?page=1&page_size=1', 'recovery/changes$', 'recovery/changes/review-queue'],
