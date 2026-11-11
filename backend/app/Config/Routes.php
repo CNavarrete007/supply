@@ -23,6 +23,12 @@ $routes->get('api/v1/catalogs/suppliers', 'CatalogDirectoryController::suppliers
 $routes->get('api/v1/catalogs/suppliers/(:segment)', 'CatalogDirectoryController::supplier/$1');
 // SupplyFlow v0.5: read-only requisition matrix scoped by Master Admin organization.
 // Cotizaciones y Comparativo: read-only, Master Admin only (RFQ sending, quote capture, awards and decisions stay blocked).
+$routes->get('api/v1/reception/matrix', 'ReceptionController::matrix');
+$routes->get('api/v1/reception/orders', 'ReceptionController::orders');
+$routes->get('api/v1/reception/orders/(:segment)', 'ReceptionController::order/$1');
+$routes->get('api/v1/reception/receipts/(:segment)', 'ReceptionController::receipt/$1');
+$routes->get('api/v1/reception/deliveries/(:segment)', 'ReceptionController::delivery/$1');
+$routes->get('api/v1/reception/closure', 'ReceptionController::closure');
 $routes->get('api/v1/quotes/rfqs', 'QuoteController::rfqs');
 $routes->get('api/v1/quotes/rfqs/(:segment)', 'QuoteController::rfq/$1');
 $routes->get('api/v1/quotes/supplier-quotes', 'QuoteController::supplierQuotes');

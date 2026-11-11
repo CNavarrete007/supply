@@ -15,7 +15,7 @@ import { Contractors } from './views/Contractors';
 import { RequisitionTransactional } from './views/RequisitionTransactional';
 import { ContractorManagement } from './views/ContractorManagement';
 import { PurchaseOrdersModule as PurchaseOrders } from './views/purchaseOrders/PurchaseOrdersModule';
-import { ReceptionDelivery } from './views/ReceptionDelivery';
+import { ReceptionModule as ReceptionDelivery } from './views/reception/ReceptionModule';
 import { Invoice } from './views/Invoice';
 import { OperationalServices } from './views/OperationalServices';
 import { GeneralMatrix } from './views/GeneralMatrix';
@@ -402,7 +402,7 @@ export default function App() {
         {/* Vistas Internas del Dashboard */}
         <main className="flex-1 overflow-y-auto p-6 bg-[#f8fafc]">
           {/* Aviso únicamente en los módulos que todavía no leen datos operativos desde SQL. */}
-          {!['users_roles', 'clients', 'suppliers', 'supply', 'purchase_orders', 'quotes', 'general_matrix', 'dashboard', 'reports', 'requisition'].includes(activeTab) && (
+          {!['users_roles', 'clients', 'suppliers', 'supply', 'purchase_orders', 'quotes', 'reception', 'general_matrix', 'dashboard', 'reports', 'requisition'].includes(activeTab) && (
             <div className="mb-4 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold">
               Módulo pendiente de integración: puede utilizar datos de demostración y los formularios aún no guardan operaciones en MariaDB.
             </div>

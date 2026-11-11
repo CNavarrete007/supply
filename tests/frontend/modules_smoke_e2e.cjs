@@ -40,6 +40,8 @@ const MODULES = [
     expect: async r => (await r('/api/v1/purchase-orders?page=1&page_size=25')).items?.[0]?.folio },
   { label: 'Cotizaciones y Comparativo', endpoints: ['quotes/rfqs\\?'],
     expect: async r => (await r('/api/v1/quotes/rfqs?page=1&page_size=25')).items?.[0]?.folio },
+  { label: 'Recepción y Entrega', endpoints: ['reception/matrix\\?'],
+    expect: async r => (await r('/api/v1/reception/matrix?page=1&page_size=25')).summary?.clients?.[0]?.name },
   // Dashboard is the landing page: visit it last so it remounts and its requests are observed.
   { label: 'Inicio y Dashboard', endpoints: ['analytics/overview', 'analytics/requisitions\\?', 'matrix/clients', 'recovery/matrix$', 'catalogs/clients\\?page=1&page_size=1', 'catalogs/suppliers\\?page=1&page_size=1', 'recovery/changes$', 'recovery/changes/review-queue'],
     expect: async r => (await r('/api/v1/analytics/overview')).top_clients?.[0]?.name },
