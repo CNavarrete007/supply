@@ -22,6 +22,11 @@ $routes->get('api/v1/catalogs/supplier-offerings', 'CatalogDirectoryController::
 $routes->get('api/v1/catalogs/suppliers', 'CatalogDirectoryController::suppliers');
 $routes->get('api/v1/catalogs/suppliers/(:segment)', 'CatalogDirectoryController::supplier/$1');
 // SupplyFlow v0.5: read-only requisition matrix scoped by Master Admin organization.
+// Órdenes de Compra: read-only, Master Admin only (issuing/authorizing/amending stays blocked).
+$routes->get('api/v1/purchase-orders', 'PurchaseOrderController::index');
+$routes->get('api/v1/purchase-orders/issuance', 'PurchaseOrderController::issuance');
+$routes->get('api/v1/purchase-orders/tasks', 'PurchaseOrderController::tasks');
+$routes->get('api/v1/purchase-orders/(:segment)', 'PurchaseOrderController::show/$1');
 $routes->get('api/v1/matrix/requisitions', 'MatrixController::requisitions');
 $routes->get('api/v1/matrix/requisitions/(:segment)', 'MatrixController::detail/$1');
 $routes->get('api/v1/matrix/clients', 'MatrixController::clients');
