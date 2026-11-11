@@ -168,7 +168,9 @@ final class CatalogReadRepository
                 c.code,c.legal_name AS name,c.brand_name,c.tax_identifier AS tax_id,
                 c.status_code AS status,c.legacy_status,c.data_incomplete,c.portal_enabled,c.portal_locked,
                 c.default_project_reference AS project,c.default_contract_reference AS contract_reference,
-                c.address_text AS address,c.commercial_terms AS terms,c.notes
+                c.address_text AS address,c.commercial_terms AS terms,c.notes,
+                c.repeat_sales_policy,c.repeat_sourcing_policy,c.repeat_price_validity_days,c.repeat_contract_reference,
+                c.repeat_contract_valid_until,c.repeat_min_margin_pct,c.repeat_policy_updated_at
                 SQL;
             $extra = '';
         } else {
@@ -190,6 +192,22 @@ final class CatalogReadRepository
         foreach (['data_incomplete', 'portal_enabled', 'portal_locked'] as $field) {
             if (isset($row[$field])) {
                 $row[$field] = (bool) $row[$field];
+            }
+        }
+        if ($kind === 'clients') {
+            // Repeat-purchase pricing policy (read-only). Codes are returned exactly as stored; DECIMAL stays a string.
+            $row['repeat_policy'] = [
+                'sales_policy' => $row['repeat_sales_policy'],
+                'sourcing_policy' => $row['repeat_sourcing_policy'],
+                'price_validity_days' => $row['repeat_price_validity_days'] === null ? null : (int) $row['repeat_price_validity_days'],
+                'contract_reference' => $row['repeat_contract_reference'],
+                'contract_valid_until' => $row['repeat_contract_valid_until'],
+                'min_margin_pct' => $row['repeat_min_margin_pct'],
+                'updated_at' => $row['repeat_policy_updated_at'],
+            ];
+            foreach (['repeat_sales_policy', 'repeat_sourcing_policy', 'repeat_price_validity_days', 'repeat_contract_reference',
+                'repeat_contract_valid_until', 'repeat_min_margin_pct', 'repeat_policy_updated_at'] as $field) {
+                unset($row[$field]);
             }
         }
         $owner = $this->queryOne('SELECT id FROM business_entities WHERE public_id=? AND organization_id=? AND entity_kind=? AND archived_at IS NULL LIMIT 1', [$publicId, $organizationId, $c['kind']]);

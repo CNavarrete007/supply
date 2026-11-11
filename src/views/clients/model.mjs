@@ -98,3 +98,40 @@ export function clientIndicators(summary, fullList, activity = []) {
     withRequisitions: top.length, top: top.slice(0, 5),
   };
 }
+
+// ---------------- Política de precios y recompra (clients.repeat_*) ----------------
+// Los códigos se muestran tal como están guardados en MariaDB. Solo se traducen las etiquetas que aparecen
+// en el diseño del sistema original; no se inventan códigos ni opciones adicionales.
+const KNOWN_POLICY_LABELS = {
+  'precio sujeto a nueva cotizacion': ['Precio sujeto a nueva cotización', 'Price subject to a new quotation'],
+  'recotizar proveedores siempre': ['Recotizar proveedores siempre', 'Always re-quote suppliers'],
+};
+const plain = v => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+/** { value, label, known, empty } for a stored policy value. */
+export function policyOption(value, en = false) {
+  if (value === null || value === undefined || String(value).trim() === '') return { value: '', label: en ? 'No policy recorded' : 'Sin política registrada', known: false, empty: true };
+  const k = KNOWN_POLICY_LABELS[plain(value)];
+  return { value: String(value), label: k ? k[en ? 1 : 0] : String(value), known: !!k, empty: false };
+}
+
+const decimal = v => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+const trimNum = n => (Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100));
+
+/** View model of the client's repeat-purchase policy (read-only). */
+export function repeatPolicyView(p = {}, en = false) {
+  const days = p?.price_validity_days;
+  const margin = decimal(p?.min_margin_pct);
+  const sales = policyOption(p?.sales_policy, en);
+  const sourcing = policyOption(p?.sourcing_policy, en);
+  return {
+    sales, sourcing,
+    days: days === null || days === undefined ? '' : String(days),
+    daysNote: days === 0 ? (en ? 'No automatic expiry by days' : 'Sin vencimiento automático por días') : days > 0 ? (en ? `Historical price valid for ${days} days` : `Precio histórico vigente por ${days} días`) : '',
+    contractReference: p?.contract_reference || '',
+    validUntil: p?.contract_valid_until ? String(p.contract_valid_until).slice(0, 10) : '',
+    margin: margin === null ? '' : trimNum(margin),
+    updatedAt: p?.updated_at || '',
+    empty: sales.empty && sourcing.empty && (days === null || days === undefined) && !p?.contract_reference && !p?.contract_valid_until && margin === null,
+  };
+}
