@@ -3,6 +3,7 @@ import { AlertCircle, Building2, CheckCircle2, ChevronLeft, ChevronRight, Eye, L
 import { listCatalog } from '../catalogApi';
 import { DetailPanel, StatusPill, human, translateStatus } from './catalog/shared';
 import { ClientsCatalog as ClientsModule } from './clients/ClientsCatalog';
+import { SuppliersCatalog as SuppliersModule } from './suppliers/SuppliersCatalog';
 
 export function CatalogReadOnly({ kind = 'clients', lang = 'es', language, isEnglish }) {
   const en = isEnglish || lang === 'en' || language === 'en';
@@ -69,6 +70,7 @@ export function CatalogReadOnly({ kind = 'clients', lang = 'es', language, isEng
   </section>;
 }
 
-// Clientes usa su propio módulo (diseño Grupo Gerez de 4 tarjetas). App.jsx sigue importando ClientsCatalog desde aquí.
+// Clientes y Proveedores usan sus propios módulos (diseño Grupo Gerez de 4 tarjetas). App.jsx sigue importando
+// ClientsCatalog y SuppliersCatalog desde aquí; CatalogReadOnly queda como vista genérica de respaldo.
 export function ClientsCatalog(props) { return <ClientsModule {...props} />; }
-export function SuppliersCatalog(props) { return <CatalogReadOnly {...props} kind="suppliers"/>; }
+export function SuppliersCatalog(props) { return <SuppliersModule {...props} />; }

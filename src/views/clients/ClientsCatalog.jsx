@@ -81,7 +81,8 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
   const [error, setError] = useState('');
   const [detailId, setDetailId] = useState(null);
   const pageSize = 25;
-  useEffect(() => { const task = setTimeout(() => { setQ(input.trim()); setPage(1); }, 300); return () => clearTimeout(task); }, [input]);
+  // Solo reinicia la página si la búsqueda cambió (antes, el primer disparo tras montar regresaba a la página 1).
+  useEffect(() => { const task = setTimeout(() => { const next = input.trim(); if (next !== q) { setQ(next); setPage(1); } }, 300); return () => clearTimeout(task); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const c = new AbortController();
     setBusy(true); setError('');
