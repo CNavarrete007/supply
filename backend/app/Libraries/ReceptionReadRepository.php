@@ -344,6 +344,48 @@ final class ReceptionReadRepository
         return ['item' => $d, 'items' => $items, 'sources' => $sources] + $ev;
     }
 
+    /**
+     * Stage-6 readiness per requisition with current, non-cancelled POs: every PO series received at 100 % with an
+     * accepted delivery. `invoiced` = the requisition has a non-cancelled invoice (stage 7).
+     * @return list<array{id:string,folio:string,client_name:string,purchase_orders:string,ready:bool,invoiced:bool,received:bool,accepted:bool}>
+     */
+    public function readiness(int $org, ?array $orders = null, ?array $receipts = null): array
+    {
+        $orders ??= $this->orderRows($org);
+        $receipts ??= $this->receiptRows($org);
+        $acceptedSeries = [];
+        foreach ($receipts as $r) {
+            if (self::isAccepted($r['acceptance'])) {
+                $acceptedSeries[$r['series_id']] = true;
+            }
+        }
+        $links = $this->rows(<<<SQL
+            SELECT r.id AS req_id,re.public_id AS id,r.folio,c.legal_name AS client_name,po.series_public_id AS series_id,po.folio AS po_folio,
+              EXISTS (SELECT 1 FROM invoices i WHERE i.organization_id=r.organization_id AND i.requisition_id=r.id AND LOWER(COALESCE(i.legacy_status,i.status_code,'')) NOT IN ('cancelada','cancelled')) AS invoiced
+            FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
+            JOIN requisitions r ON r.id=pr.requisition_id AND r.organization_id=pr.organization_id
+            JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
+            JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+            WHERE pr.organization_id=? AND re.archived_at IS NULL AND {$this->latest()} AND NOT {$this->cancelled()}
+            ORDER BY r.folio,po.folio
+            SQL, [$org]);
+        $bySeries = [];
+        foreach ($orders as $o) {
+            $bySeries[$o['series_id']] = $o;
+        }
+        $reqs = [];
+        foreach ($links as $l) {
+            $o = $bySeries[$l['series_id']] ?? null;
+            $received = $o && $o['received_percent'] !== null && $o['received_percent'] >= 100;
+            $accepted = isset($acceptedSeries[$l['series_id']]);
+            $reqs[$l['req_id']] ??= ['id' => $l['id'], 'folio' => $l['folio'], 'client_name' => $l['client_name'], 'purchase_orders' => [], 'received' => true, 'accepted' => true, 'invoiced' => (bool) $l['invoiced']];
+            $reqs[$l['req_id']]['purchase_orders'][] = $l['po_folio'];
+            $reqs[$l['req_id']]['received'] = $reqs[$l['req_id']]['received'] && $received;
+            $reqs[$l['req_id']]['accepted'] = $reqs[$l['req_id']]['accepted'] && $accepted;
+        }
+        return array_values(array_map(static fn ($r) => ['purchase_orders' => implode(', ', array_unique($r['purchase_orders'])), 'ready' => $r['received'] && $r['accepted']] + $r, $reqs));
+    }
+
     /** Closing traffic light (card 4): five conditions with their documents. */
     public function closure(int $org): array
     {
@@ -361,36 +403,8 @@ final class ReceptionReadRepository
             array_map(static fn ($r) => ['kind' => 'receipt', 'id' => $r['id'], 'folio' => $r['folio'], 'date' => $r['date'], 'client_name' => $r['client_name'], 'acceptance' => $r['acceptance'], 'references' => $r['po_folio']],
                 array_filter($receipts, static fn ($r) => $r['acceptance_source'] === 'legacy_receipt' && ! self::isAccepted($r['acceptance']))),
         ));
-        // Ready to invoice (stage 6): per requisition with current non-cancelled POs, all received ≥100 % and accepted, no invoice.
-        $acceptedSeries = [];
-        foreach ($receipts as $r) {
-            if (self::isAccepted($r['acceptance'])) {
-                $acceptedSeries[$r['series_id']] = true;
-            }
-        }
-        $links = $this->rows(<<<SQL
-            SELECT r.id AS req_id,re.public_id AS id,r.folio,c.legal_name AS client_name,po.series_public_id AS series_id,po.folio AS po_folio
-            FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
-            JOIN requisitions r ON r.id=pr.requisition_id AND r.organization_id=pr.organization_id
-            JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
-            JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
-            WHERE pr.organization_id=? AND re.archived_at IS NULL AND {$this->latest()} AND NOT {$this->cancelled()}
-              AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.organization_id=r.organization_id AND i.requisition_id=r.id AND LOWER(COALESCE(i.legacy_status,i.status_code,'')) NOT IN ('cancelada','cancelled'))
-            ORDER BY r.folio,po.folio
-            SQL, [$org]);
-        $bySeries = [];
-        foreach ($orders as $o) {
-            $bySeries[$o['series_id']] = $o;
-        }
-        $reqs = [];
-        foreach ($links as $l) {
-            $o = $bySeries[$l['series_id']] ?? null;
-            $ok = $o && $o['received_percent'] !== null && $o['received_percent'] >= 100 && isset($acceptedSeries[$l['series_id']]);
-            $reqs[$l['req_id']] ??= ['id' => $l['id'], 'folio' => $l['folio'], 'client_name' => $l['client_name'], 'purchase_orders' => [], 'ready' => true];
-            $reqs[$l['req_id']]['purchase_orders'][] = $l['po_folio'];
-            $reqs[$l['req_id']]['ready'] = $reqs[$l['req_id']]['ready'] && $ok;
-        }
-        $ready = array_values(array_map(static fn ($r) => ['id' => $r['id'], 'folio' => $r['folio'], 'client_name' => $r['client_name'], 'purchase_orders' => implode(', ', array_unique($r['purchase_orders']))], array_filter($reqs, static fn ($r) => $r['ready'])));
+        $ready = array_values(array_map(static fn ($r) => ['id' => $r['id'], 'folio' => $r['folio'], 'client_name' => $r['client_name'], 'purchase_orders' => $r['purchase_orders']],
+            array_filter($this->readiness($org, $orders, $receipts), static fn ($r) => $r['ready'] && ! $r['invoiced'])));
         return [
             'counters' => ['po_without_receipt' => count($withoutReceipt), 'receipts_pending' => count($pendingReceipts), 'deliveries_missing' => count($notDelivered), 'acceptance_pending' => count($pendingAcceptance), 'ready_to_invoice' => count($ready)],
             'po_without_receipt' => $withoutReceipt, 'receipts_pending' => $pendingReceipts, 'deliveries_missing' => $notDelivered, 'acceptance_pending' => $pendingAcceptance, 'ready_to_invoice' => $ready,

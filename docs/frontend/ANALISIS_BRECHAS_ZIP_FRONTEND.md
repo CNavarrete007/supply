@@ -50,7 +50,7 @@ siguen con datos de demostración** (no leen ni guardan en MariaDB) y que, en lo
 
 | Fase | Contenido | ¿Necesita tu autorización? |
 |---|---|---|
-| 1 · Lectura | Suministros (**hecho**), Órdenes de Compra (**hecho**), Cotizaciones y Comparativo (**hecho**), Recepción y Entrega (**hecho**), Factura, Gestión del Contratista, Servicios Operativos, Configuración (consulta), Requisición: Catálogo de categorías | No (solo SELECT con la cuenta API existente; misma guarda Master Admin) |
+| 1 · Lectura | Suministros (**hecho**), Órdenes de Compra (**hecho**), Cotizaciones y Comparativo (**hecho**), Recepción y Entrega (**hecho**), Factura (**hecho**), Gestión del Contratista, Servicios Operativos, Configuración (consulta), Requisición: Catálogo de categorías | No (solo SELECT con la cuenta API existente; misma guarda Master Admin) |
 | 2 · Endpoints ya validados | Requisición: Control de cambios R3A/R3B/R3C1 (INT03-D2) y consultas R3C2/R3C3 (INT03-D3) | No (usa endpoints y permisos 52 ya aprobados) |
 | 3 · Escrituras de catálogos y cuentas | Clientes, Proveedores, Suministros, política de recompra, Usuarios y roles, Configuración | **Sí**: requiere nuevos permisos SQL (cambia el contrato 77/52), CSRF, idempotencia y auditoría |
 | 4 · Escrituras comerciales | RFQ, cotizaciones, OC (emitir/autorizar/enmendar), recepción, entrega, factura | **Sí**, y según la regla del proyecto siguen bloqueadas hasta pruebas integrales |
