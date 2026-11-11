@@ -3,7 +3,8 @@
 
 Solo hace peticiones GET (más login/logout), por lo que puede ejecutarse contra la base sintética o contra
 la base local real sin modificarla. Verifica, para TODAS las requisiciones (páginas de 50):
-  - cada fila trae references.{purchase_orders, winning_suppliers, winning_supplier_source, receipts, invoices};
+  - cada fila trae references.{purchase_orders, purchase_order_totals, winning_suppliers, winning_supplier_source, receipts, invoices};
+  - purchase_order_totals: última versión de cada serie vigente, con id público, moneda e importe decimal (texto);
   - las listas no exceden los conteos existentes (las referencias excluyen canceladas/sustituidas);
   - winning_supplier_source ∈ {purchase_order, award, null} y es coherente con winning_suppliers;
   - los campos auxiliares internos (*_refs) no se exponen;
@@ -41,9 +42,16 @@ try:
         if page > 400:
             break
     check('todas las requisiciones leídas en páginas de 50', len(items) == total, f'{len(items)}/{total}')
-    keys = {'purchase_orders', 'winning_suppliers', 'winning_supplier_source', 'receipts', 'invoices'}
+    keys = {'purchase_orders', 'purchase_order_totals', 'winning_suppliers', 'winning_supplier_source', 'receipts', 'invoices'}
     bad_shape = [r['folio'] for r in items if set((r.get('references') or {}).keys()) != keys]
-    check('cada fila trae references con las 5 claves', not bad_shape, ', '.join(bad_shape[:5]))
+    check('cada fila trae references con las 6 claves', not bad_shape, ', '.join(bad_shape[:5]))
+    amount = re.compile(r'^-?\d+(\.\d+)?$')
+    bad_totals = [r['folio'] for r in items for t in r['references']['purchase_order_totals']
+                  if set(t) != {'id', 'folio', 'currency', 'amount'} or not re.match(r'^[0-9a-f-]{36}$', t['id'] or '')
+                  or not amount.match(t['amount'] or '') or len(t['currency'] or '') != 3 or t['folio'] not in r['references']['purchase_orders']]
+    check('importes de OC vigentes: id público, folio vigente, moneda e importe decimal', not bad_totals, ', '.join(bad_totals[:5]))
+    dup = [r['folio'] for r in items if len({t['id'] for t in r['references']['purchase_order_totals']}) != len(r['references']['purchase_order_totals'])]
+    check('una sola versión vigente por serie de OC', not dup, ', '.join(dup[:5]))
     leaked = [r['folio'] for r in items if any(k.endswith('_refs') for k in r)]
     check('no se exponen campos internos *_refs', not leaked, ', '.join(leaked[:5]))
     over = [r['folio'] for r in items if len(r['references']['purchase_orders']) > r['purchase_order_count']

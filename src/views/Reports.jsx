@@ -1,137 +1,164 @@
-import React, { useEffect, useState } from 'react';
-import { AlertCircle, Download, BarChart3, Loader2, Printer, RefreshCw, ShieldCheck } from 'lucide-react';
-import { analyticsReport, analyticsCsv } from '../analyticsApi';
-import { matrixClients } from '../matrixApi';
+import React, { useMemo, useState } from 'react';
+import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Download, Info, Loader2, LockKeyhole, Printer, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
+import { useMatrixData } from './generalMatrix/useMatrixData';
+import {
+  DEFAULT_COMPANY, P2P_STAGES, PENDING_STAGE, localToday, money, stageLabel, reportRows, reportMetrics, moneyLines,
+  executiveSummary, conclusions, poCell, reportCsv, reportPrintHtml,
+} from './reports/model.mjs';
+import { riskOf } from './generalMatrix/model.mjs';
 
-const empty = { from: '', to: '', client: 'all', q: '', has: 'all' };
-const milestoneOptions = [
-  ['all', 'Todas las requisiciones', 'All requisitions'],
-  ['rfq', 'Con RFQ', 'With RFQ'],
-  ['supplier_quote', 'Con oferta de proveedor', 'With supplier offer'],
-  ['customer_quote', 'Con cotización al cliente', 'With client quote'],
-  ['purchase_order', 'Con OC', 'With PO'],
-  ['receipt', 'Con recepción', 'With receipt'],
-  ['delivery', 'Con entrega', 'With delivery'],
-  ['invoice', 'Con factura', 'With invoice'],
-  ['without_purchase_order', 'Sin OC vinculada', 'Without linked PO'],
-];
-const count = v => new Intl.NumberFormat('es-MX').format(Number(v) || 0);
-const money = (value, currency, isEn) => {
-  const n = Number(value);
-  return Number.isFinite(n) ? new Intl.NumberFormat(isEn ? 'en-US' : 'es-MX', {
-    style: 'currency', currency: currency || 'MXN', maximumFractionDigits: 2,
-  }).format(n) : `${value} ${currency}`;
-};
+// Reportes · "Generador de reporte gerencial" (diseño Grupo Gerez) con datos reales de MariaDB.
+// Mismas fuentes y reglas que la Matriz General (solo GET). Montos por moneda, sin conversión; "Comprado" = OC
+// vigentes contadas una vez; "Ahorro / desviación" solo sobre requisiciones con presupuesto y OC en la misma moneda.
+const PAGE = 25;
+const EMPTY = { from: '', to: '', client: 'all', stage: 'all' };
+const inputCls = 'w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-2xs';
+const TONE = { warning: [TriangleAlert, 'text-amber-600'], ok: [CheckCircle2, 'text-emerald-600'], info: [Info, 'text-blue-600'] };
 
-const box = 'bg-white rounded-2xl border border-slate-200 shadow-sm';
-const field = 'w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-400';
-
-export function Reports({ lang = 'es', language, isEnglish }) {
-  const isEn = isEnglish || lang === 'en' || language === 'en';
-  const t = (es, en) => isEn ? en : es;
-  const [clients, setClients] = useState([]);
-  const [draft, setDraft] = useState(empty);
-  const [applied, setApplied] = useState(empty);
+export function Reports({ onNotify, lang = 'es', language, isEnglish }) {
+  const en = Boolean(isEnglish || lang === 'en' || language === 'en');
+  const tx = (es, e) => (en ? e : es);
+  const notify = (title, message, type = 'info') => { if (typeof onNotify === 'function') onNotify(title, message, type); };
+  const [revision, setRevision] = useState(0);
+  const { clients, reqs, stages, rows, ready, stagesDenied } = useMatrixData(revision);
+  const [draft, setDraft] = useState(EMPTY);
+  const [applied, setApplied] = useState(null); // null = reporte aún no generado (como en el diseño)
+  const [issued, setIssued] = useState('');
   const [page, setPage] = useState(1);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [downloading, setDownloading] = useState(false);
-  const [error, setError] = useState('');
-  const [refresh, setRefresh] = useState(0);
   const invalidRange = !!(draft.from && draft.to && draft.from > draft.to);
+  const day = localToday();
 
-  useEffect(() => {
-    const controller = new AbortController();
-    matrixClients(controller.signal).then(result => {
-      if (!controller.signal.aborted) setClients(result.items || []);
-    }).catch(() => { if (!controller.signal.aborted) setClients([]); });
-    return () => controller.abort();
-  }, []);
+  const scoped = useMemo(() => (applied ? reportRows(rows, applied) : []), [rows, applied]);
+  const m = useMemo(() => reportMetrics(scoped, day), [scoped, day]);
+  const lastPage = Math.max(1, Math.ceil(scoped.length / PAGE));
+  const pageRows = scoped.slice((page - 1) * PAGE, page * PAGE);
+  const clientName = id => clients.items.find(c => c.id === id)?.name;
+  const subtitleOf = f => (f.client === 'all' ? `${DEFAULT_COMPANY} · ${tx('Todos los clientes', 'All clients')}` : clientName(f.client) || '—');
+  const stageText = s => (s === 'all' ? tx('Todas', 'All') : s === PENDING_STAGE ? stageLabel(null, en) : stageLabel(Number(s), en));
+  const scopeTextOf = f => `${tx('Periodo (fecha de solicitud)', 'Period (request date)')}: ${f.from || tx('inicio', 'start')} — ${f.to || tx('sin límite', 'no limit')} · ${tx('Etapa', 'Stage')}: ${stageText(f.stage)}`;
+  const stamp = () => new Date().toLocaleString(en ? 'en-US' : 'es-MX');
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true); setData(null); setError('');
-    analyticsReport({ ...applied, page, page_size: 25 }, controller.signal)
-      .then(result => { if (!controller.signal.aborted) setData(result); })
-      .catch(e => { if (!controller.signal.aborted) setError(e.message || t('Error al consultar MariaDB.', 'Could not load database.')); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [applied, page, refresh]);
-
-  const generate = e => {
-    e.preventDefault();
-    if (invalidRange) { setError(t('La fecha inicial es mayor que la final.', 'Start date exceeds end date.')); return; }
-    setPage(1); setApplied({ ...draft });
-    setRefresh(n => n + 1);
+  const generate = () => {
+    if (invalidRange) return null;
+    const f = { ...draft }; const at = stamp();
+    setApplied(f); setIssued(at); setPage(1);
+    return { f, at };
+  };
+  const print = () => {
+    const g = applied && JSON.stringify(applied) === JSON.stringify(draft) ? { f: applied, at: issued } : generate();
+    if (!g) return;
+    if (!ready) { notify(tx('Imprimir / PDF', 'Print / PDF'), tx('Los datos aún se están cargando desde MariaDB.', 'Data is still loading from MariaDB.'), 'warning'); return; }
+    const list = reportRows(rows, g.f);
+    const w = window.open('', '_blank', 'width=1100,height=800');
+    if (!w) { notify(tx('Imprimir / PDF', 'Print / PDF'), tx('El navegador bloqueó la ventana de impresión; permite ventanas emergentes para este sitio.', 'The browser blocked the print window; allow pop-ups for this site.'), 'warning'); return; }
+    w.document.write(reportPrintHtml(list, reportMetrics(list, day), { en, title: tx('Reporte Gerencial de Suministro', 'Supply Management Report'), subtitle: subtitleOf(g.f), issued: g.at, scopeText: scopeTextOf(g.f), day }));
+    w.document.close(); w.focus();
+    setTimeout(() => { w.print(); w.close(); }, 250);
+  };
+  const exportCsv = () => {
+    if (!applied) return;
+    const url = URL.createObjectURL(new Blob([reportCsv(scoped, en, day)], { type: 'text/csv;charset=utf-8;' }));
+    const a = document.createElement('a'); a.href = url; a.download = `Reporte_gerencial_${day}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    notify(tx('Exportar CSV', 'Export CSV'), tx(`Se exportaron ${scoped.length} requisiciones del reporte (generado en tu navegador).`, `${scoped.length} report requisitions exported (generated in your browser).`));
   };
 
-  const exportCsv = async () => {
-    if (downloading || loading || !data) return;
-    setDownloading(true); setError('');
-    try {
-      const blob = await analyticsCsv(applied);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = 'supplyflow-requisiciones.csv';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) { setError(e.message || t('No se pudo exportar.', 'Export failed.')); }
-    finally { setDownloading(false); }
+  const renderMoney = (map, pick, empty, negativeRed = false) => {
+    const keys = Object.keys(map);
+    if (!keys.length) return <><span className="block text-lg font-black text-slate-400">—</span><span className="block text-[10px] text-slate-400 font-medium leading-tight">{empty}</span></>;
+    return moneyLines(map, en, pick).map((line, i) => <span key={line} className={`block font-black tabular-nums leading-tight ${i ? 'text-sm mt-0.5' : 'text-base'} ${negativeRed && line.startsWith('-') ? 'text-rose-600' : 'text-slate-900'}`}>{line}</span>);
   };
 
-  const summary = data?.summary || {};
-  const pages = Math.max(1, Math.ceil((data?.total || 0) / 25));
-  const selectedClient = clients.find(x => x.id === applied.client)?.name;
-  return <div className="space-y-5 pb-6">
-    <style>{`@media print {
-      @page { size: landscape; margin: 13mm; }
-      body * { visibility: hidden !important; }
-      #supplyflow-report-print, #supplyflow-report-print * { visibility: visible !important; }
-      #supplyflow-report-print { position: absolute !important; left: 0; top: 0; width: 100% !important; background: white !important; }
-      #supplyflow-report-print .no-print { display: none !important; }
-      #supplyflow-report-print table { font-size: 9px !important; }
-      #supplyflow-report-print tr { break-inside: avoid; }
-    }`}</style>
-    <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-900 text-white rounded-3xl p-6 shadow-lg">
-      <div className="flex flex-col sm:flex-row justify-between gap-3"><div><span className="inline-flex items-center text-[11px] font-semibold gap-2 bg-white/15 rounded-full px-3 py-1"><ShieldCheck size={14}/>{t('MariaDB · Consulta segura', 'MariaDB · Secured read-only')}</span><h1 className="text-2xl font-black mt-3">{t('Reportes gerenciales', 'Management Reports')}</h1><p className="text-sm text-blue-100 mt-2">{t('Requisiciones y documentos realmente vinculados, con filtros coherentes y exportación completa.', 'Actual requisitions and linked documents, consistent filters and full-scope export.')}</p></div><BarChart3 size={45} className="opacity-50 self-end"/></div>
+  return <div className="space-y-6">
+    {/* CABECERA PRINCIPAL */}
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div><h2 className="text-xl font-extrabold text-slate-900 tracking-tight">{tx('Generador de reporte gerencial', 'Management Report Generator')}</h2><p className="text-xs text-slate-500 mt-0.5">{tx('Filtra el periodo y genera una vista ejecutiva imprimible.', 'Filter the period and generate a printable executive view.')}</p></div>
+      <div className="flex items-center gap-2">
+        <span className="px-3 py-1 bg-emerald-50 text-emerald-700 font-bold text-[10px] rounded-full border border-emerald-200">{tx('Fuente: MariaDB', 'Source: MariaDB')}</span>
+        <button type="button" onClick={() => setRevision(n => n + 1)} className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5" />{tx('Actualizar datos', 'Refresh data')}</button>
+      </div>
     </div>
 
-    <form onSubmit={generate} className={`${box} p-5 no-print space-y-4`}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        <label className="text-xs font-bold text-slate-600">{t('Desde (fecha solicitud)', 'From (request date)')}<input type="date" className={`${field} mt-1.5`} value={draft.from} onChange={e => setDraft(old => ({ ...old, from: e.target.value }))} /></label>
-        <label className="text-xs font-bold text-slate-600">{t('Hasta', 'To')}<input type="date" className={`${field} mt-1.5`} value={draft.to} onChange={e => setDraft(old => ({ ...old, to: e.target.value }))} /></label>
-        <label className="text-xs font-bold text-slate-600">{t('Cliente', 'Client')}<select className={`${field} mt-1.5`} value={draft.client} onChange={e => setDraft(old => ({ ...old, client: e.target.value }))}><option value="all">{t('Todos', 'All')}</option>{clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-        <label className="text-xs font-bold text-slate-600">{t('Evidencia documental', 'Document evidence')}<select className={`${field} mt-1.5`} value={draft.has} onChange={e => setDraft(old => ({ ...old, has: e.target.value }))}>{milestoneOptions.map(([id,es,en]) => <option key={id} value={id}>{isEn ? en : es}</option>)}</select></label>
-        <label className="text-xs font-bold text-slate-600">{t('Buscar', 'Search')}<input className={`${field} mt-1.5`} value={draft.q} onChange={e => setDraft(old => ({ ...old, q: e.target.value }))} maxLength={120} placeholder={t('Folio, cliente, descripción...', 'Folio, client, description...')} /></label>
+    <form onSubmit={e => { e.preventDefault(); generate(); }} className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5">
+      {/* FILTROS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+        <label className="space-y-1.5 block"><span className="block text-[11px] font-bold text-slate-700">{tx('Desde', 'From')}</span><input type="date" aria-label={tx('Desde', 'From')} value={draft.from} onChange={e => setDraft(d => ({ ...d, from: e.target.value }))} className={inputCls} /></label>
+        <label className="space-y-1.5 block"><span className="block text-[11px] font-bold text-slate-700">{tx('Hasta', 'To')}</span><input type="date" aria-label={tx('Hasta', 'To')} value={draft.to} onChange={e => setDraft(d => ({ ...d, to: e.target.value }))} className={inputCls} /></label>
+        <label className="space-y-1.5 block"><span className="block text-[11px] font-bold text-slate-700">{tx('Cliente', 'Client')}</span><select aria-label={tx('Cliente', 'Client')} value={draft.client} onChange={e => setDraft(d => ({ ...d, client: e.target.value }))} className={`${inputCls} font-medium truncate`}><option value="all">{tx('Todos', 'All')}</option>{clients.items.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+        <label className="space-y-1.5 block"><span className="block text-[11px] font-bold text-slate-700">{tx('Etapa', 'Stage')}</span><select aria-label={tx('Etapa', 'Stage')} value={draft.stage} onChange={e => setDraft(d => ({ ...d, stage: e.target.value }))} className={`${inputCls} font-medium`}>
+          <option value="all">{tx('Todas', 'All')}</option>{P2P_STAGES.map((s, i) => <option key={s[0]} value={String(i)}>{en ? s[1] : s[0]}</option>)}<option value={PENDING_STAGE}>{stageLabel(null, en)}</option></select></label>
       </div>
-      {invalidRange && <p role="alert" className="text-xs font-semibold text-rose-700">{t('Corrige el rango de fechas.', 'Correct the date range.')}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="submit" disabled={invalidRange} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl text-white text-xs font-bold flex items-center gap-2"><RefreshCw size={15}/>{t('Generar reporte', 'Generate report')}</button>
-        <button type="button" disabled={!data || loading || downloading} onClick={exportCsv} className="px-4 py-2.5 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-50 rounded-xl text-slate-700 text-xs font-bold flex items-center gap-2"><Download size={15}/>{downloading ? t('Exportando...', 'Exporting...') : 'CSV'}</button>
-        <button type="button" disabled={!data || loading} onClick={() => window.print()} className="px-4 py-2.5 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-50 rounded-xl text-slate-700 text-xs font-bold flex items-center gap-2"><Printer size={15}/>{t('Imprimir página actual / PDF', 'Print current page / PDF')}</button>
-        <button type="button" onClick={() => { setDraft({ ...empty }); setApplied({ ...empty }); setPage(1); }} className="px-3 py-2.5 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl">{t('Limpiar filtros', 'Clear filters')}</button>
+      <p className="text-[10px] text-slate-400">{tx('El periodo se aplica a la fecha de solicitud; una requisición sin fecha queda fuera de periodos delimitados (misma regla que el Dashboard).', 'The period applies to the request date; undated requisitions are excluded from bounded periods (same rule as the Dashboard).')}</p>
+      {invalidRange && <p role="alert" className="text-xs font-semibold text-rose-700">{tx('La fecha inicial es mayor que la final.', 'Start date exceeds end date.')}</p>}
+      {clients.status === 'error' && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{clients.error?.message}</p>}
+      {reqs.status === 'error' && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{reqs.error?.status === 401 ? tx('Tu sesión expiró. Inicia sesión nuevamente.', 'Your session expired. Sign in again.') : reqs.error?.message}</p>}
+      {stages.status === 'error' && !stagesDenied && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{stages.error?.message}</p>}
+      {stagesDenied && <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">{tx('Las etapas requieren acceso al módulo de Requisiciones; sin ellas, "Cerradas" y el filtro de etapa no pueden calcularse.', 'Stages require access to the Requisitions module; without them, "Closed" and the stage filter cannot be computed.')}</p>}
+      {reqs.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx(`Consultando requisiciones en MariaDB… ${reqs.items.length}${reqs.total ? ` de ${reqs.total}` : ''}`, `Loading requisitions from MariaDB… ${reqs.items.length}${reqs.total ? ` of ${reqs.total}` : ''}`)}</p>}
+
+      {/* BOTONES DE ACCIÓN */}
+      <div className="flex flex-wrap items-center gap-3 pt-1">
+        <button type="submit" disabled={invalidRange} className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-extrabold transition-colors shadow-sm shadow-blue-600/20 cursor-pointer"><Sparkles className="w-4 h-4 text-amber-300 fill-amber-300" />{tx('Generar reporte', 'Generate report')}</button>
+        <button type="button" onClick={print} disabled={invalidRange} className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 rounded-xl text-xs font-bold transition-colors shadow-2xs cursor-pointer"><Printer className="w-4 h-4 text-slate-600" />{tx('Imprimir / PDF', 'Print / PDF')}</button>
+        <button type="button" onClick={exportCsv} disabled={!applied || !ready} className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 rounded-xl text-xs font-bold transition-colors shadow-2xs cursor-pointer"><Download className="w-4 h-4 text-slate-600" />{tx('Exportar CSV', 'Export CSV')}</button>
+        <button type="button" onClick={() => { setDraft(EMPTY); setApplied(null); }} className="px-3 py-2.5 text-slate-600 hover:bg-slate-50 text-xs font-semibold rounded-xl">{tx('Limpiar filtros', 'Clear filters')}</button>
       </div>
     </form>
 
-    {loading && <div className="flex items-center justify-center gap-2 bg-white border border-slate-200 rounded-2xl p-9 text-slate-600"><Loader2 className="animate-spin" size={20}/>{t('Consultando MariaDB...', 'Loading MariaDB...')}</div>}
-    {!loading && error && <div role="alert" className="flex items-center gap-2 bg-rose-50 text-rose-800 border border-rose-200 rounded-xl p-4"><AlertCircle size={18}/>{error}</div>}
-    {!loading && data && <div id="supplyflow-report-print" className="space-y-4">
-      <div className="bg-white border border-slate-200 rounded-2xl p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-black text-slate-900">{t('Reporte de requisiciones', 'Requisition report')}</h2><p className="text-xs text-slate-500 mt-1">{selectedClient || t('Todos los clientes', 'All clients')} · {applied.from || t('Sin fecha inicial', 'No start date')} — {applied.to || t('Sin fecha final', 'No end date')}</p></div><div className="text-right text-xs text-slate-500">{t('Fuente: MariaDB', 'Source: MariaDB')}<div className="font-bold text-slate-700">{t('Página', 'Page')} {page} / {pages}</div></div></div></div>
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[
-        [t('Requisiciones', 'Requisitions'),summary.total,'border-t-blue-500'],
-        [t('Con OC', 'With PO'),summary.with_purchase_order,'border-t-amber-500'],
-        [t('Con recepción', 'With receipt'),summary.with_receipt,'border-t-emerald-500'],
-        [t('Con entrega', 'With delivery'),summary.with_delivery,'border-t-teal-500'],
-      ].map(([label,value,color]) => <div key={label} className={`bg-white border border-slate-200 border-t-4 ${color} rounded-xl p-4`}><div className="text-2xl font-black tabular-nums text-slate-900">{count(value)}</div><div className="mt-1 text-xs font-bold text-slate-600">{label}</div></div>)}</section>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4"><section className={`${box} p-4`}><h3 className="text-xs font-black text-slate-900">{t('Resumen del alcance', 'Scope summary')}</h3><p className="text-xs text-slate-700 mt-2">{t('Hay', 'There are')} <strong>{count(data.total)}</strong> {t('requisiciones coincidentes. Los hitos indican documentos vinculados y pueden coincidir entre sí.', 'matching requisitions. Milestones indicate linked documents and can overlap.')}</p><p className="text-[11px] text-slate-500 mt-2">{t('La fecha utilizada para el filtro es la fecha de solicitud. Una fecha ausente queda fuera de periodos delimitados.', 'Filtering uses request date. Undated records are excluded from bounded periods.')}</p></section>
-      <section className={`${box} p-4`}><h3 className="text-xs font-black text-slate-900">{t('Presupuestos registrados por moneda', 'Recorded budgets by currency')}</h3>{data.budgets?.length ? <div className="mt-2 space-y-2">{data.budgets.map(b => <div key={b.currency_code} className="flex justify-between gap-2 text-xs"><span>{b.currency_code} · {count(b.documents)} {t('requisiciones', 'requisitions')}</span><strong>{money(b.amount,b.currency_code,isEn)}</strong></div>)}</div> : <p className="text-xs text-slate-500 mt-2">{t('No hay presupuestos registrados para el filtro.', 'No recorded budgets in this scope.')}</p>}<p className="text-[11px] text-slate-500 mt-2">{t('Ausente no significa cero; no se calculan ahorros ni se mezclan monedas.', 'Missing does not mean zero; no savings are calculated or currencies mixed.')}</p></section></div>
-      <div className={`${box} overflow-hidden`}><div className="overflow-x-auto"><table className="w-full text-left text-[11px]"><thead className="bg-slate-100 text-slate-600 uppercase text-[10px]"><tr>{[t('Folio', 'Folio'),t('Cliente / proyecto', 'Client / project'),t('Fecha', 'Date'),t('Requerida', 'Required'),t('Presupuesto', 'Budget'),t('Partidas', 'Items'),'RFQ',t('Versiones cot. cliente', 'Client quote versions'),'OC',t('Recepciones', 'Receipts'),t('Entregas', 'Deliveries')].map(h => <th key={h} className="p-3 whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{(data.items || []).map(r => <tr key={r.id} className="border-t border-slate-100"><td className="p-3 font-bold text-slate-900">{r.folio}</td><td className="p-3 min-w-[190px]"><div className="font-semibold">{r.client_name}</div><div className="text-slate-500">{r.project || '—'}</div></td><td className="p-3 whitespace-nowrap">{r.request_date || '—'}</td><td className="p-3 whitespace-nowrap">{r.need_date || '—'}</td><td className="p-3 whitespace-nowrap">{r.budget_amount == null ? '—' : money(r.budget_amount,r.currency_code,isEn)}</td><td className="p-3 tabular-nums">{r.line_count}</td><td className="p-3 tabular-nums">{r.rfq_count}</td><td className="p-3 tabular-nums">{r.customer_quote_count}</td><td className="p-3 tabular-nums">{r.purchase_order_count}</td><td className="p-3 tabular-nums">{r.receipt_count}</td><td className="p-3 tabular-nums">{r.delivery_count}</td></tr>)}{!data.items?.length && <tr><td colSpan={11} className="p-8 text-slate-500 text-center">{t('No hay registros para estos filtros.', 'No matching records.')}</td></tr>}</tbody></table></div>
-        <div className="no-print flex items-center justify-between gap-3 p-4 border-t border-slate-200"><p className="text-xs text-slate-500">{t('Página', 'Page')} {page} / {pages} · {count(data.total)} {t('registros totales', 'total records')}</p><div className="flex gap-2"><button disabled={page === 1} onClick={() => setPage(n => Math.max(1,n - 1))} className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40">{t('Anterior', 'Previous')}</button><button disabled={page >= pages} onClick={() => setPage(n => Math.min(pages,n + 1))} className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40">{t('Siguiente', 'Next')}</button></div></div>
+    {/* REPORTE EJECUTIVO GENERADO */}
+    {applied && <div className="space-y-4" data-testid="management-report">
+      <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 rounded-2xl p-6 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="min-w-0"><h2 className="text-xl font-extrabold tracking-tight">{tx('Reporte Gerencial de Suministro', 'Supply Management Report')}</h2>
+          <p className="text-xs text-blue-100 mt-1 font-medium">{subtitleOf(applied)}</p><p className="text-[11px] text-blue-100/90 mt-0.5">{scopeTextOf(applied)}</p></div>
+        <div className="bg-white/10 backdrop-blur-md px-4 py-2 rounded-xl sm:text-right border border-white/20 shrink-0"><span className="block text-[10px] text-blue-100 font-medium">{tx('Fecha de emisión', 'Issue Date')}</span><span className="text-xs font-bold">{issued}</span></div>
       </div>
-      <p className="text-[11px] text-slate-500">{t('Impresión: página actual. CSV: todas las filas del filtro. Los conteos de versiones/OC pueden incluir revisiones; no se deduce aprobación, pago ni cierre. Históricos sin vínculo válido quedan fuera de esas relaciones.', 'Print: current page. CSV: all matching rows. Version/PO counts may include revisions; no approval, payment or closure is inferred. History without valid links is excluded from relations.')}</p>
+      {!ready && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Completando la consulta; las cifras se actualizan al terminar.', 'Completing the query; figures update when finished.')}</p>}
+
+      {/* TARJETAS DE KPIS CON BORDE SUPERIOR DE COLOR */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        {[[m.total, tx('Requisiciones', 'Requisitions'), 'border-t-blue-600'], [m.closed, tx('Cerradas', 'Closed'), 'border-t-emerald-500', tx('Etapa Factura', 'Invoice stage')], [m.overdue, tx('Vencidas', 'Overdue'), 'border-t-rose-500', tx('Requerida antes de hoy y sin entrega', 'Required before today and not delivered')]].map(([v, label, cls, hint]) =>
+          <div key={label} title={hint} className={`bg-white p-4 rounded-xl border border-slate-200/80 border-t-4 ${cls} shadow-2xs`}><span className="block text-2xl font-black text-slate-900 tabular-nums">{v}</span><span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{label}</span></div>)}
+        <div className="bg-white p-4 rounded-xl border border-slate-200/80 border-t-4 border-t-purple-600 shadow-2xs" title={tx('Suma de presupuestos registrados por moneda; sin presupuesto no cuenta como cero.', 'Sum of recorded budgets per currency; missing budgets are not zero.')}>{renderMoney(m.budget, undefined, tx('Sin presupuestos registrados', 'No recorded budgets'))}<span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{tx('Presupuesto', 'Budget')}</span></div>
+        <div className="bg-white p-4 rounded-xl border border-slate-200/80 border-t-4 border-t-orange-500 shadow-2xs" title={tx('OC vigentes (última versión, sin canceladas ni sustituidas), contadas una sola vez.', 'Current POs (latest version, excluding cancelled/superseded), counted once.')}>{renderMoney(m.purchased, x => x.amount, tx('Sin OC vigentes', 'No current POs'))}<span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{tx('Comprado', 'Purchased')}</span></div>
+        <div className="bg-white p-4 rounded-xl border border-slate-200/80 border-t-4 border-t-teal-600 shadow-2xs" title={tx('Presupuesto − OC, solo en requisiciones con presupuesto y OC en la misma moneda. Positivo = ahorro; negativo = sobrecosto.', 'Budget − POs, only for requisitions with budget and POs in the same currency. Positive = saving; negative = overrun.')}>{renderMoney(m.deviation, x => x.deviation, tx('Sin base comparable', 'No comparable basis'), true)}<span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{tx('Ahorro / desviación', 'Savings / Variance')}</span></div>
+      </div>
+
+      {/* TARJETA RESUMEN EJECUTIVO */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-1.5"><h3 className="text-xs font-black text-slate-900 tracking-tight">{tx('Resumen ejecutivo', 'Executive Summary')}</h3><p className="text-xs text-slate-600 leading-relaxed">{executiveSummary(m, en)}</p></div>
+
+      {/* TABLA MATRIZ DETALLADA */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+        <div className="flex items-center justify-between gap-3"><h3 className="text-xs font-black text-slate-900">{tx('Detalle de requisiciones', 'Requisition detail')} <span className="text-slate-400 font-semibold">· {scoped.length}</span></h3><span className="text-[10px] text-slate-400">{tx('La impresión y el CSV incluyen todas las filas.', 'Print and CSV include every row.')}</span></div>
+        <div className="overflow-x-auto rounded-xl border border-slate-200/80">
+          <table className="w-full text-left border-collapse">
+            <thead><tr className="bg-slate-50/90 text-[10px] font-extrabold text-slate-700 uppercase tracking-wider border-b border-slate-200">
+              {[tx('Requisición', 'Requisition'), tx('Cliente', 'Client'), tx('Proyecto', 'Project'), tx('Monto est.', 'Est. amount'), tx('OC', 'PO'), tx('Recepción', 'Reception'), tx('Etapa', 'Stage'), tx('Fecha requerida', 'Required date')].map(h => <th key={h} className="py-3 px-3.5 whitespace-nowrap">{h}</th>)}
+            </tr></thead>
+            <tbody className="divide-y divide-slate-100 text-[11px] font-medium text-slate-700">
+              {pageRows.map(r => { const pos = r.references?.purchase_order_totals || []; const overdue = riskOf(r, day) === 'overdue'; return <tr key={r.id} className="hover:bg-slate-50/70 transition-colors align-top">
+                <td className="py-3 px-3.5 font-bold text-slate-900 whitespace-nowrap">{r.folio}</td>
+                <td className="py-3 px-3.5 font-bold text-slate-800 uppercase text-[10px] min-w-[180px]">{r.client_name}</td>
+                <td className="py-3 px-3.5 text-slate-600">{r.project || '—'}</td>
+                <td className="py-3 px-3.5 font-bold text-slate-800 whitespace-nowrap">{money(r.budget_amount, r.currency_code, en)}</td>
+                <td className="py-3 px-3.5 text-slate-600 whitespace-nowrap">{poCell(r, en)}{pos.length > 0 && <div className="text-[9.5px] text-slate-400">{pos.map(p => p.folio).join(' · ')}</div>}</td>
+                <td className="py-3 px-3.5 text-slate-500 whitespace-pre">{(r.references?.receipts || []).join('\n') || '—'}</td>
+                <td className="py-3 px-3.5 text-slate-700 font-semibold whitespace-nowrap">{stageLabel(r.stage_index, en)}</td>
+                <td className={`py-3 px-3.5 whitespace-nowrap ${overdue ? 'text-rose-600 font-bold' : 'text-slate-600'}`} title={overdue ? tx('Vencida', 'Overdue') : undefined}>{r.need_date ? String(r.need_date).slice(0, 10) : '—'}</td>
+              </tr>; })}
+              {!pageRows.length && <tr><td colSpan={8} className="py-8 text-center text-slate-400 text-xs font-semibold">{ready ? tx('No hay requisiciones para los filtros seleccionados.', 'No requisitions for the selected filters.') : tx('Consultando requisiciones…', 'Loading requisitions…')}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        {scoped.length > PAGE && <div className="flex items-center justify-between gap-3 text-xs text-slate-600"><span>{tx('Página', 'Page')} {page} / {lastPage}</span><div className="flex gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => Math.max(1, n - 1))} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= lastPage} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div></div>}
+      </div>
+
+      {/* TARJETA CONCLUSIONES */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-2" data-testid="report-conclusions">
+        <h3 className="text-xs font-black text-slate-900 tracking-tight">{tx('Conclusiones', 'Conclusions')}</h3>
+        <ul className="space-y-1.5">{conclusions(m, en).map(c => { const [Icon, color] = TONE[c.tone]; return <li key={c.text} className="flex items-start gap-2 text-xs text-slate-600 leading-relaxed"><Icon className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${color}`} /><span>{c.text}</span></li>; })}</ul>
+        <p className="text-[10px] text-slate-400 pt-1">{tx('Conclusiones generadas con reglas sobre las cifras de este reporte; no sustituyen el análisis del área de Compras.', 'Conclusions generated by rules over this report\'s figures; they do not replace the Purchasing team\'s analysis.')}</p>
+      </div>
+      <div className="text-[11px] text-amber-900 bg-amber-50 rounded-xl border border-amber-200 p-3 flex items-start gap-2"><LockKeyhole size={15} className="shrink-0" /><span>{tx('Solo consulta. Montos por moneda sin conversión; "Comprado" no equivale a pagado. Las OC compartidas con requisiciones fuera del filtro se cuentan completas. Los documentos en conciliación no se presentan como vínculos validados.', 'Read-only. Amounts per currency without conversion; "Purchased" is not "paid". POs shared with requisitions outside the filter are counted in full. Documents under reconciliation are not shown as validated links.')}</span></div>
     </div>}
   </div>;
 }

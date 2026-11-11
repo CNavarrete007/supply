@@ -102,7 +102,8 @@ final class MatrixReadRepository
     }
 
     /**
-     * Document references for the matrix columns (OC, winning supplier, receipt, invoice). Read-only and additive.
+     * Document references for the matrix columns (OC, winning supplier, receipt, invoice) and the current PO totals
+     * used by the management report. Read-only and additive.
      * Cancelled/superseded POs and cancelled invoices are excluded with the same rule as the eight-stage policy
      * (RequisitionRecoveryRepository::associations/stage), so references and stage never contradict each other.
      */
@@ -115,6 +116,10 @@ final class MatrixReadRepository
             (SELECT GROUP_CONCAT(DISTINCT po.folio ORDER BY po.folio SEPARATOR '\n') {$poJoin} {$poWhere}) AS purchase_order_refs,
             (SELECT GROUP_CONCAT(DISTINCT s.legal_name ORDER BY s.legal_name SEPARATOR '\n') {$poJoin}
                 JOIN suppliers s ON s.id=po.supplier_id AND s.organization_id=po.organization_id {$poWhere}) AS po_supplier_refs,
+            (SELECT GROUP_CONCAT(DISTINCT CONCAT_WS('\t',pe.public_id,po.folio,po.currency_code,po.total_amount) ORDER BY po.folio SEPARATOR '\n') {$poJoin}
+                JOIN business_entities pe ON pe.id=po.id AND pe.organization_id=po.organization_id {$poWhere}
+                AND NOT EXISTS (SELECT 1 FROM purchase_orders newer WHERE newer.organization_id=po.organization_id
+                    AND newer.series_public_id=po.series_public_id AND newer.version_number>po.version_number)) AS po_total_refs,
             (SELECT GROUP_CONCAT(DISTINCT s.legal_name ORDER BY s.legal_name SEPARATOR '\n') FROM awards aw
                 JOIN suppliers s ON s.id=aw.supplier_id AND s.organization_id=aw.organization_id
                 WHERE aw.organization_id=r.organization_id AND aw.requisition_id=r.id AND aw.status_code='active' AND aw.superseded_at IS NULL) AS award_supplier_refs,
@@ -136,10 +141,16 @@ final class MatrixReadRepository
             'purchase_orders' => $split($row['purchase_order_refs'] ?? null),
             'winning_suppliers' => $poSuppliers ?: $awardSuppliers,
             'winning_supplier_source' => $poSuppliers ? 'purchase_order' : ($awardSuppliers ? 'award' : null),
+            // Latest version of each active PO series, with its public id so a PO shared by several
+            // requisitions can be counted once when amounts are aggregated. DECIMAL stays a string.
+            'purchase_order_totals' => array_map(static function (string $entry): array {
+                [$id, $folio, $currency, $amount] = array_pad(explode("\t", $entry), 4, null);
+                return ['id' => $id, 'folio' => $folio, 'currency' => $currency, 'amount' => $amount];
+            }, $split($row['po_total_refs'] ?? null)),
             'receipts' => $split($row['receipt_refs'] ?? null),
             'invoices' => $split($row['invoice_refs'] ?? null),
         ];
-        unset($row['purchase_order_refs'], $row['po_supplier_refs'], $row['award_supplier_refs'], $row['receipt_refs'], $row['invoice_refs']);
+        unset($row['purchase_order_refs'], $row['po_supplier_refs'], $row['po_total_refs'], $row['award_supplier_refs'], $row['receipt_refs'], $row['invoice_refs']);
         return $row;
     }
 

@@ -125,7 +125,7 @@ export function money(value, currency, en = false) {
   if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
   if (!Number.isFinite(n)) return `${value} ${currency || ''}`.trim();
-  return `$${new Intl.NumberFormat(en ? 'en-US' : 'es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)} ${currency || ''}`.trim();
+  return `${n < 0 ? '-' : ''}$${new Intl.NumberFormat(en ? 'en-US' : 'es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(n))} ${currency || ''}`.trim();
 }
 
 export const projectLine = (r, en = false) => [r.project, r.contract_reference ? `${en ? 'Contract' : 'Contrato'}: ${r.contract_reference}` : ''].filter(Boolean).join(' · ');

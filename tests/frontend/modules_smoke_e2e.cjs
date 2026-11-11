@@ -28,8 +28,10 @@ const MODULES = [
   { label: 'Matriz General', endpoints: ['matrix/requisitions\\?', 'matrix/clients', 'recovery/matrix$'], detail: 'matrix/requisitions/[0-9a-f-]{36}',
     prepare: async page => page.getByRole('button', { name: /Abrir matriz de todos los clientes|Open matrix for all clients/ }).click(),
     expect: async r => (await r('/api/v1/matrix/requisitions?page=1&page_size=25&q=&client=all&has=all')).items?.[0]?.folio },
-  { label: 'Reportes', endpoints: ['analytics/requisitions\\?', 'matrix/clients'],
-    expect: async r => (await r('/api/v1/analytics/requisitions?page=1&page_size=25')).items?.[0]?.folio },
+  // Reportes: generador gerencial (clase_reportes) con las fuentes de la Matriz General; el reporte se genera con el botón.
+  { label: 'Reportes', endpoints: ['matrix/requisitions\\?', 'matrix/clients', 'recovery/matrix$'],
+    prepare: async page => page.getByRole('button', { name: /Generar reporte|Generate report/ }).click(),
+    expect: async r => (await r('/api/v1/matrix/requisitions?page=1&page_size=25&q=&client=all&has=all')).items?.[0]?.folio },
   { label: 'Usuarios y roles', endpoints: ['users\\?', 'roles'],
     expect: async r => (await r('/api/v1/users?page=1')).items?.[0]?.name },
   // Dashboard is the landing page: visit it last so it remounts and its requests are observed.

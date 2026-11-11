@@ -3,10 +3,10 @@ import {
   Search, RefreshCw, ChevronLeft, ChevronRight, Eye, X, FileText, Printer, FileDown,
   AlertTriangle, LockKeyhole, CheckCircle2, ClipboardList, Loader2,
 } from 'lucide-react';
-import { listMatrix, matrixClients, matrixDetail } from '../matrixApi';
-import { request as recoveryRequest } from './recovery/api';
+import { matrixDetail } from '../matrixApi';
+import { useMatrixData } from './generalMatrix/useMatrixData';
 import {
-  P2P_STAGES, PENDING_STAGE, localToday, mergeStages, riskOf, RISKS, stageLabel, clientCards, filterCards, filterRows,
+  P2P_STAGES, PENDING_STAGE, localToday, riskOf, RISKS, stageLabel, clientCards, filterCards, filterRows,
   stageCounts, DOC_FILTERS, money, projectLine, matrixCsv, matrixPrintHtml,
 } from './generalMatrix/model.mjs';
 
@@ -132,46 +132,10 @@ export function GeneralMatrix({ lang = 'es', language, isEnglish, onNotify }) {
   const tx = (es, e) => (en ? e : es);
   const notify = (title, message, type = 'info') => { if (typeof onNotify === 'function') onNotify(title, message, type); };
   const [revision, setRevision] = useState(0);
-  const [clients, setClients] = useState({ status: 'loading', error: null, items: [] });
-  const [reqs, setReqs] = useState({ status: 'loading', error: null, items: [], total: 0 });
-  const [stages, setStages] = useState({ status: 'loading', error: null, items: null });
   const [detailId, setDetailId] = useState(null);
-
-  useEffect(() => {
-    const c = new AbortController();
-    setClients(x => ({ ...x, status: 'loading', error: null }));
-    matrixClients(c.signal).then(r => { if (!c.signal.aborted) setClients({ status: 'ready', error: null, items: r.items || [] }); })
-      .catch(e => { if (!c.signal.aborted) setClients({ status: 'error', error: e, items: [] }); });
-    return () => c.abort();
-  }, [revision]);
-  // Todas las requisiciones, en páginas de 50 (límite del servidor), para calcular tarjetas, filtros, CSV e impresión.
-  useEffect(() => {
-    const c = new AbortController();
-    (async () => {
-      setReqs(x => ({ ...x, status: 'loading', error: null }));
-      try {
-        let page = 1, items = [], total = 0;
-        do {
-          const r = await listMatrix({ page, pageSize: 50, q: '', client: 'all', has: 'all' }, c.signal);
-          total = Number(r.total) || 0; items = items.concat(r.items || []); page += 1;
-          if (!c.signal.aborted) setReqs(x => ({ ...x, items, total }));
-        } while (items.length < total && page <= 400 && !c.signal.aborted);
-        if (!c.signal.aborted) setReqs({ status: 'ready', error: null, items, total });
-      } catch (e) { if (!c.signal.aborted) setReqs(x => ({ ...x, status: 'error', error: e })); }
-    })();
-    return () => c.abort();
-  }, [revision]);
-  useEffect(() => {
-    const c = new AbortController();
-    setStages({ status: 'loading', error: null, items: null });
-    recoveryRequest('/matrix', { signal: c.signal }).then(r => { if (!c.signal.aborted) setStages({ status: 'ready', error: null, items: r.items || [] }); })
-      .catch(e => { if (!c.signal.aborted) setStages({ status: 'error', error: e, items: null }); });
-    return () => c.abort();
-  }, [revision]);
+  const { clients, reqs, stages, rows, ready, stagesDenied } = useMatrixData(revision);
 
   const day = localToday();
-  const ready = reqs.status === 'ready';
-  const rows = useMemo(() => mergeStages(reqs.items, stages.items), [reqs.items, stages.items]);
   const cards = useMemo(() => clientCards(clients.items, rows, day), [clients.items, rows, day]);
   const [cardTerm, setCardTerm] = useState('');
   const shownCards = useMemo(() => filterCards(cards.items, cardTerm), [cards.items, cardTerm]);
@@ -191,7 +155,6 @@ export function GeneralMatrix({ lang = 'es', language, isEnglish, onNotify }) {
   const num = v => (ready ? v : '…');
   const stop = e => e.stopPropagation();
   const open = (e, id) => { e.stopPropagation(); setSelected(id); };
-  const stagesDenied = stages.status === 'error' && [401, 403].includes(stages.error?.status);
 
   const exportCsv = e => {
     e.stopPropagation();
