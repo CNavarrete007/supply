@@ -23,3 +23,9 @@ export function getCatalogRecord(kind, publicId, signal) {
   if (!Object.hasOwn(paths, kind) || !/^[0-9a-f-]{36}$/i.test(publicId)) throw new Error('Identificador inválido.');
   return getJson(`${paths[kind]}/${encodeURIComponent(publicId)}`, signal);
 }
+
+/** Supplier offerings catalog ("Suministros de proveedores"), read-only. supplier: public id or 'all'. */
+export function listSupplierOfferings({ page = 1, pageSize = 25, q = '', status = 'all', supplier = 'all' } = {}, signal) {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), q, status, supplier });
+  return getJson(`/api/v1/catalogs/supplier-offerings?${params}`, signal);
+}

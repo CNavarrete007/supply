@@ -1,4 +1,4 @@
-# SupplyFlow · Mapa de los 6 módulos conectados a MariaDB
+# SupplyFlow · Mapa de los módulos conectados a MariaDB
 
 Fecha: 10 nov 2026 (Proveedores, Matriz General, Reportes y Usuarios y roles: 11 nov 2026). Derivado del código real y de respuestas HTTP reales (base sintética de 77 tablas).
 Objetivo: modificar el **frontend** de estos módulos sin romper su conexión con la base.
@@ -10,6 +10,7 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | Inicio y Dashboard (`dashboard`) | `Dashboard` en `src/views/Dashboard.jsx` (cálculos en `src/views/dashboard/model.mjs`) | `src/analyticsApi.js`, `src/matrixApi.js`, `src/catalogApi.js`, `src/views/recovery/api.js` | `/api/v1/analytics/overview`, `/api/v1/analytics/requisitions?page_size=5`, `/api/v1/matrix/clients`, `/api/v1/recovery/matrix`, `/api/v1/catalogs/{clients,suppliers}?page_size=1`, `/api/v1/recovery/changes`, `/api/v1/recovery/changes/review-queue` | `AnalyticsController`, `MatrixController`, `CatalogDirectoryController`, `RequisitionRecoveryController`, `RequisitionChangeController` | Master Admin |
 | Clientes (`clients`) | `ClientsCatalog` en **`src/views/clients/ClientsCatalog.jsx`** (re-exportado por `CatalogReadOnly.jsx`; lógica en `src/views/clients/model.mjs`) | `src/catalogApi.js`, `src/matrixApi.js` | `/api/v1/catalogs/clients`, `/api/v1/catalogs/clients/{id}`, `/api/v1/matrix/clients` | `CatalogDirectoryController` → `CatalogReadRepository`; `MatrixController` | Master Admin |
 | Proveedores (`suppliers`) | `SuppliersCatalog` en **`src/views/suppliers/SuppliersCatalog.jsx`** (re-exportado por `CatalogReadOnly.jsx`; lógica en `src/views/suppliers/model.mjs`) | `src/catalogApi.js` (`kind='suppliers'`) | `/api/v1/catalogs/suppliers`, `/api/v1/catalogs/suppliers/{id}` | `CatalogDirectoryController` → `CatalogReadRepository` | Master Admin |
+| Suministros de proveedores (`supply`) | `SupplierSupplyCatalog` en `src/views/supplies/SupplierSupplyCatalog.jsx` (lógica en `src/views/supplies/model.mjs`) | `src/catalogApi.js` (`listSupplierOfferings`, `getCatalogRecord`) | `/api/v1/catalogs/supplier-offerings` (`page`, `page_size` ≤ 50, `q`, `status`, `supplier`), `/api/v1/catalogs/suppliers/{id}` | `CatalogDirectoryController::supplierOfferings` → `SupplierOfferingReadRepository` (cuenta API, SELECT) | Master Admin |
 | Matriz General (`general_matrix`) | `GeneralMatrix` en `src/views/GeneralMatrix.jsx` (lógica en `src/views/generalMatrix/model.mjs`) | `src/matrixApi.js`, `src/views/recovery/api.js` | `/api/v1/matrix/requisitions` (todas las páginas de 50), `/api/v1/matrix/requisitions/{id}`, `/api/v1/matrix/clients`, `/api/v1/recovery/matrix` (etapas) | `MatrixController` → `MatrixReadRepository`; `RequisitionRecoveryController` | Master Admin |
 | Reportes (`reports`) | `Reports` en `src/views/Reports.jsx` (lógica en `src/views/reports/model.mjs`; datos con `src/views/generalMatrix/useMatrixData.js`) | `src/matrixApi.js`, `src/views/recovery/api.js` | `/api/v1/matrix/requisitions` (todas las páginas de 50), `/api/v1/matrix/clients`, `/api/v1/recovery/matrix` (mismas fuentes que la Matriz General) | `MatrixController` → `MatrixReadRepository`; `RequisitionRecoveryController` | Master Admin |
 | Usuarios y roles (`users_roles`) | `UsersRoles` en `src/views/UsersRoles.jsx` (lógica en `src/views/usersRoles/model.mjs`, cliente `src/views/usersRoles/api.js`) | `src/views/usersRoles/api.js` | `/api/v1/users?page=` (todas las páginas), `/api/v1/roles`, `/api/v1/users/functions`, `/api/v1/audit-events` | `UserDirectoryController` → `SupplyAuthRepository` (cuenta auth) y `UserActivityReadRepository` (cuenta API, SELECT) | Master Admin (`users.read`) |
@@ -116,6 +117,17 @@ Diseño de `clase_usuarios_y_roles` (5 tarjetas) en **modo consulta**; pestaña 
 - **Bitácora**: `audit_events` paginada en el servidor (25), filtros de fecha (hora local → UTC), usuario, rol, módulo, acción y búsqueda; KPIs total, últimas 24 h, usuarios con actividad y acciones críticas. Los valores de campos sensibles se devuelven como `[protegido]`.
 - **Backend (solo lectura, sin cambios de permisos SQL)**: `/users` y `/roles` agregan campos (cuenta `auth`, que ya tenía SELECT sobre esas tablas); rutas nuevas `GET /users/functions` y `GET /audit-events` con la misma guarda Master Admin y la cuenta API de solo SELECT.
 - Pruebas: `tests/frontend/users_roles_model.test.mjs` (5), `tests/frontend/users_roles_ui_e2e.cjs` (28) y `tests/users_audit_http_check.py` (24, solo GET; apto para la base real; 403 opcional con `SF_NONADMIN_USER`).
+
+## Suministros de proveedores (conexión 11 nov 2026)
+
+Diseño de `SupplierSupply.jsx` (3 tarjetas) en modo consulta; pestaña inicial **Matriz**. Catálogo **sin precios** (como el original: el precio solo existe en la cotización formal).
+- **Matriz**: tarjetas por proveedor (registros, activos, otros; "Vista general") que filtran en el servidor, búsqueda, estatus con conteos, 25 por página; Ver abre la ficha. "Nuevo suministro" bloqueado.
+- **Registro (ficha)**: proveedor → suministro; tipo, categoría, marca, modelo, entrega, crédito, moneda, pedido mínimo, vigencia, cobertura, estatus, descripción y observaciones. Guardar bloqueado.
+- **Resumen comercial**: suministros registrados/activos, categorías, entrega promedio (solo tiempos en días; se informa cuántos), días de crédito y calificación del proveedor, condiciones habituales y registradas.
+- Códigos guardados se muestran tal cual; solo se traducen los conocidos (tipo y estatus).
+- Pruebas: `tests/frontend/supplies_model.test.mjs` (4), `tests/frontend/supplies_ui_e2e.cjs` (20) y `tests/supply_offerings_http_check.py` (15, solo GET).
+
+Análisis completo del frontend sin BD y plan por fases: `docs/frontend/ANALISIS_BRECHAS_ZIP_FRONTEND.md`.
 
 ## Red de seguridad
 

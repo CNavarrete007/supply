@@ -18,6 +18,7 @@ $routes->get('api/v1/audit-events', 'UserDirectoryController::auditEvents');
 // Master Admin read-only catalogs; client portal credentials are NEVER exposed here.
 $routes->get('api/v1/catalogs/clients', 'CatalogDirectoryController::clients');
 $routes->get('api/v1/catalogs/clients/(:segment)', 'CatalogDirectoryController::client/$1');
+$routes->get('api/v1/catalogs/supplier-offerings', 'CatalogDirectoryController::supplierOfferings');
 $routes->get('api/v1/catalogs/suppliers', 'CatalogDirectoryController::suppliers');
 $routes->get('api/v1/catalogs/suppliers/(:segment)', 'CatalogDirectoryController::supplier/$1');
 // SupplyFlow v0.5: read-only requisition matrix scoped by Master Admin organization.
