@@ -35,7 +35,8 @@ const MODULES = [
   { label: 'Usuarios y roles', endpoints: ['users\\?', 'roles$', 'users/functions$'],
     expect: async r => (await r('/api/v1/users?page=1')).items?.[0]?.name },
   { label: 'Suministros de proveedores', endpoints: ['catalogs/supplier-offerings\\?'],
-    expect: async r => (await r('/api/v1/catalogs/supplier-offerings?page=1&page_size=25&q=&status=all&supplier=all')).items?.[0]?.name },
+    // La matriz muestra primero las tarjetas por proveedor (la tabla se abre desde una tarjeta): se verifica un proveedor real.
+    expect: async r => (await r('/api/v1/catalogs/supplier-offerings?page=1&page_size=25&q=&status=all&supplier=all')).summary?.suppliers?.[0]?.name },
   { label: 'Órdenes de Compra', endpoints: ['purchase-orders\\?'],
     expect: async r => (await r('/api/v1/purchase-orders?page=1&page_size=25')).items?.[0]?.folio },
   { label: 'Cotizaciones y Comparativo', endpoints: ['quotes/rfqs\\?'],
