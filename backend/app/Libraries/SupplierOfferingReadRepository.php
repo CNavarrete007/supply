@@ -58,11 +58,13 @@ final class SupplierOfferingReadRepository
             SELECT o.public_id AS id,se.public_id AS supplier_id,s.code AS supplier_code,s.legal_name AS supplier_name,
               o.name,o.offering_type AS type,COALESCE(cat.name,o.legacy_category_label) AS category,o.brand,o.model,o.description,
               o.lead_time_value,o.lead_time_unit,o.credit_type,o.credit_days,o.currency_code AS currency,o.minimum_order_text AS minimum_order,
-              o.valid_until,o.coverage,o.status_code AS status,o.notes,o.updated_at
+              o.valid_until,o.coverage,o.status_code AS status,o.notes,o.updated_at,
+              COALESCE(TIMESTAMPDIFF(MICROSECOND,'2000-01-01 00:00:00',o.updated_at),1) AS version
             {$from}{$whereSql} ORDER BY s.legal_name,o.name,o.id LIMIT ? OFFSET ?
             SQL, [...$binds, $f['page_size'], ($f['page'] - 1) * $f['page_size']]);
         foreach ($items as &$item) {
             $item['credit_days'] = $item['credit_days'] === null ? null : (int) $item['credit_days'];
+            $item['version'] = (int) $item['version']; // optimistic-concurrency token for PUT (If-Match)
         }
         unset($item);
         // Summary over the whole catalog (unfiltered) so the supplier cards always describe the source data.
@@ -83,5 +85,29 @@ final class SupplierOfferingReadRepository
             'summary' => ['total' => array_sum(array_column($statuses, 'count')), 'statuses' => $statuses, 'suppliers' => $suppliers, 'types' => $types],
             'notes' => ['Catálogo sin precios: el precio se registra únicamente con la cotización formal del proveedor.'],
         ];
+    }
+
+    /** One offering by public id (same fields as list items, including the version token). */
+    public function detail(int $org, string $publicId): ?array
+    {
+        $rows = $this->rows(<<<'SQL'
+            SELECT o.public_id AS id,se.public_id AS supplier_id,s.code AS supplier_code,s.legal_name AS supplier_name,
+              o.name,o.offering_type AS type,COALESCE(cat.name,o.legacy_category_label) AS category,o.brand,o.model,o.description,
+              o.lead_time_value,o.lead_time_unit,o.credit_type,o.credit_days,o.currency_code AS currency,o.minimum_order_text AS minimum_order,
+              o.valid_until,o.coverage,o.status_code AS status,o.notes,o.updated_at,
+              COALESCE(TIMESTAMPDIFF(MICROSECOND,'2000-01-01 00:00:00',o.updated_at),1) AS version
+            FROM supplier_offerings o
+            JOIN suppliers s ON s.id=o.supplier_id AND s.organization_id=o.organization_id
+            JOIN business_entities se ON se.id=s.id AND se.organization_id=s.organization_id AND se.entity_kind='supplier' AND se.archived_at IS NULL
+            LEFT JOIN categories cat ON cat.id=o.category_id AND cat.organization_id=o.organization_id
+            WHERE o.organization_id=? AND o.public_id=? LIMIT 1
+            SQL, [$org, $publicId]);
+        if (! $rows) {
+            return null;
+        }
+        $item = $rows[0];
+        $item['credit_days'] = $item['credit_days'] === null ? null : (int) $item['credit_days'];
+        $item['version'] = (int) $item['version'];
+        return $item;
     }
 }

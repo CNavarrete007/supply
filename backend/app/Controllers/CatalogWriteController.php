@@ -31,6 +31,8 @@ abstract class CatalogWriteController extends BaseController
     protected const NOT_PROVISIONED_MESSAGE = 'El guardado del catálogo aún no está habilitado en este equipo (falta aprovisionar la cuenta de escritura del catálogo). No se guardaron cambios.';
     protected const UNAVAILABLE_CODE = 'CATALOG_WRITE_UNAVAILABLE';
     protected const UNAVAILABLE_MESSAGE = 'No se pudo guardar. No se confirmaron cambios parciales.';
+    /** If-Match "version": business_entities.row_version (≤ 9 digits); subclasses may allow longer tokens. */
+    protected const VERSION_PATTERN = '/^"([1-9][0-9]{0,8})"$/D';
     protected array $actor = [];
 
     /** @return array<string,mixed> validated payload (throws InvalidArgumentException with the field name) */
@@ -164,7 +166,7 @@ abstract class CatalogWriteController extends BaseController
         if (! $key = $this->key()) {
             return $this->fail(422, 'IDEMPOTENCY_KEY_REQUIRED', 'Falta la clave de solicitud.');
         }
-        if (! preg_match('/^"([1-9][0-9]{0,8})"$/D', $this->request->getHeaderLine('If-Match'), $m)) {
+        if (! preg_match(static::VERSION_PATTERN, $this->request->getHeaderLine('If-Match'), $m)) {
             return $this->fail(428, 'IF_MATCH_REQUIRED', static::IF_MATCH_MESSAGE);
         }
         try {

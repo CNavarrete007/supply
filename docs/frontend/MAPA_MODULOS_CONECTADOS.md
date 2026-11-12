@@ -142,6 +142,7 @@ Diseño de `SupplierSupply.jsx` (3 tarjetas) en modo consulta; pestaña inicial 
 - Pruebas: `tests/frontend/supplies_model.test.mjs` (4), `tests/frontend/supplies_ui_e2e.cjs` (20) y `tests/supply_offerings_http_check.py` (15, solo GET).
 
 Análisis completo del frontend sin BD y plan por fases: `docs/frontend/ANALISIS_BRECHAS_ZIP_FRONTEND.md`.
+- **Registro de suministro** (12 nov 2026): **alta y edición reales sin precios, con guardado automático** (`POST/PUT /catalogs/supplier-offerings`, detalle `GET /catalogs/supplier-offerings/{id}`), matriz y resumen sincronizados y tres botones. Detalle: `docs/suministros/ALTA_EDICION_SUMINISTROS.md`. Pruebas de escritura: `tests/offerings_write_http_check.py` (30) y `tests/frontend/supplies_write_ui_e2e.cjs` (34), solo base sintética.
 
 ## Órdenes de Compra (conexión 11 nov 2026)
 

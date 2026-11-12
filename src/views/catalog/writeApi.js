@@ -2,7 +2,7 @@
 // logotipo privado (GET) y compresión del logotipo en el navegador.
 import { LOGO_TYPES, LOGO_MAX_SOURCE_BYTES, LOGO_MAX_BYTES } from '../clients/form.mjs';
 
-const KINDS = ['clients', 'suppliers'];
+const KINDS = ['clients', 'suppliers', 'supplier-offerings'];
 
 async function csrf() {
   const r = await fetch('/api/v1/auth/csrf', { credentials: 'same-origin', cache: 'no-store' });

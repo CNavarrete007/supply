@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""SupplyFlow · Catálogos de clientes y proveedores: provision a least-privilege write account on the local MariaDB socket.
-Creates/verifies ONLY the SQL login supplyflow_catalogwrite_local and its table grants (26). It does not modify the schema,
+"""SupplyFlow · Catálogos de clientes, proveedores y suministros: provision a least-privilege write account on the local MariaDB socket.
+Creates/verifies ONLY the SQL login supplyflow_catalogwrite_local and its table grants (29). It does not modify the schema,
 business records, historical data or any other account (api/auth/reqwrite/recovery keep their 77/52 contract).
 Usage (profile catalogwrite-tools): provision | verify
 """
@@ -22,15 +22,15 @@ LOCK_NAME = 'supplyflow_catalogwrite_provision_v1'
 TABLES_EXPECTED = 77
 SELECT_TABLES = {
     'clients', 'business_entities', 'party_contacts', 'party_contact_channels', 'idempotency_keys', 'files', 'entity_files',
-    'suppliers', 'categories',
+    'suppliers', 'categories', 'supplier_offerings',
 }
 INSERT_TABLES = {
     'business_entities', 'clients', 'party_contacts', 'party_contact_channels', 'audit_events', 'idempotency_keys',
-    'files', 'entity_files', 'suppliers',
+    'files', 'entity_files', 'suppliers', 'supplier_offerings',
 }
 UPDATE_TABLES = {
     'business_entities', 'clients', 'party_contacts', 'party_contact_channels', 'idempotency_keys', 'entity_files',
-    'suppliers',
+    'suppliers', 'supplier_offerings',
 }
 DELETE_TABLES = {'party_contact_channels'}
 EXPECTED = {(table, privilege) for privilege, tables in

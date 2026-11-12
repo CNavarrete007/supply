@@ -36,6 +36,7 @@ export function useCatalogAutosave({ kind, ficha, setSelectedId, onSaved, notify
   const inFlight = useRef(null);
   const queued = useRef(false);
   const paused = useRef(false); // conflicto de versión o escritura no habilitada: solo se reintenta con el botón Guardar
+  const rejectedSig = useRef(null); // contenido rechazado por el servidor (409/422): no se reintenta al navegar ni en automático
 
   // Aplica la ficha cargada salvo que el formulario ya tenga esa versión (la produjo el propio guardado automático).
   useEffect(() => {
@@ -44,7 +45,7 @@ export function useCatalogAutosave({ kind, ficha, setSelectedId, onSaved, notify
     const cur = formRef.current;
     if (cur.id === it.id && cur.version >= Number(it.version || 1)) return;
     const next = formFromRecord(it);
-    savedSig.current = payloadSignature(next); paused.current = false; keyFor.current = { sig: '', key: '' };
+    savedSig.current = payloadSignature(next); paused.current = false; rejectedSig.current = null; keyFor.current = { sig: '', key: '' };
     setForm(next); setErrors({}); setAuto({ state: 'saved', version: next.version, loaded: true });
   }, [ficha.item]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -74,7 +75,7 @@ export function useCatalogAutosave({ kind, ficha, setSelectedId, onSaved, notify
     } finally { setLogoBusy(false); }
   };
 
-  /** mode 'auto' (debounced) or 'manual' (button). Returns 'clean'|'saved'|'invalid'|'paused'|'failed'. */
+  /** mode 'auto' (debounced) or 'manual' (button). Returns 'clean'|'saved'|'invalid'|'paused'|'failed' (flush may also return 'rejected'). */
   const runSave = async mode => {
     if (inFlight.current) {
       queued.current = true;
@@ -103,7 +104,7 @@ export function useCatalogAutosave({ kind, ficha, setSelectedId, onSaved, notify
         const r = await saveCatalogRecord(kind, { id: cur.id, version: cur.version, payload, key: keyFor.current.key });
         if (r.ok) {
           const created = !cur.id;
-          paused.current = false;
+          paused.current = false; rejectedSig.current = null;
           savedSig.current = payloadSignature({ ...cur, logo: { current: null, next: null, remove: false } });
           setForm(x => ({ ...x, id: r.data.id, version: r.data.version,
             logo: x.logo === sentLogo ? { current: sentLogo.next ? { name: sentLogo.next.name, mime: sentLogo.next.type, size: sentLogo.next.size } : sentLogo.remove ? null : sentLogo.current, next: null, remove: false } : x.logo }));
@@ -124,6 +125,7 @@ export function useCatalogAutosave({ kind, ficha, setSelectedId, onSaved, notify
         // 4xx: el contenido debe corregirse (nueva clave); 5xx/en proceso: se reintenta con la misma clave.
         if (r.status < 500 && !String(code).startsWith('IDEMPOTENCY')) keyFor.current = { sig: '', key: '' };
         if (r.status === 412 || code === 'CATALOG_WRITE_NOT_PROVISIONED') paused.current = true;
+        if ((r.status === 409 || r.status === 422) && !String(code).startsWith('IDEMPOTENCY')) rejectedSig.current = sig;
         setAuto({ state: 'error' });
         setSaveMsg({ kind: code === 'CATALOG_WRITE_NOT_PROVISIONED' ? 'warn' : 'error', text: r.status === 422 && r.data?.error?.message && code === 'INVALID_VALUE' ? r.data.error.message : saveErrorMessage(r.status, code, en), reload: r.status === 412 });
         return 'failed';
@@ -145,6 +147,7 @@ export function useCatalogAutosave({ kind, ficha, setSelectedId, onSaved, notify
     if (sig === savedSig.current) { if (!form.id) setAuto({ state: 'idle' }); return undefined; }
     if (!validateForm(form, en).ok) { setAuto({ state: 'incomplete' }); return undefined; }
     if (paused.current) { setAuto({ state: 'paused' }); return undefined; }
+    if (sig === rejectedSig.current) return undefined; // ya rechazado: espera a que el usuario corrija
     setAuto({ state: 'pending' });
     const timer = setTimeout(() => { runSave('auto'); }, AUTOSAVE_MS);
     return () => clearTimeout(timer);
@@ -162,9 +165,10 @@ export function useCatalogAutosave({ kind, ficha, setSelectedId, onSaved, notify
     if (payloadSignature(cur) === savedSig.current) return 'clean';
     if (!validateForm(cur, en).ok) return 'invalid';
     if (paused.current) return 'paused';
+    if (payloadSignature(cur) === rejectedSig.current) return 'rejected'; // el servidor ya lo rechazó: no bloquea la navegación
     return runSave('auto');
   };
-  const newRecord = () => { setSelectedId(''); const blank = emptyForm(); savedSig.current = payloadSignature(blank); paused.current = false; keyFor.current = { sig: '', key: '' }; setForm(blank); setErrors({}); setSaveMsg(null); setLogoUrl(null); setAuto({ state: 'idle' }); };
+  const newRecord = () => { setSelectedId(''); const blank = emptyForm(); savedSig.current = payloadSignature(blank); paused.current = false; rejectedSig.current = null; keyFor.current = { sig: '', key: '' }; setForm(blank); setErrors({}); setSaveMsg(null); setLogoUrl(null); setAuto({ state: 'idle' }); };
   const clearForm = async () => { if ((await flush()) !== 'failed') newRecord(); };
   const pickRecord = async id => { if ((await flush()) === 'failed') return; if (!id) { newRecord(); return; } setSaveMsg(null); setSelectedId(id); };
   const save = () => runSave('manual');

@@ -29,3 +29,9 @@ export function listSupplierOfferings({ page = 1, pageSize = 25, q = '', status 
   const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), q, status, supplier });
   return getJson(`/api/v1/catalogs/supplier-offerings?${params}`, signal);
 }
+
+/** One supplier offering (with its version token for editing). */
+export function getSupplierOffering(publicId, signal) {
+  if (!/^[0-9a-f-]{36}$/i.test(publicId)) throw new Error('Identificador inválido.');
+  return getJson(`/api/v1/catalogs/supplier-offerings/${encodeURIComponent(publicId)}`, signal);
+}

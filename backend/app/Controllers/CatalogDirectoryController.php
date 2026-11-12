@@ -106,6 +106,28 @@ final class CatalogDirectoryController extends BaseController
     }
 
     /** Supplier offerings ("Suministros de proveedores"), read-only, Master Admin only, strict parameters. */
+    /** One supplier offering (Master Admin, read-only account). */
+    public function supplierOffering(string $id): ResponseInterface
+    {
+        try {
+            $user = $this->actor();
+            if (! $user) {
+                return $this->respond(401, ['error' => ['code' => 'NOT_AUTHENTICATED', 'message' => 'Se requiere iniciar sesión.']]);
+            }
+            if (! $this->canRead($user)) {
+                return $this->respond(403, ['error' => ['code' => 'FORBIDDEN', 'message' => 'No tienes acceso a este catálogo.']]);
+            }
+            if ($this->request->getGet() !== [] || ! preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/D', $id)) {
+                return $this->respond(404, ['error' => ['code' => 'NOT_FOUND', 'message' => 'Suministro no encontrado.']]);
+            }
+            $item = (new SupplierOfferingReadRepository())->detail((int) $user['organization_id'], $id);
+            return $item ? $this->respond(200, ['item' => $item]) : $this->respond(404, ['error' => ['code' => 'NOT_FOUND', 'message' => 'Suministro no encontrado.']]);
+        } catch (Throwable) {
+            log_message('error', 'SupplyFlow supplier offering unavailable.');
+            return $this->respond(503, ['error' => ['code' => 'CATALOG_UNAVAILABLE', 'message' => 'No se pudo consultar el suministro.']]);
+        }
+    }
+
     public function supplierOfferings(): ResponseInterface
     {
         try {

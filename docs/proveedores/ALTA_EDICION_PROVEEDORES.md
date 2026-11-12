@@ -37,8 +37,8 @@ versión, número único, transacción, `audit_events` `supplier.create` / `supp
 `SupplierInput`, `SupplierWriteRepository`, `SupplierWriteController` sobre `CatalogWriteBase` / `CatalogWriteController`.
 El detalle `GET /api/v1/catalogs/suppliers/{id}` añade `version`, `imported` y `logo`.
 
-Usa la misma cuenta `supplyflow_catalogwrite_local` (ahora **26** permisos: se agregaron `suppliers` SELECT/INSERT/UPDATE y
-`categories` SELECT). Activación y reversión: `docs/clientes/ALTA_EDICION_CLIENTES.md` (requiere autorización).
+Usa la misma cuenta `supplyflow_catalogwrite_local` (con Suministros, **29** permisos: `suppliers` y `supplier_offerings`
+SELECT/INSERT/UPDATE y `categories` SELECT). Activación y reversión: `docs/clientes/ALTA_EDICION_CLIENTES.md` (requiere autorización).
 
 ## Pruebas (sandbox sintético)
 

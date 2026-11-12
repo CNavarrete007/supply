@@ -45,7 +45,7 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     const row = page.getByRole('row').filter({ hasText: 'Placa A36' });
     const rt = (await row.innerText()).replace(/\s+/g, ' ');
     check('fila con tipo, categoría, marca, entrega, crédito y estatus reales', ['Aceros Sintéticos del Norte', 'Producto', 'Materiales', 'AceroQA', '5 días hábiles', 'Crédito · 30 días', 'Activo'].every(x => rt.includes(x)), rt);
-    check('nuevo suministro bloqueado', await page.getByRole('button', { name: /Nuevo suministro/ }).isDisabled());
+    check('"Nuevo suministro" habilitado', await page.getByRole('button', { name: /Nuevo suministro/ }).isEnabled());
     await shot(page, 'suministros_1_matriz');
     const byCard = page.waitForResponse(r => new RegExp(`supplier=${aceros.id}`).test(r.url()));
     await card.click();
@@ -56,7 +56,8 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     const stResp = page.waitForResponse(r => /status=unavailable/.test(r.url()));
     await page.getByLabel('Estatus').selectOption('unavailable');
     check('filtro de estatus en el servidor (200)', (await stResp).status() === 200);
-    await page.getByText('1 registros mostrados').waitFor();
+    const unavailable = (await api('/api/v1/catalogs/supplier-offerings?page=1&page_size=1&q=&status=unavailable&supplier=all')).total;
+    await page.getByText(`${unavailable} registros mostrados`).waitFor();
     check('estatus "No disponible" traducido', (await page.getByRole('row').filter({ hasText: 'Compresor 5 HP' }).innerText()).includes('No disponible'));
     await page.getByLabel('Estatus').selectOption('all');
     const qResp = page.waitForResponse(r => /q=termopar/i.test(r.url()));
@@ -68,10 +69,10 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
 
     // Ficha desde la matriz
     await page.getByRole('row').filter({ hasText: 'Placa A36' }).getByRole('button', { name: /^Ver$/ }).click();
-    await page.waitForFunction(() => [...document.querySelectorAll('input[readonly]')].some(i => i.value === 'A36-1/4'));
-    const vals = await page.locator('input[readonly]').evaluateAll(els => els.map(e => e.value));
-    check('ficha con datos reales', ['Producto', 'Materiales', 'AceroQA', 'A36-1/4', '5 días hábiles', 'Crédito · 30 días', 'MXN', '1 tonelada', '2026-12-31', 'Nacional', 'Activo'].every(x => vals.includes(x)), vals.join(' | '));
-    check('banner "precios únicamente mediante cotización" y guardar bloqueado', await page.getByText(/Precios únicamente mediante cotización/).isVisible() && await page.getByRole('button', { name: /Guardar suministro/ }).isDisabled());
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-testid=offering-form] input')].some(i => i.value === 'A36-1/4'));
+    const vals = await page.getByTestId('offering-form').locator('input, textarea, select').evaluateAll(els => els.map(e => (e.tagName === 'SELECT' ? (e.selectedOptions[0]?.textContent || '').trim() : e.value)));
+    check('ficha con datos reales', ['Producto', 'Materiales', 'AceroQA', 'A36-1/4', '5', 'Días hábiles', 'Crédito', '30', 'MXN', '1 tonelada', '2026-12-31', 'Nacional', 'Activo'].every(x => vals.includes(x)), vals.join(' | '));
+    check('banner "precios únicamente mediante cotización"; ficha editable y guardar habilitado', await page.getByText(/Precios únicamente mediante cotización/).isVisible() && await page.getByRole('button', { name: /Guardar suministro/ }).isEnabled() && await page.getByTestId('offering-form').locator('input[readonly], textarea[readonly]').count() === 0);
     await shot(page, 'suministros_2_ficha');
 
     // Resumen comercial
