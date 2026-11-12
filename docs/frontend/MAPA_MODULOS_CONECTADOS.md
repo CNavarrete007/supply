@@ -97,6 +97,7 @@ Diseño de 4 tarjetas de `Suppliers.jsx` (clase_proveedores) con datos reales; p
 - **Importar Excel**: vista previa **local**. Coincidencia por No. de proveedor, Clave, RFC y razón social (sin mayúsculas, acentos ni puntuación), repetidos en archivo, incompletos (sin número, razón social o categoría, moneda no reconocida, correo inválido; quedarían "En evaluación"), categoría y moneda predeterminadas, estatus para nuevos, omitir/actualizar existentes; plantilla descargable. "Guardar en MariaDB" bloqueado.
 - La búsqueda reinicia la página solo si el texto cambió (antes, el primer disparo del *debounce* tras montar regresaba a la página 1; mismo ajuste en Clientes).
 - Pruebas: `tests/frontend/suppliers_model.test.mjs` (5) y `tests/frontend/suppliers_ui_e2e.cjs` (38, solo lectura; requiere más de 50 proveedores sintéticos para probar la carga por páginas).
+- **Registro y actualización** (12 nov 2026): **alta y edición reales con guardado automático** (`POST/PUT /catalogs/suppliers`, logotipo en `GET /catalogs/suppliers/{id}/logo`), matriz sincronizada y tres botones. Misma cuenta `supplyflow_catalogwrite_local` (26 permisos). Detalle: `docs/proveedores/ALTA_EDICION_PROVEEDORES.md`. Pruebas de escritura: `tests/suppliers_write_http_check.py` (40) y `tests/frontend/suppliers_write_ui_e2e.cjs` (36), solo base sintética.
 
 ## Matriz General (rediseño 11 nov 2026)
 

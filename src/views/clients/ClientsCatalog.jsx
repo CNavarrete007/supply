@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Lock, Plus, Upload, Search, Download, Edit3, ExternalLink, Table as TableIcon, CheckCircle2, ChevronLeft, ChevronRight, Eye, RefreshCw, AlertCircle, Loader2, KeyRound, X } from 'lucide-react';
 import { listCatalog, getCatalogRecord } from '../../catalogApi';
 import { matrixClients } from '../../matrixApi';
 import { DetailPanel, translateStatus } from '../catalog/shared';
 import { analyzeImport, TEMPLATE_HEADERS, initials, clientIndicators } from './model.mjs';
 import { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage, SALES_POLICIES, SOURCING_POLICIES, STATUSES } from './form.mjs';
-import { saveClient, fetchLogo, compressLogo } from './clientWriteApi';
+import { useCatalogAutosave } from '../catalog/useCatalogAutosave';
 
 // Clientes · diseño Grupo Gerez (4 tarjetas) conectado a MariaDB.
 // Lectura real: /api/v1/catalogs/clients[/{id}] y /api/v1/matrix/clients. Sin datos de demostración.
@@ -114,172 +114,23 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
   const f = ficha.item;
   const channels = type => (f?.channels || []).filter(x => x.type === type).map(x => x.value);
 
-  // ---------- Formulario de alta/actualización con guardado automático ----------
-  // Cada cambio se guarda solo (AUTOSAVE_MS después de la última edición) cuando los obligatorios están completos:
-  // primero crea el cliente (POST) y luego lo actualiza (PUT + If-Match). La matriz, los selectores y los indicadores
-  // se refrescan tras cada guardado SIN recargar la ficha, para no pisar lo que se esté escribiendo.
-  const AUTOSAVE_MS = 1500;
-  const [form, setForm] = useState(emptyForm);
-  const formRef = useRef(form);
-  formRef.current = form;
-  const [errors, setErrors] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState(null);
-  const [auto, setAuto] = useState({ state: 'idle' }); // idle | incomplete | pending | saving | saved | error | paused
-  const [lastSaved, setLastSaved] = useState(null);
-  const [logoUrl, setLogoUrl] = useState(null);
-  const [logoBusy, setLogoBusy] = useState(false);
-  const [tick, setTick] = useState(0);
-  const savedSig = useRef(payloadSignature(emptyForm()));
-  const keyFor = useRef({ sig: '', key: '' }); // misma clave al reintentar el mismo contenido (el servidor no duplica)
-  const inFlight = useRef(null);
-  const queued = useRef(false);
-  const paused = useRef(false); // conflicto de versión o escritura no habilitada: solo se reintenta con "Guardar cliente"
-  const fileRef = useRef(null);
-  const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
-  // Aplica la ficha cargada salvo que el formulario ya tenga esa versión (la produjo el propio guardado automático).
-  useEffect(() => {
-    const it = ficha.item;
-    if (!it) return;
-    const cur = formRef.current;
-    if (cur.id === it.id && cur.version >= Number(it.version || 1)) return;
-    const next = formFromRecord(it);
-    savedSig.current = payloadSignature(next); paused.current = false; keyFor.current = { sig: '', key: '' };
-    setForm(next); setErrors({}); setAuto({ state: 'saved', version: next.version, loaded: true });
-  }, [ficha.item]);
-  useEffect(() => {
-    if (!ficha.item?.id || !ficha.item?.logo) { if (!formRef.current.logo.next) setLogoUrl(null); return undefined; }
-    const c = new AbortController(); let url = null;
-    fetchLogo(ficha.item.id, c.signal).then(u => { url = u; if (!c.signal.aborted) setLogoUrl(u); else if (u) URL.revokeObjectURL(u); }).catch(() => {});
-    return () => { c.abort(); if (url) URL.revokeObjectURL(url); };
-  }, [ficha.item]);
-  const touch = k => setErrors(e => (e[k] ? { ...e, [k]: undefined } : e));
-  const set = (k, v) => { setForm(x => ({ ...x, [k]: v })); touch(k); };
-  const setPolicy = (k, v) => { setForm(x => ({ ...x, policy: { ...x.policy, [k]: v } })); touch(k); };
-  const setRow = (k, i, v) => { setForm(x => ({ ...x, [k]: x[k].map((r, j) => (j === i ? v : r)) })); touch(k); };
-  const addRow = k => { setForm(x => (x[k].length >= 20 ? x : { ...x, [k]: [...x[k], ''] })); touch(k); };
-  const removeRow = (k, i) => { setForm(x => { const rows = x[k].filter((_, j) => j !== i); return { ...x, [k]: rows.length ? rows : [''] }; }); touch(k); };
-  const fieldCls = 'w-full px-3.5 py-2.5 text-xs bg-white border border-slate-200 rounded-xl outline-none text-slate-800 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400';
-  const inp = k => `${fieldCls} ${errors[k] ? 'border-rose-400 bg-rose-50/30' : ''}`;
-  const err = k => (errors[k] ? <p className="text-[10px] text-rose-600 mt-1" role="alert">{errors[k]}</p> : null);
-  const onLogo = async file => {
-    if (!file) return;
-    setLogoBusy(true); touch('logo');
-    try {
-      const next = await compressLogo(file);
-      setForm(x => ({ ...x, logo: { ...x.logo, next, remove: false } }));
-    } catch (e) {
-      setErrors(x => ({ ...x, logo: e.message === 'TYPE' ? tx('Solo se permiten imágenes PNG, JPG o WEBP.', 'Only PNG, JPG or WEBP images are allowed.') : e.message === 'SIZE' ? tx('La imagen es demasiado grande (máx. 8 MB antes de comprimir).', 'The image is too large (max 8 MB before compression).') : tx('No se pudo leer la imagen.', 'The image could not be read.') }));
-    } finally { setLogoBusy(false); }
-  };
-
-  /** Saves the current form. mode 'auto' (debounced) or 'manual' (button). Returns 'clean'|'saved'|'invalid'|'paused'|'failed'. */
-  const runSave = async mode => {
-    if (inFlight.current) {
-      queued.current = true;
-      if (mode === 'manual') { await inFlight.current; return runSave('manual'); }
-      return inFlight.current;
-    }
-    const cur = formRef.current;
-    const sig = payloadSignature(cur);
-    if (cur.id && sig === savedSig.current) {
-      if (mode === 'manual') setSaveMsg({ kind: 'ok', text: tx(`Sin cambios pendientes: ${cur.code} ya está guardado en la matriz (versión ${cur.version}).`, `No pending changes: ${cur.code} is already saved in the matrix (version ${cur.version}).`) });
-      return 'clean';
-    }
-    const v = validateForm(cur, en);
-    if (!v.ok) {
-      if (mode === 'manual') { setErrors(v.errors); setSaveMsg({ kind: 'error', text: tx('Revisa los campos marcados.', 'Check the highlighted fields.') }); }
-      setAuto({ state: 'incomplete' });
-      return 'invalid';
-    }
-    if (mode === 'auto' && paused.current) return 'paused';
-    if (keyFor.current.sig !== sig) keyFor.current = { sig, key: newKey() };
-    const payload = toPayload(cur);
-    const sentLogo = cur.logo;
-    setSaving(true); setAuto({ state: 'saving' });
-    const job = (async () => {
-      try {
-        const r = await saveClient({ id: cur.id, version: cur.version, payload, key: keyFor.current.key });
-        if (r.ok) {
-          const created = !cur.id;
-          paused.current = false;
-          savedSig.current = payloadSignature({ ...cur, logo: { current: null, next: null, remove: false } });
-          setForm(x => ({ ...x, id: r.data.id, version: r.data.version,
-            logo: x.logo === sentLogo ? { current: sentLogo.next ? { name: sentLogo.next.name, mime: sentLogo.next.type, size: sentLogo.next.size } : sentLogo.remove ? null : sentLogo.current, next: null, remove: false } : x.logo }));
-          if (sentLogo.next) setLogoUrl(sentLogo.next.dataUrl); else if (sentLogo.remove) setLogoUrl(null);
-          const at = new Date();
-          setLastSaved({ id: r.data.id, code: r.data.code, name: payload.name, version: r.data.version, at, created });
-          setAuto({ state: 'saved', version: r.data.version, at });
-          setSaveMsg(created || mode === 'manual' ? { kind: 'ok', text: created ? tx(`Cliente ${r.data.code} dado de alta en MariaDB y agregado a la matriz.`, `Client ${r.data.code} created in MariaDB and added to the matrix.`) : tx(`Cambios de ${r.data.code} guardados en la matriz (versión ${r.data.version}).`, `Changes to ${r.data.code} saved to the matrix (version ${r.data.version}).`) } : null);
-          if (created || mode === 'manual') notify(tx('Clientes', 'Clients'), created ? tx(`Alta de ${r.data.code}`, `Created ${r.data.code}`) : tx(`Actualización de ${r.data.code}`, `Updated ${r.data.code}`), 'success');
-          if (created) setSelectedId(r.data.id);
-          setListRev(n => n + 1);
-          return 'saved';
-        }
-        const code = r.data?.error?.code;
-        if (r.status === 422 && r.data?.error?.field) setErrors(x => ({ ...x, [serverField(r.data.error.field)]: tx('Valor no aceptado por el servidor.', 'Value rejected by the server.') }));
-        if (code === 'CODE_TAKEN') setErrors(x => ({ ...x, code: tx('Número ya registrado.', 'Number already registered.') }));
-        // 4xx: el contenido debe corregirse (nueva clave); 5xx/en proceso: se reintenta con la misma clave.
-        if (r.status < 500 && !String(code).startsWith('IDEMPOTENCY')) keyFor.current = { sig: '', key: '' };
-        if (r.status === 412 || code === 'CATALOG_WRITE_NOT_PROVISIONED') paused.current = true;
-        setAuto({ state: 'error' });
-        setSaveMsg({ kind: code === 'CATALOG_WRITE_NOT_PROVISIONED' ? 'warn' : 'error', text: saveErrorMessage(r.status, code, en), reload: r.status === 412 });
-        return 'failed';
-      } catch {
-        setAuto({ state: 'error' });
-        setSaveMsg({ kind: 'error', text: tx('Sin conexión con el servidor. Puedes reintentar con "Guardar cliente": no se duplicará el registro.', 'No connection to the server. Retry with "Save client": the record will not be duplicated.') });
-        return 'failed';
-      } finally {
-        setSaving(false); inFlight.current = null;
-        if (queued.current) { queued.current = false; setTick(n => n + 1); }
-      }
-    })();
-    inFlight.current = job;
-    return job;
-  };
-  // Guardado automático: espera AUTOSAVE_MS sin cambios; nunca envía un formulario incompleto o inválido.
-  useEffect(() => {
-    const sig = payloadSignature(form);
-    if (sig === savedSig.current) { if (!form.id) setAuto({ state: 'idle' }); return undefined; }
-    if (!validateForm(form, en).ok) { setAuto({ state: 'incomplete' }); return undefined; }
-    if (paused.current) { setAuto({ state: 'paused' }); return undefined; }
-    setAuto({ state: 'pending' });
-    const timer = setTimeout(() => { runSave('auto'); }, AUTOSAVE_MS);
-    return () => clearTimeout(timer);
-  }, [form, tick]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Evita cerrar la pestaña con cambios sin guardar o un guardado en curso.
-  useEffect(() => {
-    const warn = e => { if (inFlight.current || (payloadSignature(formRef.current) !== savedSig.current && validateForm(formRef.current).ok && !paused.current)) { e.preventDefault(); e.returnValue = ''; } };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, []);
-  /** Saves pending valid changes now (before clearing, leaving the card or switching client). */
-  const flush = async () => {
-    if (inFlight.current) await inFlight.current;
-    const cur = formRef.current;
-    if (payloadSignature(cur) === savedSig.current) return 'clean';
-    if (!validateForm(cur, en).ok) return 'invalid';
-    if (paused.current) return 'paused';
-    return runSave('auto');
-  };
-  const newClient = () => { setSelectedId(''); const blank = emptyForm(); savedSig.current = payloadSignature(blank); paused.current = false; keyFor.current = { sig: '', key: '' }; setForm(blank); setErrors({}); setSaveMsg(null); setLogoUrl(null); setAuto({ state: 'idle' }); };
-  const clearForm = async () => { if ((await flush()) !== 'failed') newClient(); };
+  // ---------- Ficha editable con guardado automático (ver ../catalog/useCatalogAutosave.js) ----------
+  // Cada cambio se guarda solo cuando los obligatorios están completos: primero alta (POST) y luego actualización
+  // (PUT + If-Match). Tras cada guardado se refrescan matriz, selectores e indicadores SIN recargar la ficha.
+  const af = useCatalogAutosave({ kind: 'clients', ficha, setSelectedId, onSaved: () => setListRev(n => n + 1), notify, tx, en,
+    model: { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage },
+    text: {
+      created: code => tx(`Cliente ${code} dado de alta en MariaDB y agregado a la matriz.`, `Client ${code} created in MariaDB and added to the matrix.`),
+      updated: (code, v) => tx(`Cambios de ${code} guardados en la matriz (versión ${v}).`, `Changes to ${code} saved to the matrix (version ${v}).`),
+      noChanges: (code, v) => tx(`Sin cambios pendientes: ${code} ya está guardado en la matriz (versión ${v}).`, `No pending changes: ${code} is already saved in the matrix (version ${v}).`),
+      notifyTitle: tx('Clientes', 'Clients'), entity: tx('cliente', 'client'),
+      idle: tx('El guardado automático inicia al completar No. de cliente, razón social, proyecto y número de contrato.', 'Autosave starts once client number, legal name, project and contract number are filled in.'),
+    } });
+  const { form, setForm, errors, saving, saveMsg, setSaveMsg, auto, lastSaved, logoUrl, logoBusy, set, setNested, setRow, addRow, removeRow, onLogo, save, flush,
+    newRecord: newClient, clearForm, pickRecord: pickClient, autoText, inp, err, fieldCls } = af;
+  const setPolicy = (k, v) => setNested('policy', k, v);
   const goMatrix = async () => { if ((await flush()) !== 'failed') setTab('matrix'); };
-  const pickClient = async id => { if ((await flush()) === 'failed') return; if (!id) { newClient(); return; } setSaveMsg(null); setSelectedId(id); };
   const goTab = async id => { if (tab === 'register' && id !== 'register' && (await flush()) === 'failed') return; setTab(id); };
-  const save = () => runSave('manual');
-  const autoText = (() => {
-    const hhmm = d => d.toLocaleTimeString(en ? 'en-US' : 'es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    switch (auto.state) {
-      case 'saving': return tx('Guardando en MariaDB…', 'Saving to MariaDB…');
-      case 'pending': return tx('Cambios sin guardar · se guardarán automáticamente…', 'Unsaved changes · saving automatically…');
-      case 'saved': return auto.loaded ? tx(`Ficha cargada de la matriz (versión ${auto.version}). Los cambios se guardan automáticamente.`, `Record loaded from the matrix (version ${auto.version}). Changes are saved automatically.`) : tx(`✓ Guardado automáticamente en la matriz · versión ${auto.version} · ${hhmm(auto.at)}`, `✓ Saved automatically to the matrix · version ${auto.version} · ${hhmm(auto.at)}`);
-      case 'incomplete': { const m = missingRequired(form, en); return m.length ? tx(`Para guardar automáticamente completa: ${m.join(', ')}.`, `To save automatically, fill in: ${m.join(', ')}.`) : tx('Corrige los campos marcados para guardar automáticamente.', 'Fix the highlighted fields to save automatically.'); }
-      case 'paused': return tx('Guardado automático en pausa: revisa el aviso y usa "Guardar cliente".', 'Autosave paused: check the notice and use "Save client".');
-      case 'error': return tx('No se pudo guardar automáticamente; revisa el aviso.', 'Could not save automatically; check the notice.');
-      default: return tx('El guardado automático inicia al completar No. de cliente, razón social, proyecto y número de contrato.', 'Autosave starts once client number, legal name, project and contract number are filled in.');
-    }
-  })();
 
   // ---------- Indicadores ----------
   const [fullList, setFullList] = useState(null);
@@ -422,7 +273,7 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
               </div>
               <div className="space-y-1.5 min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <input ref={fileRef} id="client-logo-file" type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={e => { onLogo(e.target.files?.[0]); e.target.value = ''; }} />
+                  <input id="client-logo-file" type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={e => { onLogo(e.target.files?.[0]); e.target.value = ''; }} />
                   <label htmlFor="client-logo-file" className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[11px] rounded-lg cursor-pointer flex items-center gap-1.5"><Upload className="w-3.5 h-3.5" />{tx('Elegir archivo', 'Choose file')}</label>
                   <span className="text-[11px] text-slate-500 truncate max-w-[260px]" data-testid="logo-name">{logoBusy ? tx('Procesando imagen…', 'Processing image…') : form.logo.next ? `${form.logo.next.name} · ${Math.round(form.logo.next.size / 1024)} KB` : !form.logo.remove && form.logo.current ? form.logo.current.name || tx('Logotipo registrado', 'Recorded logo') : tx('No se ha seleccionado ningún archivo', 'No file selected')}</span>
                   {(form.logo.next || (form.logo.current && !form.logo.remove)) && <button type="button" onClick={() => setForm(x => ({ ...x, logo: { ...x.logo, next: null, remove: !!x.logo.current } }))} className="px-2.5 py-1.5 text-[11px] font-bold text-rose-600 hover:bg-rose-50 rounded-lg">{tx('Quitar logotipo', 'Remove logo')}</button>}

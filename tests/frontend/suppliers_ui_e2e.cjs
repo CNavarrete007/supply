@@ -12,8 +12,9 @@ if (!/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(UI) || !PASSWORD) { conso
 const results = [];
 const check = (name, ok, detail = '') => results.push([name, !!ok, detail]);
 const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` }); };
-const readonlyValues = page => page.locator('input[readonly]').evaluateAll(els => els.map(e => e.value));
-const waitValue = (page, v) => page.waitForFunction(x => [...document.querySelectorAll('input[readonly]')].some(i => i.value === x), v, { timeout: 15000 });
+// Valores visibles de la ficha editable: inputs/textarea y la opción elegida de cada select.
+const readonlyValues = page => page.getByTestId('supplier-form').locator('input:not([type=file]), textarea, select').evaluateAll(els => els.map(e => (e.tagName === 'SELECT' ? (e.selectedOptions[0]?.textContent || '').trim() : e.value)));
+const waitValue = (page, v) => page.waitForFunction(x => [...document.querySelectorAll('[data-testid=supplier-form] input')].some(i => i.value === x), v, { timeout: 15000 });
 
 (async () => {
   const browser = await chromium.launch();
@@ -59,7 +60,7 @@ const waitValue = (page, v) => page.waitForFunction(x => [...document.querySelec
       ['PRV-QA-02', 'ACS', 'ASN010101AB1', 'Materiales', 'Autorizado', '5 días hábiles', 'Crédito', '30 días', '4.6', 'Laura Ficticia', 'ventas@aceros.invalid'].every(t => rowText.includes(t)), rowText);
     check('columna suministros = conteo real de ofertas', (await row.locator('td').nth(6).textContent()).trim() === '3');
     check('paginación en servidor', await page.getByText(new RegExp(`Página 1 / ${Math.ceil(total / 25)}`)).isVisible());
-    check('nuevo proveedor y eliminar bloqueados', await page.getByRole('button', { name: /Nuevo proveedor/ }).isDisabled() && await row.getByRole('button', { name: /Eliminar/ }).isDisabled());
+    check('nuevo proveedor habilitado; eliminar sigue bloqueado', await page.getByRole('button', { name: /Nuevo proveedor/ }).isEnabled() && await row.getByRole('button', { name: /Eliminar/ }).isDisabled());
     await shot(page, 'proveedores_1_matriz');
     const searchResp = page.waitForResponse(r => /\/api\/v1\/catalogs\/suppliers\?.*q=Europa/.test(r.url()));
     await page.getByLabel('Buscar en catálogo').fill('Europa');
@@ -85,11 +86,11 @@ const waitValue = (page, v) => page.waitForFunction(x => [...document.querySelec
     await row.getByRole('button', { name: /Ficha/ }).click();
     await waitValue(page, 'Aceros Sintéticos del Norte');
     const v = await readonlyValues(page);
-    const expected = ['PRV-QA-02', 'ACS', 'ASN010101AB1', 'Laura Ficticia · Ventas · principal', 'Mario Prueba · Crédito y cobranza', 'ventas@aceros.invalid', 'cxc@aceros.invalid', '+52 81 0000 0001', 'Materiales', 'Autorizado', 'MXN', 'Crédito', '30', '5', 'días hábiles', '4.6 / 5', 'Opinión SAT vigente; ISO 9001 (sintético)'];
+    const expected = ['PRV-QA-02', 'ACS', 'ASN010101AB1', 'Laura Ficticia', 'Mario Prueba', 'ventas@aceros.invalid', 'cxc@aceros.invalid', '+52 81 0000 0001', 'Materiales', 'Autorizado', 'MXN', 'Crédito', '30', '5', 'Días hábiles', '4.6', 'Opinión SAT vigente; ISO 9001 (sintético)'];
     const missing = expected.filter(x => !v.includes(x));
     check('ficha carga todos los datos reales', missing.length === 0, `faltan: ${missing.join(' | ')}`);
-    check('observaciones del registro', await page.locator('textarea[readonly]').inputValue() === 'Proveedor sintético para QA de matriz.');
-    check('guardar bloqueado', await page.getByRole('button', { name: /Guardar proveedor/ }).isDisabled());
+    check('observaciones del registro', await page.getByLabel('Observaciones', { exact: true }).inputValue() === 'Proveedor sintético para QA de matriz.');
+    check('ficha editable: guardar habilitado y sin campos readonly', await page.getByRole('button', { name: /Guardar proveedor/ }).isEnabled() && await page.getByTestId('supplier-form').locator('input[readonly], textarea[readonly]').count() === 0);
     // Catálogo completo cargado por páginas de 50 (sin superar el límite del servidor)
     await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Seleccionar por número de proveedor"] option').length === n + 1, total, { timeout: 20000 });
     check('selectores con el catálogo completo (páginas de 50)', listCalls.some(s => s.includes('page=2&page_size=50')) && !listCalls.some(s => /page_size=([5-9]\d|\d{3,})/.test(s) && !s.includes('page_size=50')));
@@ -98,11 +99,11 @@ const waitValue = (page, v) => page.waitForFunction(x => [...document.querySelec
     await page.getByLabel('Seleccionar por razón social').selectOption(sel.items[0].id);
     await waitValue(page, 'XEXX010101000');
     const v2 = await readonlyValues(page);
-    check('selector por razón social carga otra ficha', ['PRV-QA-07', 'EUR', 'Crédito', '60', 'semanas', '5 / 5', 'sales@instrumentos.invalid'].every(x => v2.includes(x)), v2.join(' | '));
+    check('selector por razón social carga otra ficha', ['PRV-QA-07', 'EUR', 'Crédito', '60', 'Semanas', '5', 'sales@instrumentos.invalid'].every(x => v2.includes(x)), v2.join(' | '));
     const inc = await api('/api/v1/catalogs/suppliers?page=1&page_size=5&q=Incompleto&status=all');
     await page.getByLabel('Seleccionar por razón social').selectOption(inc.items[0].id);
     await waitValue(page, 'PRV-QA-06');
-    check('ficha incompleta: aviso y estatus heredado', await page.getByText('Proveedor con datos pendientes de actualizar').isVisible() && (await readonlyValues(page)).includes('En evaluación · Pendiente de actualizar'));
+    check('ficha incompleta: aviso y estatus heredado', await page.getByText(/Proveedor con datos pendientes de actualizar/).isVisible() && (await readonlyValues(page)).includes('En evaluación') && (await page.getByTestId('legacy-status').innerText()).includes('Pendiente de actualizar'));
 
     // Indicadores
     await page.getByRole('button', { name: /Evaluación e indicadores/ }).first().click();

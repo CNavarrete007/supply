@@ -66,12 +66,15 @@ El detalle `GET /api/v1/catalogs/clients/{id}` añade `version`, `imported` y `l
 ## Cuenta SQL nueva (mínimo privilegio)
 
 No se tocó ninguna cuenta existente (api = SELECT, auth 10+2, reqwrite 27, recovery 52; contrato INT03 77/52 intacto).
-Se agrega **`supplyflow_catalogwrite_local`** con 22 permisos de tabla, sin privilegios globales ni de esquema:
+Se agrega **`supplyflow_catalogwrite_local`** (catálogos de clientes **y proveedores**) con 26 permisos de tabla, sin
+privilegios globales ni de esquema:
 
-- SELECT: `clients`, `business_entities`, `party_contacts`, `party_contact_channels`, `idempotency_keys`, `files`, `entity_files`
-- INSERT: `business_entities`, `clients`, `party_contacts`, `party_contact_channels`, `audit_events`, `idempotency_keys`, `files`, `entity_files`
-- UPDATE: `business_entities`, `clients`, `party_contacts`, `party_contact_channels`, `idempotency_keys`, `entity_files`
+- SELECT: `clients`, `suppliers`, `categories`, `business_entities`, `party_contacts`, `party_contact_channels`, `idempotency_keys`, `files`, `entity_files`
+- INSERT: `business_entities`, `clients`, `suppliers`, `party_contacts`, `party_contact_channels`, `audit_events`, `idempotency_keys`, `files`, `entity_files`
+- UPDATE: `business_entities`, `clients`, `suppliers`, `party_contacts`, `party_contact_channels`, `idempotency_keys`, `entity_files`
 - DELETE: `party_contact_channels` (correos/teléfonos retirados)
+
+La lógica común de escritura vive en `CatalogWriteBase` / `CatalogWriteController` (backend) y en `src/views/catalog/useCatalogAutosave.js` + `writeApi.js` (frontend); Proveedores la reutiliza (ver `docs/proveedores/ALTA_EDICION_PROVEEDORES.md`).
 
 Archivos: `docker/supply-catalogwrite/provision.py` (provision | verify; no modifica datos ni esquema) y el overlay
 opcional `compose.supply-catalogwrite.yml`. **Mientras no se active, el arranque actual no cambia**: la API responde
@@ -102,7 +105,7 @@ foreach ($f in $files) { $compose += @('-f', (Join-Path $root $f)) }
 & docker.exe @compose --profile dev up -d --no-deps --force-recreate api
 ```
 
-Comprobaciones: `verify` → `"result": "PASS"`, `"grants": 22`; `http://localhost:8080/api/v1/recovery/catalogs` sin
+Comprobaciones: `verify` → `"result": "PASS"`, `"grants": 26`; `http://localhost:8080/api/v1/recovery/catalogs` sin
 sesión → 401; en Clientes, dar de alta un cliente de prueba identificable y revisarlo en la bitácora (Usuarios y roles →
 Bitácora, módulo `catalogs`). Desde entonces, incluir `compose.supply-catalogwrite.yml` en la lista de overlays.
 

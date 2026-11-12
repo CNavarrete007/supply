@@ -215,14 +215,12 @@ final class CatalogReadRepository
             return null;
         }
         $entityId = (int) $owner['id'];
-        if ($kind === 'clients') {
-            // Additive (write support): optimistic-concurrency version, import origin and current logo (metadata only).
-            $meta = $this->queryOne('SELECT row_version,imported_at FROM business_entities WHERE id=? AND organization_id=?', [$entityId, $organizationId]);
-            $row['version'] = (int) ($meta['row_version'] ?? 1);
-            $row['imported'] = ($meta['imported_at'] ?? null) !== null;
-            $logo = $this->queryOne("SELECT f.detected_mime AS mime,f.size_bytes AS size,ef.original_filename AS name FROM entity_files ef JOIN files f ON f.id=ef.file_id AND f.organization_id=ef.organization_id WHERE ef.organization_id=? AND ef.entity_id=? AND ef.file_role='clientLogo' ORDER BY ef.id DESC LIMIT 1", [$organizationId, $entityId]);
-            $row['logo'] = $logo ? ['mime' => $logo['mime'], 'size' => (int) $logo['size'], 'name' => $logo['name']] : null;
-        }
+        // Additive (write support): optimistic-concurrency version, import origin and current logo (metadata only).
+        $meta = $this->queryOne('SELECT row_version,imported_at FROM business_entities WHERE id=? AND organization_id=?', [$entityId, $organizationId]);
+        $row['version'] = (int) ($meta['row_version'] ?? 1);
+        $row['imported'] = ($meta['imported_at'] ?? null) !== null;
+        $logo = $this->queryOne('SELECT f.detected_mime AS mime,f.size_bytes AS size,ef.original_filename AS name FROM entity_files ef JOIN files f ON f.id=ef.file_id AND f.organization_id=ef.organization_id WHERE ef.organization_id=? AND ef.entity_id=? AND ef.file_role=? ORDER BY ef.id DESC LIMIT 1', [$organizationId, $entityId, $kind === 'clients' ? 'clientLogo' : 'supplierLogo']);
+        $row['logo'] = $logo ? ['mime' => $logo['mime'], 'size' => (int) $logo['size'], 'name' => $logo['name']] : null;
         $row['contacts'] = $this->queryRows('SELECT public_id AS id,display_name AS name,position_title AS position,is_primary FROM party_contacts WHERE organization_id=? AND owner_entity_id=? AND active=1 ORDER BY is_primary DESC,source_ordinal,id LIMIT 200', [$organizationId, $entityId]);
         $row['channels'] = $this->queryRows('SELECT channel_type AS type,value,source_field,is_primary FROM party_contact_channels WHERE organization_id=? AND owner_entity_id=? ORDER BY is_primary DESC,source_ordinal,id LIMIT 200', [$organizationId, $entityId]);
         foreach ($row['contacts'] as &$contact) {
@@ -237,9 +235,12 @@ final class CatalogReadRepository
         return $row;
     }
 
-    /** Storage of the current client logo (for the authorized GET .../logo endpoint). Never returned to the browser. */
-    public function clientLogo(int $organizationId, string $publicId): ?array
+    /** Storage of the current logo of a client/supplier (for the authorized GET .../logo endpoint). Never sent to the browser. */
+    public function entityLogo(int $organizationId, string $entityKind, string $role, string $publicId): ?array
     {
-        return $this->queryOne("SELECT f.storage_backend,f.storage_key,f.detected_mime AS mime,LOWER(HEX(f.sha256)) AS sha256 FROM business_entities e JOIN entity_files ef ON ef.entity_id=e.id AND ef.organization_id=e.organization_id AND ef.file_role='clientLogo' JOIN files f ON f.id=ef.file_id AND f.organization_id=ef.organization_id WHERE e.organization_id=? AND e.public_id=? AND e.entity_kind='client' AND e.archived_at IS NULL ORDER BY ef.id DESC LIMIT 1", [$organizationId, $publicId]);
+        if (! in_array([$entityKind, $role], [['client', 'clientLogo'], ['supplier', 'supplierLogo']], true)) {
+            return null;
+        }
+        return $this->queryOne('SELECT f.storage_backend,f.storage_key,f.detected_mime AS mime,LOWER(HEX(f.sha256)) AS sha256 FROM business_entities e JOIN entity_files ef ON ef.entity_id=e.id AND ef.organization_id=e.organization_id AND ef.file_role=? JOIN files f ON f.id=ef.file_id AND f.organization_id=ef.organization_id WHERE e.organization_id=? AND e.public_id=? AND e.entity_kind=? AND e.archived_at IS NULL ORDER BY ef.id DESC LIMIT 1', [$role, $organizationId, $publicId, $entityKind]);
     }
 }

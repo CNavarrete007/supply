@@ -11,7 +11,7 @@ use InvalidArgumentException;
  * Catálogo de clientes · validación estricta del cuerpo JSON de alta/actualización (no confía en el frontend).
  * El portal del cliente y sus claves NO se reciben aquí: requieren el diseño de seguridad de portal_access_tokens.
  */
-final class ClientInput
+class ClientInput
 {
     public const SALES_POLICIES = ['quote_required', 'guaranteed', 'mixed', 'contract', 'manual'];
     public const SOURCING_POLICIES = ['requote_always', 'validate_history', 'reuse_if_valid'];
@@ -25,13 +25,13 @@ final class ClientInput
         return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iD', $v) === 1;
     }
 
-    private static function bad(string $field): never
+    protected static function bad(string $field): never
     {
         throw new InvalidArgumentException($field);
     }
 
     /** Trimmed single-line text without control characters; '' allowed unless $required. */
-    private static function text(array $j, string $k, int $max, bool $required = false, ?string $pattern = null): string
+    protected static function text(array $j, string $k, int $max, bool $required = false, ?string $pattern = null): string
     {
         $v = $j[$k] ?? '';
         if (! is_string($v)) {
@@ -48,7 +48,7 @@ final class ClientInput
     }
 
     /** Multi-line text (address, terms, notes): keeps line breaks, rejects other control characters. */
-    private static function block(array $j, string $k, int $max): string
+    protected static function block(array $j, string $k, int $max): string
     {
         $v = $j[$k] ?? '';
         if (! is_string($v)) {
@@ -62,7 +62,7 @@ final class ClientInput
     }
 
     /** @return list<string> unique (case-insensitive), non-empty, in order */
-    private static function list(array $j, string $k, int $maxItems, int $maxLen, callable $valid): array
+    protected static function list(array $j, string $k, int $maxItems, int $maxLen, callable $valid): array
     {
         $v = $j[$k] ?? [];
         if (! is_array($v) || ! array_is_list($v) || count($v) > $maxItems) {
@@ -120,7 +120,7 @@ final class ClientInput
     }
 
     /** One "Teléfono" field may hold several numbers separated by "/", "," or ";" (imported clients keep all of them). */
-    private static function phones(string $v): array
+    protected static function phones(string $v): array
     {
         $out = [];
         foreach (preg_split('/\s*[\/,;]\s*/', $v) ?: [] as $phone) {
@@ -144,7 +144,7 @@ final class ClientInput
      * kept unchanged); the repository enforces that rule.
      * @return array<string,mixed>
      */
-    private static function policy(mixed $p): array
+    protected static function policy(mixed $p): array
     {
         $allowed = ['sales_policy', 'sourcing_policy', 'price_validity_days', 'contract_reference', 'contract_valid_until', 'min_margin_pct'];
         if (! is_array($p) || ($p !== [] && array_is_list($p)) || array_diff(array_keys($p), $allowed) !== []) {
@@ -197,7 +197,7 @@ final class ClientInput
      * ≤ 4096 px). The type comes from the bytes, never from the declared MIME or the file name.
      * @return array<string,mixed>|null
      */
-    private static function logo(mixed $l): ?array
+    protected static function logo(mixed $l): ?array
     {
         if ($l === null) {
             return null;

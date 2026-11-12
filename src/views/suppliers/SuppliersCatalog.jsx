@@ -1,18 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Lock, Plus, Upload, Search, Download, Edit3, Trash2, Table as TableIcon, CheckCircle2, ChevronLeft, ChevronRight, Eye, RefreshCw, AlertCircle, Loader2, FileSpreadsheet } from 'lucide-react';
+import { Lock, Plus, Upload, Search, Download, Edit3, Trash2, Table as TableIcon, CheckCircle2, ChevronLeft, ChevronRight, Eye, RefreshCw, AlertCircle, Loader2, FileSpreadsheet, X } from 'lucide-react';
 import { listCatalog, getCatalogRecord } from '../../catalogApi';
 import { DetailPanel, translateStatus } from '../catalog/shared';
 import { initials } from '../clients/model.mjs';
 import { analyzeSupplierImport, SUPPLIER_TEMPLATE_HEADERS, supplierIndicators, leadTime, ratingText, CURRENCIES } from './model.mjs';
+import { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage, STATUSES as STATUS_OPTS, CURRENCIES as SUP_CURRENCIES, CREDIT_TYPES, LEAD_UNITS } from './form.mjs';
+import { useCatalogAutosave } from '../catalog/useCatalogAutosave';
 
 // Proveedores · diseño Grupo Gerez (4 tarjetas) conectado a MariaDB.
-// Lectura real: /api/v1/catalogs/suppliers[/{id}]. Sin datos de demostración. Alta, edición, eliminación
-// e importación con guardado no existen todavía en el backend: se muestran bloqueadas. La importación es
-// una VISTA PREVIA local (el archivo no se envía ni se guarda).
+// Lectura real: /api/v1/catalogs/suppliers[/{id}]. Sin datos de demostración. Alta y edición reales con guardado
+// automático (POST/PUT /api/v1/catalogs/suppliers, logotipo privado). Eliminación e importación con guardado siguen
+// bloqueadas; la importación es una VISTA PREVIA local (el archivo no se envía ni se guarda).
 
 const DASH = '—';
 const show = v => (v === null || v === undefined || String(v).trim() === '' ? DASH : String(v));
-const inputCls = 'w-full text-xs bg-slate-50/50 border border-slate-200 rounded-xl p-2.5 outline-none text-slate-700';
 const PAGE = 25;
 const OUTCOME = {
   new: ['bg-emerald-50 text-emerald-700 border-emerald-200', 'Nuevo', 'New'],
@@ -31,23 +32,21 @@ const statusLabel = (s, en) => { const t = translateStatus(s.status, en); const 
 function Field({ label, children, required, span = '' }) {
   return <div className={span}><label className="block text-xs font-bold text-slate-700 mb-1">{label}{required && <span className="text-purple-600"> *</span>}</label>{children}</div>;
 }
-function ReadInput({ value, label }) {
-  return <input type="text" readOnly aria-label={label} value={value === DASH ? '' : value} placeholder={DASH} className={inputCls} />;
-}
 
 export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish }) {
   const en = isEnglish || lang === 'en' || language === 'en';
   const tx = (es, e) => (en ? e : es);
   const notify = (title, message, type = 'info') => { if (typeof onNotify === 'function') onNotify(title, message, type); };
-  const LOCK = tx('Modo consulta MariaDB: el alta, la edición, la eliminación y el guardado de importaciones se habilitarán cuando existan endpoints de escritura con autorización, CSRF, idempotencia y auditoría.', 'MariaDB read mode: create, edit, delete and saving imports will be enabled once write endpoints with authorization, CSRF, idempotency and audit exist.');
+  const LOCK = tx('El alta y la edición de proveedores se guardan en MariaDB automáticamente, con autorización, CSRF, idempotencia, control de versión y bitácora. La eliminación y el guardado de importaciones siguen bloqueados.', 'Creating and editing suppliers is saved to MariaDB automatically, with authorization, CSRF, idempotency, version control and audit. Deleting and saving imports remain blocked.');
   const cards = [
-    { id: 'register', emoji: '📝', title: tx('Registro y actualización', 'Registration and update'), desc: tx('Ficha completa del proveedor seleccionado.', 'Full record of the selected supplier.') },
+    { id: 'register', emoji: '📝', title: tx('Registro y actualización', 'Registration and update'), desc: tx('Alta y edición de proveedores con guardado automático.', 'Create and edit suppliers with autosave.') },
     { id: 'matrix', emoji: '📋', title: tx('Matriz de proveedores', 'Suppliers Matrix'), desc: tx('Consulta, búsqueda, filtros y detalle.', 'Lookup, search, filters and details.') },
     { id: 'indicators', emoji: '📊', title: tx('Evaluación e indicadores', 'Evaluation and indicators'), desc: tx('Calificaciones, estatus y situación de los proveedores.', 'Ratings, status, and supplier overview.') },
     { id: 'import', emoji: '📥', title: tx('Importar Excel', 'Import Excel'), desc: tx('Validación previa del archivo contra la base compartida.', 'Pre-validation of the file against the shared database.') },
   ];
   const [tab, setTab] = useState('matrix');
   const [revision, setRevision] = useState(0);
+  const [listRev, setListRev] = useState(0); // refresca matriz, selectores e indicadores tras cada guardado (no la ficha)
 
   // ---------- Matriz (paginada en el servidor; lógica existente) ----------
   const [input, setInput] = useState('');
@@ -68,7 +67,7 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
       .catch(e => { if (!c.signal.aborted) setError(e.status === 401 ? tx('Tu sesión expiró. Inicia sesión nuevamente.', 'Your session expired. Sign in again.') : e.message || tx('Error de consulta.', 'Query error.')); })
       .finally(() => { if (!c.signal.aborted) setBusy(false); });
     return () => c.abort();
-  }, [page, q, status, revision]);
+  }, [page, q, status, revision, listRev]);
   const summary = list.summary || {};
   const total = Number(list.total || 0);
   const lastPage = Math.max(1, Math.ceil(total / PAGE));
@@ -78,7 +77,8 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
   const loadedRev = useRef(-1);
   const needAll = tab !== 'matrix';
   useEffect(() => {
-    if (!needAll || loadedRev.current === revision) return undefined;
+    const rev = `${revision}:${listRev}`;
+    if (!needAll || loadedRev.current === rev) return undefined;
     const c = new AbortController();
     (async () => {
       setAll(a => ({ ...a, status: 'loading', error: '' }));
@@ -89,11 +89,11 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
           tot = Number(r.total) || 0; items = items.concat(r.items || []); p += 1;
           if (!c.signal.aborted) setAll(a => ({ ...a, items, total: tot }));
         } while (items.length < tot && p <= 80 && !c.signal.aborted);
-        if (!c.signal.aborted) { loadedRev.current = revision; setAll({ status: 'ready', error: '', items, total: tot }); }
+        if (!c.signal.aborted) { loadedRev.current = rev; setAll({ status: 'ready', error: '', items, total: tot }); }
       } catch (e) { if (!c.signal.aborted) setAll(a => ({ ...a, status: 'error', error: e.message || 'Error' })); }
     })();
     return () => c.abort();
-  }, [needAll, revision]);
+  }, [needAll, revision, listRev]);
   const allReady = all.status === 'ready';
 
   // ---------- Ficha (registro en modo consulta) ----------
@@ -108,9 +108,30 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
     return () => c.abort();
   }, [selectedId, revision]);
   const f = ficha.item;
-  const channels = type => (f?.channels || []).filter(x => x.type === type).map(x => x.value);
   const byCode = useMemo(() => [...all.items].sort((a, b) => String(a.code).localeCompare(String(b.code), 'es', { numeric: true })), [all.items]);
   const byName = useMemo(() => [...all.items].sort((a, b) => String(a.name).localeCompare(String(b.name), 'es')), [all.items]);
+
+  // ---------- Ficha editable con guardado automático (ver ../catalog/useCatalogAutosave.js) ----------
+  const af = useCatalogAutosave({ kind: 'suppliers', ficha, setSelectedId, onSaved: () => setListRev(n => n + 1), notify, tx, en,
+    model: { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage },
+    text: {
+      created: code => tx(`Proveedor ${code} dado de alta en MariaDB y agregado a la matriz.`, `Supplier ${code} created in MariaDB and added to the matrix.`),
+      updated: (code, v) => tx(`Cambios de ${code} guardados en la matriz (versión ${v}).`, `Changes to ${code} saved to the matrix (version ${v}).`),
+      noChanges: (code, v) => tx(`Sin cambios pendientes: ${code} ya está guardado en la matriz (versión ${v}).`, `No pending changes: ${code} is already saved in the matrix (version ${v}).`),
+      notifyTitle: tx('Proveedores', 'Suppliers'), entity: tx('proveedor', 'supplier'),
+      idle: tx('El guardado automático inicia al completar No. de proveedor, razón social y categoría.', 'Autosave starts once supplier number, legal name and category are filled in.'),
+    } });
+  const { form, saving, saveMsg, setSaveMsg, auto, lastSaved, logoUrl, logoBusy, set, setRow, addRow, removeRow, onLogo, save, flush, newRecord, clearForm, pickRecord, autoText, inp, err, fieldCls } = af;
+  const goTab = async id => { if (tab === 'register' && id !== 'register' && (await flush()) === 'failed') return; setTab(id); };
+  const goMatrix = async () => { if ((await flush()) !== 'failed') setTab('matrix'); };
+  const openFicha = async id => { await pickRecord(id); setTab('register'); };
+  const categories = useMemo(() => [...new Set(all.items.map(s => s.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')), [all.items]);
+  const rowsField = (k, label, ph, add, type, span) => <Field key={k} label={label} span={span}><div className="space-y-2" data-testid={`rows-${k}`}>
+    {form[k].map((v, i) => <div key={i} className="flex gap-2"><input type={type} aria-label={`${label} ${i + 1}`} value={v} maxLength={k === 'emails' ? 254 : k === 'phones' ? 40 : 255} onChange={e => setRow(k, i, e.target.value)} placeholder={ph} className={inp(k)} />
+      {form[k].length > 1 && <button type="button" aria-label={`${tx('Quitar', 'Remove')} ${label} ${i + 1}`} onClick={() => removeRow(k, i)} className="w-10 shrink-0 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 flex items-center justify-center"><X className="w-4 h-4" /></button>}</div>)}
+    <button type="button" onClick={() => addRow(k)} disabled={form[k].length >= (k === 'phones' ? 10 : 20)} className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:opacity-40 text-white rounded-lg flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" /><span className="text-xs font-bold">{add}</span></button>
+    {err(k)}
+  </div></Field>;
 
   // ---------- Indicadores ----------
   const ind = useMemo(() => supplierIndicators(summary, all.items), [summary, all.items]);
@@ -162,7 +183,7 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
 
     {/* Grid de las 4 Tarjetas */}
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      {cards.map(card => { const active = tab === card.id; return <button key={card.id} type="button" onClick={() => setTab(card.id)} aria-pressed={active}
+      {cards.map(card => { const active = tab === card.id; return <button key={card.id} type="button" onClick={() => goTab(card.id)} aria-pressed={active}
         className={`text-left p-5 rounded-2xl transition-all duration-300 transform active:scale-[0.98] cursor-pointer flex flex-col justify-between h-36 border ${active ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 border-transparent -translate-y-1' : 'bg-white text-slate-700 border-slate-200/80 hover:border-blue-300 hover:shadow-md hover:-translate-y-0.5'}`}>
         <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-base transition-colors ${active ? 'bg-white/20 backdrop-blur-md' : 'bg-blue-50/80 border border-blue-100/50'}`}><span>{card.emoji}</span></div>
         <div><h3 className={`text-sm font-bold tracking-tight ${active ? 'text-white' : 'text-slate-800'}`}>{card.title}</h3><p className={`text-xs mt-0.5 leading-relaxed line-clamp-2 ${active ? 'text-blue-100' : 'text-slate-400'}`}>{card.desc}</p></div>
@@ -174,59 +195,86 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
     {/* Contenedor dinámico */}
     <div className="bg-white p-6 md:p-8 rounded-2xl border border-slate-200/80 shadow-sm min-h-[400px]">
 
-      {/* TAB 1: Registro (ficha en modo consulta) */}
-      {tab === 'register' && <div className="space-y-6">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-4 gap-3">
-          <div><h3 className="text-base font-black text-slate-800">{tx('Alta y actualización de proveedores', 'Supplier Registration and Updates')}</h3><p className="text-[11px] text-slate-400 mt-0.5">{tx('El número de proveedor es único por organización en MariaDB. Selecciona un proveedor para ver su ficha completa.', 'The supplier number is unique per organization in MariaDB. Select a supplier to view its full record.')}</p></div>
-          <span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-3 py-1 rounded-full border border-purple-100 shrink-0">{tx('Modo consulta', 'Read mode')}</span>
+      {/* TAB 1: Registro y actualización (alta/edición real con guardado automático) */}
+      {tab === 'register' && <div className="space-y-6" data-testid="supplier-form">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-4">
+          <div><h3 className="text-base font-black text-slate-800">{tx('Alta y actualización de proveedores', 'Supplier Registration and Updates')}</h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">{tx('El número de proveedor debe ser asignado manualmente por el usuario y no puede repetirse.', 'The supplier number is assigned manually by the user and cannot be repeated.')}</p>
+            <span data-testid="autosave-status" aria-live="polite" className={`mt-1 text-[10px] font-semibold flex items-center gap-1 ${auto.state === 'saved' ? 'text-emerald-700' : auto.state === 'error' || auto.state === 'paused' ? 'text-rose-600' : auto.state === 'saving' || auto.state === 'pending' ? 'text-blue-700' : 'text-slate-500'}`}>{auto.state === 'saving' && <Loader2 className="w-3 h-3 animate-spin" />}{autoText}</span></div>
+          <div className="flex flex-col items-end gap-1"><span className="px-3 py-1 bg-purple-50 text-purple-700 font-bold text-[10px] rounded-full border border-purple-100">{tx('Paso 1 · Datos del proveedor', 'Step 1 · Supplier data')}</span>
+            <span data-testid="form-mode" className="text-[10px] font-bold text-slate-500">{form.id ? `${tx('Editando', 'Editing')} ${form.code || ''} · v${form.version}` : tx('Nuevo registro', 'New record')}</span></div>
         </div>
         <AllState />
         {ficha.loading && <p className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />{tx('Consultando ficha en MariaDB…', 'Loading record from MariaDB…')}</p>}
         {ficha.error && <p role="alert" className="text-xs text-rose-700 flex items-center gap-2"><AlertCircle className="w-4 h-4" />{ficha.error}</p>}
-        {f?.data_incomplete && <div className="p-3 bg-amber-50/60 border border-amber-200/60 rounded-xl text-[11px] text-amber-900">{tx('Proveedor con datos pendientes de actualizar en la importación original.', 'Supplier with data pending update in the original import.')}</div>}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        {form.id && form.imported && <div className="p-3 bg-amber-50/60 border border-amber-200/60 rounded-xl text-[11px] text-amber-900">{tx('Proveedor importado del sistema anterior: al guardar, los cambios quedan en la bitácora con sus valores anteriores.', 'Supplier imported from the previous system: saving records the changes in the audit log with their previous values.')}{form.rating_scale !== '100' ? tx(` Su calificación usa la escala 0–${form.rating_scale}.`, ` Its rating uses the 0–${form.rating_scale} scale.`) : ''}</div>}
+        {form.id && f?.id === form.id && f?.data_incomplete && <div className="p-3 bg-amber-50/60 border border-amber-200/60 rounded-xl text-[11px] text-amber-900">{tx('Proveedor con datos pendientes de actualizar en la importación original: al completar y guardar la ficha deja de estar marcado.', 'Supplier with data pending update in the original import: completing and saving the record clears the flag.')}</div>}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Field label={tx('No. de proveedor', 'Supplier No.')} required>
-            <select aria-label={tx('Seleccionar por número de proveedor', 'Select by supplier number')} value={selectedId} onChange={e => setSelectedId(e.target.value)} disabled={!allReady} className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl p-2.5 mb-2 focus:ring-2 focus:ring-purple-500 focus:outline-none">
-              <option value="">{allReady ? tx('Selecciona un número registrado', 'Select a registered number') : tx('Cargando…', 'Loading…')}</option>
-              {byCode.map(s => <option key={s.id} value={s.id}>{s.code}</option>)}
-            </select>
-            <ReadInput value={show(f?.code)} label={tx('No. de proveedor', 'Supplier No.')} />
-            <p className="text-[10px] text-slate-400 mt-1">{tx('Selecciona un número registrado para cargar todos los datos disponibles.', 'Select a registered number to load all available data.')}</p>
+            <select aria-label={tx('Seleccionar por número de proveedor', 'Select by supplier number')} value={form.id || selectedId} onChange={e => pickRecord(e.target.value)} disabled={!allReady && !form.id} className={`${fieldCls} mb-1.5`}>
+              <option value="">{tx('+ Nuevo proveedor / captura manual', '+ New supplier / manual entry')}</option>{byCode.map(s => <option key={s.id} value={s.id}>{s.code}</option>)}</select>
+            <input type="text" aria-label={tx('No. de proveedor', 'Supplier No.')} value={form.code} maxLength={80} onChange={e => set('code', e.target.value)} placeholder="PROV-001..." className={inp('code')} />
+            {err('code') || <p className="text-[10px] text-blue-700/70 mt-1">{tx('Selecciona un número registrado para cargar automáticamente todos los datos disponibles.', 'Select a registered number to load all available data.')}</p>}
           </Field>
-          <Field label={tx('Razón social', 'Company Name / Legal Name')} required>
-            <select aria-label={tx('Seleccionar por razón social', 'Select by legal name')} value={selectedId} onChange={e => setSelectedId(e.target.value)} disabled={!allReady} className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl p-2.5 mb-2 focus:ring-2 focus:ring-purple-500 focus:outline-none">
-              <option value="">{allReady ? tx('Selecciona una razón social', 'Select a legal name') : tx('Cargando…', 'Loading…')}</option>
-              {byName.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-            <ReadInput value={show(f?.name)} label={tx('Razón social', 'Legal name')} />
-            <p className="text-[10px] text-slate-400 mt-1">{tx('Carga No. de proveedor, Clave, RFC, contacto, correo, teléfono, categoría, condiciones y demás datos.', 'Loads Supplier No., Code, Tax ID, contact, email, phone, category, terms and other data.')}</p>
+          <Field label={tx('Razón social', 'Legal name')} required>
+            <select aria-label={tx('Seleccionar por razón social', 'Select by legal name')} value={form.id || selectedId} onChange={e => pickRecord(e.target.value)} disabled={!allReady && !form.id} className={`${fieldCls} mb-1.5`}>
+              <option value="">{tx('+ Nuevo proveedor / captura manual', '+ New supplier / manual entry')}</option>{byName.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+            <input type="text" aria-label={tx('Razón social', 'Legal name')} value={form.name} maxLength={255} onChange={e => set('name', e.target.value)} placeholder="..." className={inp('name')} />
+            {err('name') || <p className="text-[10px] text-blue-700/70 mt-1">{tx('Selecciona la razón social para completar No. de proveedor, Clave, RFC, contacto, correo, teléfono, categoría, condiciones y demás datos. Todos los campos seguirán editables.', 'Select the legal name to fill supplier number, code, tax ID, contact, email, phone, category, terms and other data. Every field stays editable.')}</p>}
           </Field>
-          <Field label={tx('RFC / Tax ID', 'Tax ID / RFC')}><ReadInput value={show(f?.tax_id)} label="RFC" /></Field>
-          <Field label={tx('Clave', 'Code')}><ReadInput value={show(f?.supplier_key)} label={tx('Clave', 'Code')} /></Field>
-          <Field label={tx('Contactos', 'Contacts')} span="md:col-span-2"><div className="space-y-2">{(f?.contacts?.length ? f.contacts : [null]).map((p, i) => <ReadInput key={p?.id || i} value={p ? `${p.name}${p.position ? ` · ${p.position}` : ''}${p.is_primary ? tx(' · principal', ' · primary') : ''}` : DASH} label={tx('Contacto', 'Contact')} />)}</div></Field>
-          <Field label={tx('Correos electrónicos', 'Email addresses')} span="md:col-span-2"><div className="space-y-2">{(f && channels('email').length ? channels('email') : [DASH]).map((v, i) => <ReadInput key={i} value={v} label="Email" />)}</div></Field>
-          <Field label={tx('Teléfonos', 'Phone numbers')}><div className="space-y-2">{(f && channels('phone').length ? channels('phone') : [DASH]).map((v, i) => <ReadInput key={i} value={v} label={tx('Teléfono', 'Phone')} />)}</div></Field>
-          <Field label={tx('Categoría', 'Category')} required><ReadInput value={show(f?.category)} label={tx('Categoría', 'Category')} /></Field>
-          <Field label={tx('Estatus', 'Status')}><ReadInput value={f ? statusLabel(f, en) : DASH} label={tx('Estatus', 'Status')} /></Field>
-          <Field label={tx('Moneda habitual', 'Default Currency')}><ReadInput value={show(f?.currency)} label={tx('Moneda', 'Currency')} /></Field>
-          <Field label={tx('Tipo de crédito habitual', 'Default Credit Type')}><ReadInput value={show(f?.credit_type)} label={tx('Tipo de crédito', 'Credit type')} /></Field>
-          <Field label={tx('Días de crédito', 'Credit Days')}><ReadInput value={show(f?.credit_days)} label={tx('Días de crédito', 'Credit days')} /></Field>
-          <Field label={tx('Tiempo de entrega habitual', 'Default Delivery Time')}><ReadInput value={f && f.lead_time_value !== null && f.lead_time_value !== undefined ? String(Number(f.lead_time_value)) : DASH} label={tx('Tiempo de entrega', 'Delivery time')} /></Field>
-          <Field label={tx('Unidad del tiempo de entrega', 'Delivery Time Unit')}><ReadInput value={show(f?.lead_time_unit)} label={tx('Unidad', 'Unit')} /></Field>
-          <Field label={tx('Calificación', 'Rating')}><ReadInput value={f ? show(ratingText(f, f.rating_scale)) : DASH} label={tx('Calificación', 'Rating')} /></Field>
-          <Field label={tx('Documentos / certificaciones', 'Documents / Certifications')} span="md:col-span-2"><ReadInput value={show(f?.document_notes)} label={tx('Documentos', 'Documents')} /></Field>
-          <Field label={tx('Logotipo del proveedor', 'Supplier Logo')} span="md:col-span-3">
-            <div className="border border-blue-100 bg-blue-50/20 rounded-2xl p-4 flex flex-col md:flex-row items-center gap-4">
-              <div className="w-36 h-20 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 text-lg font-black shadow-inner">{f ? initials(f.name) : tx('Sin logotipo', 'No logo')}</div>
-              <p className="text-[10px] text-slate-400">{tx('La base importada no incluye logotipos; se muestran las iniciales. La carga de imágenes requiere almacenamiento privado con validación en el servidor.', 'The imported database has no logos; initials are shown. Uploading images requires private storage with server-side validation.')}</p>
-            </div>
-          </Field>
-          <Field label={tx('Observaciones', 'Notes / Observations')} span="md:col-span-3"><textarea rows={3} readOnly value={f?.notes || ''} placeholder={DASH} className="w-full text-xs bg-slate-50/50 border border-slate-200 rounded-xl p-2.5 outline-none text-slate-700" /></Field>
+          <Field label={tx('RFC / Tax ID', 'RFC / Tax ID')}><input type="text" aria-label="RFC" value={form.tax_id} maxLength={64} onChange={e => set('tax_id', e.target.value)} className={inp('tax_id')} />{err('tax_id')}</Field>
         </div>
-        <div className="pt-4 flex flex-wrap items-center gap-3">
-          <button type="button" disabled title={LOCK} className="bg-slate-200 text-slate-500 text-xs font-bold px-5 py-2.5 rounded-xl flex items-center gap-2 cursor-not-allowed"><Lock className="w-3.5 h-3.5" />{tx('Guardar proveedor', 'Save Supplier')}</button>
-          <button type="button" onClick={() => setSelectedId('')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-5 py-2.5 rounded-xl transition-colors flex items-center gap-2 cursor-pointer"><span>🧹</span>{tx('Limpiar', 'Clear')}</button>
-          <button type="button" onClick={() => setTab('matrix')} className="border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold px-5 py-2.5 rounded-xl transition-colors flex items-center gap-2 cursor-pointer"><span>📋</span>{tx('Ver matriz', 'View Matrix')}</button>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Field label={tx('Clave', 'Code')}><input type="text" aria-label={tx('Clave', 'Code')} value={form.supplier_key} maxLength={255} onChange={e => set('supplier_key', e.target.value)} className={inp('supplier_key')} /></Field>
+          {rowsField('contacts', tx('Contactos', 'Contacts'), tx('Nombre del contacto', 'Contact name'), tx('Agregar otro contacto', 'Add another contact'), 'text', 'lg:col-span-2')}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {rowsField('emails', tx('Correos electrónicos', 'Email Addresses'), 'correo@proveedor.com', tx('Agregar otro correo', 'Add another email'), 'email', 'lg:col-span-2')}
+          {rowsField('phones', tx('Teléfonos', 'Phones'), '81-1234-5678', tx('Agregar otro teléfono', 'Add another phone'), 'tel', '')}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Field label={tx('Categoría', 'Category')} required><input type="text" list="supplier-categories" aria-label={tx('Categoría', 'Category')} value={form.category} maxLength={255} onChange={e => set('category', e.target.value)} className={inp('category')} />
+            <datalist id="supplier-categories">{categories.map(c => <option key={c} value={c} />)}</datalist>{err('category')}</Field>
+          <Field label={tx('Estatus', 'Status')}><select aria-label={tx('Estatus', 'Status')} value={form.status} onChange={e => set('status', e.target.value)} className={inp('status')}>
+            {form.legacy.status && <option value={form.legacy.status}>{tx('Valor histórico', 'Historical value')}: {form.legacy.status}</option>}{STATUS_OPTS.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}</select>{form.id && f?.id === form.id && f?.legacy_status && f.legacy_status.toLowerCase() !== translateStatus(f.status, en).toLowerCase() && <p data-testid="legacy-status" className="text-[10px] text-amber-700 mt-1">{tx('Estatus original importado', 'Original imported status')}: {f.legacy_status}</p>}</Field>
+          <Field label={tx('Moneda habitual', 'Default currency')}><select aria-label={tx('Moneda habitual', 'Default currency')} value={form.currency} onChange={e => set('currency', e.target.value)} className={inp('currency')}>
+            {!form.currency && <option value="">{tx('Sin moneda registrada', 'No currency recorded')}</option>}{SUP_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}</select></Field>
+          <Field label={tx('Tipo de crédito habitual', 'Default credit type')}><select aria-label={tx('Tipo de crédito habitual', 'Default credit type')} value={form.credit_type} onChange={e => set('credit_type', e.target.value)} className={inp('credit_type')}>
+            {!form.credit_type && <option value="">{tx('Sin tipo registrado', 'No type recorded')}</option>}{form.legacy.credit_type && <option value={form.legacy.credit_type}>{tx('Valor histórico', 'Historical value')}: {form.legacy.credit_type}</option>}{CREDIT_TYPES.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}</select></Field>
+          <Field label={tx('Días de crédito', 'Credit days')}><input type="number" min="0" max="3650" step="1" aria-label={tx('Días de crédito', 'Credit days')} value={form.credit_days} onChange={e => set('credit_days', e.target.value)} className={inp('credit_days')} />{err('credit_days')}</Field>
+          <Field label={tx('Tiempo de entrega habitual', 'Default lead time')}><input type="number" min="0" max="9999" step="0.5" aria-label={tx('Tiempo de entrega habitual', 'Default lead time')} value={form.lead_time_value} onChange={e => set('lead_time_value', e.target.value)} className={inp('lead_time_value')} />{err('lead_time_value')}</Field>
+          <Field label={tx('Unidad del tiempo de entrega', 'Lead time unit')}><select aria-label={tx('Unidad del tiempo de entrega', 'Lead time unit')} value={form.lead_time_unit} onChange={e => set('lead_time_unit', e.target.value)} className={inp('lead_time_unit')}>
+            {!form.lead_time_unit && <option value="">{tx('Sin unidad registrada', 'No unit recorded')}</option>}{form.legacy.lead_time_unit && <option value={form.legacy.lead_time_unit}>{tx('Valor histórico', 'Historical value')}: {form.legacy.lead_time_unit}</option>}{LEAD_UNITS.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}</select></Field>
+          <Field label={tx('Calificación inicial', 'Initial rating')}><input type="number" min="0" max={form.rating_scale} step="0.1" aria-label={tx('Calificación inicial', 'Initial rating')} value={form.rating} onChange={e => set('rating', e.target.value)} className={inp('rating')} />{err('rating') || <p className="text-[10px] text-slate-400 mt-1">{tx(`Escala 0–${form.rating_scale}.`, `Scale 0–${form.rating_scale}.`)}</p>}</Field>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Field label={tx('Documentos / certificaciones', 'Documents / certifications')} span="lg:col-span-2"><input type="text" aria-label={tx('Documentos / certificaciones', 'Documents / certifications')} value={form.document_notes} maxLength={4000} onChange={e => set('document_notes', e.target.value)} className={inp('document_notes')} /></Field>
+        </div>
+        <Field label={tx('Logotipo del proveedor', 'Supplier logo')}>
+          <div className="p-4 border border-blue-100 rounded-2xl bg-blue-50/20 flex flex-col sm:flex-row items-start sm:items-center gap-4" data-testid="logo-box">
+            <div className="w-28 h-20 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center text-[11px] text-slate-400 font-semibold shrink-0 overflow-hidden">
+              {form.logo.next ? <img src={form.logo.next.dataUrl} alt={tx('Vista previa del logotipo', 'Logo preview')} className="max-w-full max-h-full object-contain" />
+                : !form.logo.remove && logoUrl ? <img src={logoUrl} alt={tx('Logotipo actual', 'Current logo')} className="max-w-full max-h-full object-contain" /> : <span>{tx('Sin logotipo', 'No logo')}</span>}
+            </div>
+            <div className="space-y-1.5 min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 p-2 bg-white border border-slate-200 rounded-xl">
+                <input id="supplier-logo-file" type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={e => { onLogo(e.target.files?.[0]); e.target.value = ''; }} />
+                <label htmlFor="supplier-logo-file" className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-bold text-[11px] rounded-lg cursor-pointer flex items-center gap-1.5"><Upload className="w-3.5 h-3.5" />{tx('Elegir archivo', 'Choose file')}</label>
+                <span className="text-[11px] text-slate-500 truncate max-w-[300px]" data-testid="logo-name">{logoBusy ? tx('Procesando imagen…', 'Processing image…') : form.logo.next ? `${form.logo.next.name} · ${Math.round(form.logo.next.size / 1024)} KB` : !form.logo.remove && form.logo.current ? form.logo.current.name || tx('Logotipo registrado', 'Recorded logo') : tx('No se ha seleccionado ningún archivo', 'No file selected')}</span>
+                {(form.logo.next || (form.logo.current && !form.logo.remove)) && <button type="button" onClick={() => af.setForm(x => ({ ...x, logo: { ...x.logo, next: null, remove: !!x.logo.current } }))} className="ml-auto px-2.5 py-1.5 text-[11px] font-bold text-rose-600 hover:bg-rose-50 rounded-lg">{tx('Quitar logotipo', 'Remove logo')}</button>}
+                {form.logo.remove && <button type="button" onClick={() => af.setForm(x => ({ ...x, logo: { ...x.logo, remove: false } }))} className="ml-auto px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-100 rounded-lg">{tx('Conservar logotipo', 'Keep logo')}</button>}
+              </div>
+              <p className="text-[10px] text-slate-400">{tx('Formatos permitidos: PNG, JPG o WEBP. La imagen se comprime antes de guardarse.', 'Allowed formats: PNG, JPG or WEBP. The image is compressed before saving.')}</p>
+              {err('logo')}
+            </div>
+          </div>
+        </Field>
+        <Field label={tx('Observaciones', 'Notes')}><textarea rows={3} aria-label={tx('Observaciones', 'Notes')} value={form.notes} maxLength={4000} onChange={e => set('notes', e.target.value)} className={`${inp('notes')} resize-y`} /></Field>
+        {saveMsg && <div role={saveMsg.kind === 'ok' ? 'status' : 'alert'} data-testid="save-message" className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${saveMsg.kind === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : saveMsg.kind === 'warn' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{saveMsg.kind === 'ok' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}<span>{saveMsg.text}</span>{saveMsg.reload && <button type="button" onClick={() => { setSaveMsg(null); setRevision(n => n + 1); }} className="ml-auto px-3 py-1 bg-white border border-rose-200 hover:bg-rose-50 text-rose-700 font-bold text-[11px] rounded-lg whitespace-nowrap">{tx('Recargar ficha', 'Reload record')}</button>}</div>}
+        <div data-testid="form-actions" className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100">
+          <button type="button" onClick={save} disabled={saving || logoBusy} className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 active:scale-95 disabled:opacity-50 text-white rounded-xl shadow-md shadow-purple-500/20 flex items-center gap-2">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span aria-hidden="true">💾</span>}<span className="text-sm font-bold">{tx('Guardar proveedor', 'Save supplier')}</span></button>
+          <button type="button" onClick={clearForm} disabled={saving} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 rounded-xl border border-slate-200 flex items-center gap-2"><span aria-hidden="true">🧹</span><span className="text-sm font-bold">{tx('Limpiar', 'Clear')}</span></button>
+          <button type="button" onClick={goMatrix} disabled={saving} className="px-5 py-2.5 bg-white hover:bg-slate-50 active:scale-95 text-slate-800 rounded-xl border border-slate-200 shadow-xs flex items-center gap-2"><span aria-hidden="true">📋</span><span className="text-sm font-bold">{tx('Ver matriz', 'View matrix')}</span></button>
         </div>
       </div>}
 
@@ -236,9 +284,14 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
           <div><h3 className="text-lg font-black text-slate-900">{tx('Matriz de proveedores', 'Suppliers Matrix')}</h3><p className="text-xs text-slate-400 mt-0.5">{tx(`${summary.total ?? 0} proveedores registrados · ${total} coincidencias · ${summary.incomplete ?? 0} con datos pendientes de actualizar.`, `${summary.total ?? 0} registered suppliers · ${total} matches · ${summary.incomplete ?? 0} pending update.`)}</p></div>
           <div className="flex items-center gap-2.5">
             <button type="button" onClick={() => setTab('import')} className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md shadow-purple-500/20 flex items-center gap-2 cursor-pointer"><Download className="w-4 h-4" />{tx('Importar Excel', 'Import Excel')}</button>
-            <button type="button" disabled title={LOCK} className="bg-slate-200 text-slate-500 text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-not-allowed"><Plus className="w-4 h-4" />{tx('Nuevo proveedor', 'New Supplier')}</button>
+            <button type="button" onClick={() => { newRecord(); setTab('register'); }} className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white px-4 py-2.5 rounded-xl shadow-md shadow-purple-500/20 flex items-center gap-1.5"><Plus className="w-4 h-4" /><span className="text-xs font-bold">{tx('Nuevo proveedor', 'New Supplier')}</span></button>
           </div>
         </div>
+        {lastSaved && <div data-testid="last-saved" className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/70 text-xs text-emerald-900 flex flex-wrap items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" /><span>{lastSaved.created ? tx('Alta guardada', 'Created') : tx('Cambios guardados', 'Changes saved')}: <strong>{lastSaved.code}</strong> · {lastSaved.name} · {tx('versión', 'version')} {lastSaved.version} · {lastSaved.at.toLocaleTimeString(en ? 'en-US' : 'es-MX')}</span>
+          <button type="button" onClick={() => { setInput(lastSaved.code); setQ(lastSaved.code); setPage(1); setStatus('all'); }} className="ml-auto px-3 py-1 bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] rounded-lg">{tx('Mostrar en la matriz', 'Show in matrix')}</button>
+          <button type="button" onClick={() => openFicha(lastSaved.id)} className="px-3 py-1 bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] rounded-lg">{tx('Abrir ficha', 'Open record')}</button>
+        </div>}
         <div className="relative"><Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input type="search" value={input} onChange={e => setInput(e.target.value)} aria-label={tx('Buscar en catálogo', 'Search catalog')} placeholder={tx('Buscar por número, razón social, RFC, contacto o correo...', 'Search by number, company name, Tax ID, contact, or email...')} className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50/50 border border-slate-200/80 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all placeholder:text-slate-400 text-slate-700" /></div>
         <div><select aria-label={tx('Estatus', 'Status')} value={status} onChange={e => { setStatus(e.target.value); setPage(1); }} className="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-700 font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer">
@@ -254,9 +307,9 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
             <th className="py-3 px-2 leading-tight text-center sticky right-0 bg-slate-50 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]">{tx('Acciones', 'Actions')}</th>
           </tr></thead>
           <tbody>
-            {list.items.length ? list.items.map(s => <tr key={s.id} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors text-xs text-slate-700 align-top">
+            {list.items.length ? list.items.map(s => <tr key={s.id} data-saved={lastSaved?.id === s.id ? 'true' : undefined} className={`border-b border-slate-100 transition-colors text-xs text-slate-700 align-top ${lastSaved?.id === s.id ? 'bg-emerald-50/70' : 'hover:bg-slate-50/50'}`}>
               <td className="py-3 px-2"><div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center border border-slate-200 text-[10px] text-slate-500 font-bold">{initials(s.name)}</div></td>
-              <td className="py-3 px-2 whitespace-nowrap"><div className="font-bold text-slate-900">{s.code}</div>{s.supplier_key && <div className="text-[10px] text-slate-500">{s.supplier_key}</div>}</td>
+              <td className="py-3 px-2 whitespace-nowrap"><div className="font-bold text-slate-900">{s.code}</div>{lastSaved?.id === s.id && <div className="text-[9px] font-bold text-emerald-700">✓ {tx('Recién guardado', 'Just saved')}</div>}{s.supplier_key && <div className="text-[10px] text-slate-500">{s.supplier_key}</div>}</td>
               <td className="py-3 px-2 min-w-[160px]"><div className="font-semibold text-slate-800">{s.name}</div>{s.primary_contact && <div className="text-[10px] text-slate-500">{s.primary_contact}</div>}{s.primary_email && <div className="text-[10px] text-slate-400 font-mono [overflow-wrap:anywhere]">{s.primary_email}</div>}{s.data_incomplete && <div className="text-[10px] text-amber-700 font-semibold">{tx('Datos pendientes de actualizar', 'Data pending update')}</div>}</td>
               <td className="py-3 px-2 font-mono text-[11px] whitespace-nowrap">{show(s.tax_id)}</td>
               <td className="py-3 px-2">{show(s.category)}</td>
@@ -268,7 +321,7 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
               <td className="py-3 px-2 text-center text-slate-400">{DASH}</td>
               <td className="py-3 px-2 sticky right-0 bg-white shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]"><div className="flex flex-col items-stretch gap-1 min-w-[76px]">
                 <button type="button" onClick={() => setDetailId(s.id)} className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold rounded-md flex items-center justify-center gap-1 border border-blue-100 cursor-pointer"><Eye className="w-3 h-3" />{tx('Ver', 'View')}</button>
-                <button type="button" onClick={() => { setSelectedId(s.id); setTab('register'); }} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-md flex items-center justify-center gap-1 cursor-pointer"><Edit3 className="w-3 h-3" />{tx('Ficha', 'Record')}</button>
+                <button type="button" onClick={() => openFicha(s.id)} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-md flex items-center justify-center gap-1 cursor-pointer"><Edit3 className="w-3 h-3" />{tx('Ficha', 'Record')}</button>
                 <button type="button" disabled title={tx('No conviene eliminar proveedores relacionados con documentos del proceso; la baja (marcar Inactivo) se habilitará con el endpoint de escritura.', 'Suppliers linked to process documents should not be deleted; deactivation will be enabled with the write endpoint.')} className="px-2 py-1 bg-slate-100 text-slate-400 text-[10px] font-bold rounded-md flex items-center justify-center gap-1 cursor-not-allowed"><Trash2 className="w-3 h-3" />{tx('Eliminar', 'Delete')}</button>
               </div></td>
             </tr>) : <tr><td colSpan={12} className="py-16 text-center"><div className="flex flex-col items-center justify-center space-y-2"><span className="text-3xl">📋</span><h4 className="text-xs font-bold text-slate-700">{tx('No se encontraron proveedores.', 'No suppliers found.')}</h4><p className="text-[11px] text-slate-400">{tx('Ajusta la búsqueda o el estatus.', 'Adjust the search or status.')}</p></div></td></tr>}
