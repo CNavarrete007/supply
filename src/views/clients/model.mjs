@@ -1,6 +1,7 @@
 // Clientes · lógica pura (sin red). La validación de importación es una VISTA PREVIA local:
 // no guarda nada; reproduce las reglas descritas en el diseño original para revisar un archivo antes
 // de que exista un endpoint de importación con autorización y auditoría en el servidor.
+import { SALES_POLICIES, SOURCING_POLICIES, policyCode } from './form.mjs';
 
 export const STATUS_ES = { active: 'Activo', inactive: 'Inactivo', blocked: 'Bloqueado' };
 export const STATUS_EN = { active: 'Active', inactive: 'Inactive', blocked: 'Blocked' };
@@ -100,19 +101,16 @@ export function clientIndicators(summary, fullList, activity = []) {
 }
 
 // ---------------- Política de precios y recompra (clients.repeat_*) ----------------
-// Los códigos se muestran tal como están guardados en MariaDB. Solo se traducen las etiquetas que aparecen
-// en el diseño del sistema original; no se inventan códigos ni opciones adicionales.
-const KNOWN_POLICY_LABELS = {
-  'precio sujeto a nueva cotizacion': ['Precio sujeto a nueva cotización', 'Price subject to a new quotation'],
-  'recotizar proveedores siempre': ['Recotizar proveedores siempre', 'Always re-quote suppliers'],
-};
-const plain = v => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+// Opciones del diseño original (ver form.mjs). Se reconocen el código guardado o su etiqueta; un valor fuera del
+// catálogo se muestra tal cual (no se inventan equivalencias).
+const POLICY_OPTIONS = [...SALES_POLICIES, ...SOURCING_POLICIES];
 
 /** { value, label, known, empty } for a stored policy value. */
 export function policyOption(value, en = false) {
   if (value === null || value === undefined || String(value).trim() === '') return { value: '', label: en ? 'No policy recorded' : 'Sin política registrada', known: false, empty: true };
-  const k = KNOWN_POLICY_LABELS[plain(value)];
-  return { value: String(value), label: k ? k[en ? 1 : 0] : String(value), known: !!k, empty: false };
+  const code = policyCode(value, POLICY_OPTIONS);
+  const k = POLICY_OPTIONS.find(o => o[0] === code);
+  return { value: String(value), label: k ? k[en ? 2 : 1] : String(value), known: !!k, empty: false };
 }
 
 const decimal = v => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));

@@ -60,7 +60,9 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     await page.getByLabel('Nombre completo').waitFor();
     const val = async l => page.getByLabel(l, { exact: true }).inputValue();
     check('ficha con datos reales', await val('Nombre completo') === buyer.name && await val('Usuario / correo') === buyer.email && await val('Rol de acceso') === 'Comprador' && (await val('Credencial')).startsWith('Credencial activada'));
-    check('función comprador marcada con sus documentos', await page.getByLabel('🛒 Comprador', { exact: true }).isChecked() && await page.getByText('3 documento(s)').isVisible() && !(await page.getByLabel('✅ Autorizó', { exact: true }).isChecked()));
+    const bf = ((await (await page.request.get(UI + '/api/v1/users/functions')).json()).items || []).find(x => x.id === buyer.id) || {};
+    const buyerDocs = (bf.po_buyer || 0) + (bf.review_buyer || 0) + (bf.rfq_contact || 0); // misma suma que usersRoles/model.mjs
+    check('función comprador marcada con sus documentos', await page.getByLabel('🛒 Comprador', { exact: true }).isChecked() && await page.getByText(`${buyerDocs} documento(s)`).isVisible() && !(await page.getByLabel('✅ Autorizó', { exact: true }).isChecked()));
     check('permisos de documento sin registros y guardar bloqueado', !(await page.getByLabel('Autorizar Orden de Compra').isChecked()) && await page.getByRole('button', { name: /Guardar usuario/ }).isDisabled());
     await shot(page, 'usuarios_2_ficha');
 

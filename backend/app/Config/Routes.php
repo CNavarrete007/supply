@@ -18,6 +18,9 @@ $routes->get('api/v1/audit-events', 'UserDirectoryController::auditEvents');
 // Master Admin read-only catalogs; client portal credentials are NEVER exposed here.
 $routes->get('api/v1/catalogs/clients', 'CatalogDirectoryController::clients');
 $routes->get('api/v1/catalogs/clients/(:segment)', 'CatalogDirectoryController::client/$1');
+$routes->post('api/v1/catalogs/clients', 'ClientWriteController::create');
+$routes->put('api/v1/catalogs/clients/(:segment)', 'ClientWriteController::update/$1');
+$routes->get('api/v1/catalogs/clients/(:segment)/logo', 'ClientWriteController::logo/$1');
 $routes->get('api/v1/catalogs/supplier-offerings', 'CatalogDirectoryController::supplierOfferings');
 $routes->get('api/v1/catalogs/suppliers', 'CatalogDirectoryController::suppliers');
 $routes->get('api/v1/catalogs/suppliers/(:segment)', 'CatalogDirectoryController::supplier/$1');

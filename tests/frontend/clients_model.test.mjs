@@ -57,7 +57,8 @@ import { policyOption, repeatPolicyView } from '../../src/views/clients/model.mj
 test('política de precios y recompra: valores guardados, sin inventar opciones', () => {
   assert.deepEqual(policyOption('Precio sujeto a nueva cotización'), { value: 'Precio sujeto a nueva cotización', label: 'Precio sujeto a nueva cotización', known: true, empty: false });
   assert.equal(policyOption('RECOTIZAR PROVEEDORES SIEMPRE', true).label, 'Always re-quote suppliers');
-  assert.deepEqual(policyOption('reuse_if_valid'), { value: 'reuse_if_valid', label: 'reuse_if_valid', known: false, empty: false }, 'código desconocido se muestra tal cual');
+  assert.deepEqual(policyOption('reuse_if_valid'), { value: 'reuse_if_valid', label: 'Reutilizar proveedor/costo si está vigente', known: true, empty: false }, 'código del catálogo');
+  assert.deepEqual(policyOption('xyz_legacy'), { value: 'xyz_legacy', label: 'xyz_legacy', known: false, empty: false }, 'valor fuera del catálogo se muestra tal cual');
   assert.equal(policyOption(null).empty, true);
   const v = repeatPolicyView({ sales_policy: null, sourcing_policy: 'x', price_validity_days: 0, contract_reference: 'RC', contract_valid_until: '2026-12-31', min_margin_pct: '12.500000', updated_at: '2026-11-11 19:06:51.8' });
   assert.deepEqual([v.days, v.daysNote, v.margin, v.validUntil, v.contractReference, v.empty], ['0', 'Sin vencimiento automático por días', '12.5', '2026-12-31', 'RC', false]);

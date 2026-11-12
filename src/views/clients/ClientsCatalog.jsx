@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Lock, Plus, Upload, Search, Download, Edit3, ExternalLink, Table as TableIcon, CheckCircle2, ChevronLeft, ChevronRight, Eye, RefreshCw, AlertCircle, Loader2, KeyRound } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Lock, Plus, Upload, Search, Download, Edit3, ExternalLink, Table as TableIcon, CheckCircle2, ChevronLeft, ChevronRight, Eye, RefreshCw, AlertCircle, Loader2, KeyRound, X } from 'lucide-react';
 import { listCatalog, getCatalogRecord } from '../../catalogApi';
 import { matrixClients } from '../../matrixApi';
 import { DetailPanel, translateStatus } from '../catalog/shared';
-import { analyzeImport, TEMPLATE_HEADERS, initials, clientIndicators, repeatPolicyView } from './model.mjs';
+import { analyzeImport, TEMPLATE_HEADERS, initials, clientIndicators } from './model.mjs';
+import { emptyForm, formFromRecord, validateForm, toPayload, serverField, saveErrorMessage, SALES_POLICIES, SOURCING_POLICIES, STATUSES } from './form.mjs';
+import { saveClient, fetchLogo, compressLogo } from './clientWriteApi';
 
 // Clientes · diseño Grupo Gerez (4 tarjetas) conectado a MariaDB.
 // Lectura real: /api/v1/catalogs/clients[/{id}] y /api/v1/matrix/clients. Sin datos de demostración.
@@ -14,23 +16,23 @@ const T = {
   es: {
     headerTitle: 'Clientes', headerSubtitle: 'Catálogo de clientes registrado en MariaDB.',
     cards: {
-      register: { title: 'Registro y actualización', desc: 'Ficha completa del cliente seleccionado.', emoji: '📝' },
+      register: { title: 'Registro y actualización', desc: 'Alta y edición de clientes con datos de MariaDB.', emoji: '📝' },
       matrix: { title: 'Matriz de clientes', desc: 'Consulta, búsqueda y detalle de registros.', emoji: '📋' },
       indicators: { title: 'Indicadores de clientes', desc: 'Resumen de actividad, estatus y requisiciones relacionadas.', emoji: '📊' },
       import: { title: 'Importar Excel', desc: 'Validación previa del archivo contra la base compartida.', emoji: '📥' },
     },
-    lock: 'Modo consulta MariaDB: el alta, la edición, la eliminación y el guardado de importaciones se habilitarán cuando existan endpoints de escritura con autorización, CSRF, idempotencia y auditoría.',
+    lock: 'El alta y la edición de clientes se guardan en MariaDB con autorización, CSRF, idempotencia, control de versión y bitácora. La eliminación, el guardado de importaciones y el acceso al portal siguen bloqueados.',
     refresh: 'Actualizar', source: 'Fuente: MariaDB',
   },
   en: {
     headerTitle: 'Clients', headerSubtitle: 'Client catalog stored in MariaDB.',
     cards: {
-      register: { title: 'Registration & Update', desc: 'Full record of the selected client.', emoji: '📝' },
+      register: { title: 'Registration & Update', desc: 'Create and edit clients in MariaDB.', emoji: '📝' },
       matrix: { title: 'Client Matrix', desc: 'Query, search and record details.', emoji: '📋' },
       indicators: { title: 'Client Metrics', desc: 'Activity summary, status, and linked requisitions.', emoji: '📊' },
       import: { title: 'Import Excel', desc: 'Pre-validation of the file against the shared database.', emoji: '📥' },
     },
-    lock: 'MariaDB read mode: create, edit, delete and saving imports will be enabled once write endpoints with authorization, CSRF, idempotency and audit exist.',
+    lock: 'Creating and editing clients is saved to MariaDB with authorization, CSRF, idempotency, version control and audit. Deleting, saving imports and portal access remain blocked.',
     refresh: 'Refresh', source: 'Source: MariaDB',
   },
 };
@@ -111,6 +113,71 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
   const f = ficha.item;
   const channels = type => (f?.channels || []).filter(x => x.type === type).map(x => x.value);
 
+  // ---------- Formulario de alta/actualización ----------
+  const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState(null);
+  const [logoUrl, setLogoUrl] = useState(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const saveKey = useRef(null); // misma clave al reintentar el mismo contenido (el servidor no duplica)
+  const fileRef = useRef(null);
+  useEffect(() => { if (ficha.item) { setForm(formFromRecord(ficha.item)); setErrors({}); saveKey.current = null; } }, [ficha.item]);
+  useEffect(() => {
+    if (!ficha.item?.id || !ficha.item?.logo) { setLogoUrl(null); return undefined; }
+    const c = new AbortController(); let url = null;
+    fetchLogo(ficha.item.id, c.signal).then(u => { url = u; if (!c.signal.aborted) setLogoUrl(u); else if (u) URL.revokeObjectURL(u); }).catch(() => {});
+    return () => { c.abort(); if (url) URL.revokeObjectURL(url); };
+  }, [ficha.item]);
+  const touch = k => { setErrors(e => (e[k] ? { ...e, [k]: undefined } : e)); saveKey.current = null; };
+  const set = (k, v) => { setForm(x => ({ ...x, [k]: v })); touch(k); };
+  const setPolicy = (k, v) => { setForm(x => ({ ...x, policy: { ...x.policy, [k]: v } })); touch(k); };
+  const setRow = (k, i, v) => { setForm(x => ({ ...x, [k]: x[k].map((r, j) => (j === i ? v : r)) })); touch(k); };
+  const addRow = k => { setForm(x => (x[k].length >= 20 ? x : { ...x, [k]: [...x[k], ''] })); touch(k); };
+  const removeRow = (k, i) => { setForm(x => { const rows = x[k].filter((_, j) => j !== i); return { ...x, [k]: rows.length ? rows : [''] }; }); touch(k); };
+  const newClient = () => { setSelectedId(''); setForm(emptyForm()); setErrors({}); setSaveMsg(null); setLogoUrl(null); saveKey.current = null; };
+  const pickClient = id => { if (!id) { newClient(); return; } setSaveMsg(null); setSelectedId(id); };
+  const resetForm = () => { setForm(ficha.item ? formFromRecord(ficha.item) : emptyForm()); setErrors({}); setSaveMsg(null); saveKey.current = null; };
+  const fieldCls = 'w-full px-3.5 py-2.5 text-xs bg-white border border-slate-200 rounded-xl outline-none text-slate-800 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400';
+  const inp = k => `${fieldCls} ${errors[k] ? 'border-rose-400 bg-rose-50/30' : ''}`;
+  const err = k => (errors[k] ? <p className="text-[10px] text-rose-600 mt-1" role="alert">{errors[k]}</p> : null);
+  const onLogo = async file => {
+    if (!file) return;
+    setLogoBusy(true); touch('logo');
+    try {
+      const next = await compressLogo(file);
+      setForm(x => ({ ...x, logo: { ...x.logo, next, remove: false } }));
+    } catch (e) {
+      setErrors(x => ({ ...x, logo: e.message === 'TYPE' ? tx('Solo se permiten imágenes PNG, JPG o WEBP.', 'Only PNG, JPG or WEBP images are allowed.') : e.message === 'SIZE' ? tx('La imagen es demasiado grande (máx. 8 MB antes de comprimir).', 'The image is too large (max 8 MB before compression).') : tx('No se pudo leer la imagen.', 'The image could not be read.') }));
+    } finally { setLogoBusy(false); }
+  };
+  const save = async () => {
+    setSaveMsg(null);
+    const v = validateForm(form, en);
+    if (!v.ok) { setErrors(v.errors); setSaveMsg({ kind: 'error', text: tx('Revisa los campos marcados.', 'Check the highlighted fields.') }); return; }
+    if (!saveKey.current) saveKey.current = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16));
+    setSaving(true);
+    try {
+      const r = await saveClient({ id: form.id, version: form.version, payload: toPayload(form), key: saveKey.current });
+      if (r.ok) {
+        saveKey.current = null;
+        const created = !form.id;
+        setSaveMsg({ kind: 'ok', text: created ? tx(`Cliente ${r.data.code} dado de alta en MariaDB.`, `Client ${r.data.code} created in MariaDB.`) : tx(`Cambios de ${r.data.code} guardados (versión ${r.data.version}).`, `Changes to ${r.data.code} saved (version ${r.data.version}).`) });
+        notify(tx('Clientes', 'Clients'), created ? tx(`Alta de ${r.data.code}`, `Created ${r.data.code}`) : tx(`Actualización de ${r.data.code}`, `Updated ${r.data.code}`), 'success');
+        setSelectedId(r.data.id); setRevision(n => n + 1);
+      } else {
+        const code = r.data?.error?.code;
+        if (r.status === 422 && r.data?.error?.field) setErrors(x => ({ ...x, [serverField(r.data.error.field)]: tx('Valor no aceptado por el servidor.', 'Value rejected by the server.') }));
+        if (code === 'CODE_TAKEN') setErrors(x => ({ ...x, code: tx('Número ya registrado.', 'Number already registered.') }));
+        // 4xx: el contenido debe corregirse (nueva clave al reintentar); 5xx/en proceso: se reintenta con la misma clave.
+        if (r.status < 500 && !String(code).startsWith('IDEMPOTENCY')) saveKey.current = null;
+        setSaveMsg({ kind: code === 'CATALOG_WRITE_NOT_PROVISIONED' ? 'warn' : 'error', text: saveErrorMessage(r.status, code, en), reload: r.status === 412 });
+      }
+    } catch {
+      setSaveMsg({ kind: 'error', text: tx('Sin conexión con el servidor. Puedes reintentar: no se duplicará el registro.', 'No connection to the server. You can retry: the record will not be duplicated.') });
+    } finally { setSaving(false); }
+  };
+
   // ---------- Indicadores ----------
   const [fullList, setFullList] = useState(null);
   useEffect(() => {
@@ -158,7 +225,6 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
 
   const cardKeys = ['register', 'matrix', 'indicators', 'import'];
   const statusOptions = Array.isArray(summary.statuses) ? summary.statuses : [];
-  const lockedBtn = 'px-5 py-2.5 bg-slate-200 text-slate-500 font-bold text-xs rounded-xl border border-slate-200 flex items-center gap-1.5 cursor-not-allowed';
 
   return <div className="space-y-6">
     {/* Header */}
@@ -184,94 +250,113 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
     {/* Contenedor dinámico */}
     <div className="bg-white p-6 md:p-8 rounded-2xl border border-slate-200/80 shadow-sm min-h-[400px]">
 
-      {/* TARJETA 1: Registro y actualización (ficha en modo consulta) */}
-      {tab === 'register' && <div className="space-y-6">
+      {/* TARJETA 1: Registro y actualización (alta/edición real con CSRF, idempotencia, versión y auditoría) */}
+      {tab === 'register' && <div className="space-y-6" data-testid="client-form">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-4">
           <div><h3 className="text-base font-black text-slate-800">{tx('Alta y actualización de clientes', 'Client Registration and Update')}</h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">{tx('El número de cliente es único por organización en MariaDB. Selecciona un cliente para ver su ficha completa.', 'The client number is unique per organization in MariaDB. Select a client to view its full record.')}</p></div>
-          <span className="px-3 py-1 bg-blue-50 text-blue-600 font-bold text-[10px] rounded-full border border-blue-100">{tx('Modo consulta', 'Read mode')}</span>
+            <p className="text-[11px] text-slate-400 mt-0.5">{tx('El número de cliente es único por organización. Selecciona un cliente registrado para editarlo o captura uno nuevo.', 'The client number is unique per organization. Select a registered client to edit it or enter a new one.')}</p></div>
+          <span data-testid="form-mode" className={`px-3 py-1 font-bold text-[10px] rounded-full border ${form.id ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>{form.id ? `${tx('Editando', 'Editing')} ${form.code || ''} · v${form.version}` : tx('Nuevo registro', 'New record')}</span>
         </div>
         <div className="space-y-5">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Field label={tx('No. de cliente', 'Client No.')} required>
-              <select aria-label={tx('Seleccionar por número de cliente', 'Select by client number')} value={selectedId} onChange={e => setSelectedId(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-semibold mb-1.5 focus:outline-none">
-                <option value="">{all.loading ? tx('Cargando…', 'Loading…') : tx('Selecciona un número registrado', 'Select a registered number')}</option>
+              <select aria-label={tx('Seleccionar por número de cliente', 'Select by client number')} value={form.id || selectedId} onChange={e => pickClient(e.target.value)} className={`${fieldCls} mb-1.5 font-semibold`}>
+                <option value="">{tx('+ Nuevo cliente / captura manual', '+ New client / manual entry')}</option>
                 {[...all.items].sort((a, b) => String(a.code).localeCompare(String(b.code), 'es', { numeric: true })).map(c => <option key={c.id} value={c.id}>{c.code}</option>)}
               </select>
-              <ReadInput value={show(f?.code)} label={tx('No. de cliente', 'Client No.')} />
-              <p className="text-[10px] text-slate-400 mt-1">{tx('Al seleccionar un número se cargan todos los datos registrados del cliente.', 'Selecting a number loads all the client data on record.')}</p>
+              <input type="text" aria-label={tx('No. de cliente', 'Client No.')} value={form.code} maxLength={80} onChange={e => set('code', e.target.value)} placeholder={tx('Ej. CLI-001, WDS-1001 o código interno', 'e.g. CLI-001, WDS-1001 or internal code')} className={inp('code')} />
+              {err('code') || <p className="text-[10px] text-blue-700/70 mt-1">{tx('Selecciona un número registrado para cargar todos los datos del cliente. El número continuará editable.', 'Select a registered number to load all client data. The number stays editable.')}</p>}
             </Field>
             <Field label={tx('Razón social / Legal company name', 'Company Name / Legal Name')} required>
-              <select aria-label={tx('Seleccionar por razón social', 'Select by legal name')} value={selectedId} onChange={e => setSelectedId(e.target.value)} className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-semibold mb-1.5 focus:outline-none">
-                <option value="">{all.loading ? tx('Cargando…', 'Loading…') : tx('Selecciona una compañía registrada', 'Select a registered company')}</option>
-                {all.items.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <select aria-label={tx('Seleccionar por razón social', 'Select by legal name')} value={form.id || selectedId} onChange={e => pickClient(e.target.value)} className={`${fieldCls} mb-1.5 font-semibold`}>
+                <option value="">{tx('+ Nueva compañía / captura manual', '+ New company / manual entry')}</option>
+                {[...all.items].sort((a, b) => String(a.name).localeCompare(String(b.name), 'es')).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
-              <ReadInput value={show(f?.name)} label={tx('Razón social', 'Legal name')} />
-              <p className="text-[10px] text-slate-400 mt-1">{tx('Carga número, RFC, proyecto, contrato, contactos, correos y demás datos.', 'Loads number, tax ID, project, contract, contacts, emails and other data.')}</p>
+              <input type="text" aria-label={tx('Razón social', 'Legal name')} value={form.name} maxLength={255} onChange={e => set('name', e.target.value)} placeholder={tx('Escribe o edita la razón social', 'Type or edit the legal name')} className={inp('name')} />
+              {err('name') || <p className="text-[10px] text-blue-700/70 mt-1">{tx('Selecciona una compañía registrada para cargar automáticamente No. de cliente, RFC, proyecto, contrato, contactos, correos y demás datos. Todos los campos seguirán editables.', 'Select a registered company to load client number, tax ID, project, contract, contacts, emails and other data. Every field stays editable.')}</p>}
             </Field>
-            <Field label={tx('Nombre comercial / Brand name', 'Commercial Name / Brand Name')}><ReadInput value={show(f?.brand_name)} label={tx('Nombre comercial', 'Brand name')} /></Field>
+            <Field label={tx('Nombre comercial / Brand name', 'Commercial Name / Brand Name')}><input type="text" aria-label={tx('Nombre comercial', 'Brand name')} value={form.brand_name} maxLength={255} onChange={e => set('brand_name', e.target.value)} placeholder={tx('Nombre con el que se identifica comercialmente', 'Name used commercially')} className={inp('brand_name')} /></Field>
           </div>
           {all.error && <p role="alert" className="text-[11px] text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" />{all.error}</p>}
           {ficha.loading && <p className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />{tx('Consultando ficha en MariaDB…', 'Loading record from MariaDB…')}</p>}
           {ficha.error && <p role="alert" className="text-xs text-rose-700 flex items-center gap-2"><AlertCircle className="w-4 h-4" />{ficha.error}</p>}
-          {f?.data_incomplete && <div className="p-3 bg-amber-50/60 border border-amber-200/60 rounded-xl text-[11px] text-amber-900">{tx('Registro con información incompleta en la importación original.', 'Record with incomplete information in the original import.')}</div>}
+          {form.id && form.imported && <div className="p-3 bg-amber-50/60 border border-amber-200/60 rounded-xl text-[11px] text-amber-900">{tx('Cliente importado del sistema anterior: al guardar, los cambios quedan registrados en la bitácora con sus valores anteriores.', 'Client imported from the previous system: saving records the changes in the audit log with their previous values.')}{f?.data_incomplete ? tx(' La importación lo marcó con datos incompletos; completa proyecto y contrato.', ' The import flagged it as incomplete; fill in project and contract.') : ''}</div>}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Field label={tx('RFC / Tax ID', 'RFC / Tax ID')}><ReadInput value={show(f?.tax_id)} label="RFC" /></Field>
-            <Field label={tx('Proyecto', 'Project')} required><ReadInput value={show(f?.project)} label={tx('Proyecto', 'Project')} /></Field>
-            <Field label={tx('Número de contrato', 'Contract Number')} required><ReadInput value={show(f?.contract_reference)} label={tx('Contrato', 'Contract')} /></Field>
-            <Field label={tx('Teléfono', 'Phone')}><ReadInput value={f ? show(channels('phone').join(' · ')) : DASH} label={tx('Teléfono', 'Phone')} /></Field>
+            <Field label={tx('RFC / Tax ID', 'RFC / Tax ID')}><input type="text" aria-label="RFC" value={form.tax_id} maxLength={64} onChange={e => set('tax_id', e.target.value)} placeholder={tx('RFC o ID fiscal', 'Tax ID')} className={inp('tax_id')} />{err('tax_id')}</Field>
+            <Field label={tx('Proyecto', 'Project')} required><input type="text" aria-label={tx('Proyecto', 'Project')} value={form.project} maxLength={255} onChange={e => set('project', e.target.value)} placeholder={tx('Nombre del proyecto', 'Project name')} className={inp('project')} />{err('project')}</Field>
+            <Field label={tx('Número de contrato', 'Contract Number')} required><input type="text" aria-label={tx('Número de contrato', 'Contract number')} value={form.contract_reference} maxLength={255} onChange={e => set('contract_reference', e.target.value)} placeholder="Ej. CTR-2026-001" className={inp('contract_reference')} />{err('contract_reference')}</Field>
+            <Field label={tx('Teléfono', 'Phone')}><input type="tel" aria-label={tx('Teléfono', 'Phone')} value={form.phone} maxLength={200} onChange={e => set('phone', e.target.value)} placeholder="833-456-7890" className={inp('phone')} />{err('phone')}</Field>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Field label={tx('Contactos', 'Contacts')}><div className="space-y-2">
-              {(f?.contacts?.length ? f.contacts : [null]).map((p, i) => <ReadInput key={p?.id || i} value={p ? `${p.name}${p.position ? ` · ${p.position}` : ''}${p.is_primary ? tx(' · principal', ' · primary') : ''}` : DASH} label={tx('Contacto', 'Contact')} />)}
-            </div></Field>
-            <Field label={tx('Correos electrónicos', 'Email Addresses')}><div className="space-y-2">
-              {(f && channels('email').length ? channels('email') : [DASH]).map((e, i) => <ReadInput key={i} value={e} label="Email" />)}
-            </div></Field>
+            {[['contacts', tx('Contactos', 'Contacts'), tx('Nombre del contacto', 'Contact name'), tx('Agregar otro contacto', 'Add another contact'), 'text'], ['emails', tx('Correos electrónicos', 'Email Addresses'), 'correo@empresa.com', tx('Agregar otro correo', 'Add another email'), 'email']].map(([k, label, ph, add, type]) =>
+              <Field key={k} label={label}><div className="space-y-2" data-testid={`rows-${k}`}>
+                {form[k].map((v, i) => <div key={i} className="flex gap-2"><input type={type} aria-label={`${label} ${i + 1}`} value={v} maxLength={k === 'emails' ? 254 : 255} onChange={e => setRow(k, i, e.target.value)} placeholder={ph} className={inp(k)} />
+                  <button type="button" aria-label={`${tx('Quitar', 'Remove')} ${label} ${i + 1}`} onClick={() => removeRow(k, i)} className="w-10 shrink-0 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 flex items-center justify-center"><X className="w-4 h-4" /></button></div>)}
+                <button type="button" onClick={() => addRow(k)} disabled={form[k].length >= 20} className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:opacity-40 text-white font-bold text-xs rounded-lg flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />{add}</button>
+                {err(k)}
+              </div></Field>)}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Field label={tx('Estatus', 'Status')}><ReadInput value={f ? translateStatus(f.status, en) : DASH} label={tx('Estatus', 'Status')} /></Field>
-            <Field label={tx('Portal del cliente', 'Customer Portal')}><ReadInput value={f ? (f.portal_enabled ? tx('Habilitado', 'Enabled') : tx('Deshabilitado', 'Disabled')) + (f.portal_locked ? tx(' · bloqueado', ' · locked') : '') : DASH} label="Portal" /></Field>
+            <Field label={tx('Estatus', 'Status')}><select aria-label={tx('Estatus', 'Status')} value={form.status} onChange={e => set('status', e.target.value)} className={fieldCls}>{STATUSES.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}</select></Field>
+            <Field label={tx('Portal del cliente', 'Customer Portal')}><select disabled aria-label={tx('Portal del cliente', 'Customer portal')} value={form.portal_enabled ? 'enabled' : 'disabled'} className={`${fieldCls} bg-slate-50 cursor-not-allowed`}><option value="enabled">{tx('Habilitado', 'Enabled')}</option><option value="disabled">{tx('Deshabilitado', 'Disabled')}</option></select></Field>
             <Field label={tx('Clave de acceso al portal', 'Portal Access Key')}>
-              <div className="flex gap-2"><input type="text" disabled aria-label={tx('Clave del portal', 'Portal key')} placeholder={tx('Oculta', 'Hidden')} className={`${inputCls} bg-slate-100`} />
-                <button type="button" disabled title={tx('Requiere endpoint seguro de credenciales', 'Requires a secure credentials endpoint')} className="px-3 py-2 bg-slate-200 text-slate-500 text-[11px] font-bold rounded-lg whitespace-nowrap flex items-center gap-1 cursor-not-allowed"><KeyRound className="w-3.5 h-3.5" />{tx('Generar y habilitar', 'Generate & Enable')}</button></div>
-              <p className="text-[10px] text-amber-600 mt-1 leading-tight">{tx('Las claves del portal nunca se exponen en este módulo; su administración requiere un endpoint seguro de credenciales.', 'Portal keys are never exposed in this module; managing them requires a secure credentials endpoint.')}</p>
+              <div className="flex gap-2"><input type="text" disabled aria-label={tx('Clave del portal', 'Portal key')} placeholder={tx('Asigna una clave de 4 a 20 caracteres', 'Assign a 4 to 20 character key')} className={`${fieldCls} bg-slate-50 cursor-not-allowed`} />
+                <button type="button" disabled title={tx('Requiere el diseño de seguridad del Portal del Cliente', 'Requires the Customer Portal security design')} className="px-3 py-2 bg-slate-200 text-slate-500 text-[11px] font-bold rounded-xl whitespace-nowrap flex items-center gap-1 cursor-not-allowed"><KeyRound className="w-3.5 h-3.5" />{tx('Generar y habilitar', 'Generate & enable')}</button></div>
+              <p className="text-[10px] text-amber-600 mt-1 leading-tight">{tx('El portal y su clave se habilitarán con el diseño de seguridad del Portal del Cliente (claves con hash, vencimiento y bitácora). Nunca se guardan claves en texto.', 'The portal and its key will be enabled with the Customer Portal security design (hashed keys, expiry and audit). Keys are never stored in plain text.')}</p>
             </Field>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Field label={tx('Dirección', 'Address')}><ReadInput value={show(f?.address)} label={tx('Dirección', 'Address')} /></Field>
-            <Field label={tx('Condiciones comerciales', 'Commercial Terms')}><ReadInput value={show(f?.terms)} label={tx('Condiciones comerciales', 'Commercial terms')} /></Field>
+            <Field label={tx('Dirección', 'Address')}><input type="text" aria-label={tx('Dirección', 'Address')} value={form.address} maxLength={2000} onChange={e => set('address', e.target.value)} className={inp('address')} /></Field>
+            <Field label={tx('Condiciones comerciales', 'Commercial Terms')}><input type="text" aria-label={tx('Condiciones comerciales', 'Commercial terms')} value={form.terms} maxLength={2000} onChange={e => set('terms', e.target.value)} placeholder={tx('Ej. Crédito 30 días', 'e.g. Net 30')} className={inp('terms')} /></Field>
           </div>
           <Field label={tx('Logotipo del cliente', 'Client Logo')}>
-            <div className="p-4 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/30 flex flex-col sm:flex-row items-center gap-4">
-              <div className="w-24 h-20 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-lg text-slate-400 font-black shrink-0">{f ? initials(f.name) : tx('Sin logotipo', 'No logo')}</div>
-              <p className="text-[10px] text-slate-400">{tx('La base importada no incluye logotipos; se muestran las iniciales. La carga de imágenes requiere almacenamiento privado con validación en el servidor.', 'The imported database has no logos; initials are shown. Uploading images requires private storage with server-side validation.')}</p>
+            <div className="p-4 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/30 flex flex-col sm:flex-row items-start sm:items-center gap-4" data-testid="logo-box">
+              <div className="w-24 h-20 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-[11px] text-slate-400 font-semibold shrink-0 overflow-hidden">
+                {form.logo.next ? <img src={form.logo.next.dataUrl} alt={tx('Vista previa del logotipo', 'Logo preview')} className="max-w-full max-h-full object-contain" />
+                  : !form.logo.remove && logoUrl ? <img src={logoUrl} alt={tx('Logotipo actual', 'Current logo')} className="max-w-full max-h-full object-contain" />
+                  : <span>{tx('Sin logotipo', 'No logo')}</span>}
+              </div>
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input ref={fileRef} id="client-logo-file" type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={e => { onLogo(e.target.files?.[0]); e.target.value = ''; }} />
+                  <label htmlFor="client-logo-file" className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[11px] rounded-lg cursor-pointer flex items-center gap-1.5"><Upload className="w-3.5 h-3.5" />{tx('Elegir archivo', 'Choose file')}</label>
+                  <span className="text-[11px] text-slate-500 truncate max-w-[260px]" data-testid="logo-name">{logoBusy ? tx('Procesando imagen…', 'Processing image…') : form.logo.next ? `${form.logo.next.name} · ${Math.round(form.logo.next.size / 1024)} KB` : !form.logo.remove && form.logo.current ? form.logo.current.name || tx('Logotipo registrado', 'Recorded logo') : tx('No se ha seleccionado ningún archivo', 'No file selected')}</span>
+                  {(form.logo.next || (form.logo.current && !form.logo.remove)) && <button type="button" onClick={() => setForm(x => ({ ...x, logo: { ...x.logo, next: null, remove: !!x.logo.current } }))} className="px-2.5 py-1.5 text-[11px] font-bold text-rose-600 hover:bg-rose-50 rounded-lg">{tx('Quitar logotipo', 'Remove logo')}</button>}
+                  {form.logo.remove && <button type="button" onClick={() => setForm(x => ({ ...x, logo: { ...x.logo, remove: false } }))} className="px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-100 rounded-lg">{tx('Conservar logotipo', 'Keep logo')}</button>}
+                </div>
+                <p className="text-[10px] text-slate-400">{tx('Formatos permitidos: PNG, JPG o WEBP. La imagen se comprime antes de guardarse.', 'Allowed formats: PNG, JPG or WEBP. The image is compressed before saving.')}</p>
+                {err('logo')}
+              </div>
             </div>
           </Field>
-          {/* Política de precios y recompra (clients.repeat_*), modo consulta */}
-          {(() => { const pv = repeatPolicyView(f?.repeat_policy, en); const pol = 'w-full px-3.5 py-2.5 text-xs bg-white border border-slate-200 rounded-xl outline-none text-slate-800 disabled:opacity-100 disabled:text-slate-800';
-            const stamp = pv.updatedAt ? new Date(String(pv.updatedAt).replace(' ', 'T').slice(0, 23) + 'Z').toLocaleString(en ? 'en-US' : 'es-MX') : '';
-            return <section aria-label={tx('Política de precios y recompra', 'Pricing and repurchase policy')} data-testid="repeat-policy" className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50/50 via-white to-purple-50/40 p-5 space-y-4">
-              <div><h4 className="text-sm font-black text-slate-900 flex items-center gap-2"><span aria-hidden="true">🕘</span>{tx('Política de precios y recompra', 'Pricing and repurchase policy')}</h4>
-                <p className="text-[11px] text-blue-700/80 mt-1">{tx('Define cómo debe tratar SupplyFlow una nueva solicitud que reutilice artículos o servicios históricos de este cliente. El precio al cliente y el abastecimiento del proveedor se controlan por separado.', 'Defines how SupplyFlow should treat a new request that reuses historical items or services of this client. Client price and supplier sourcing are controlled separately.')}</p></div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Field label={tx('Política de precio al cliente', 'Client price policy')}><select disabled aria-label={tx('Política de precio al cliente', 'Client price policy')} value={pv.sales.value} className={pol}><option value={pv.sales.value}>{f ? pv.sales.label : DASH}</option></select>{f && !pv.sales.empty && !pv.sales.known && <p className="text-[10px] text-slate-400 mt-1">{tx('Código registrado en MariaDB', 'Code stored in MariaDB')}</p>}</Field>
-                <Field label={tx('Política de abastecimiento', 'Sourcing policy')}><select disabled aria-label={tx('Política de abastecimiento', 'Sourcing policy')} value={pv.sourcing.value} className={pol}><option value={pv.sourcing.value}>{f ? pv.sourcing.label : DASH}</option></select>{f && !pv.sourcing.empty && !pv.sourcing.known && <p className="text-[10px] text-slate-400 mt-1">{tx('Código registrado en MariaDB', 'Code stored in MariaDB')}</p>}</Field>
-                <Field label={tx('Vigencia del precio histórico (días)', 'Historical price validity (days)')}><input type="number" readOnly aria-label={tx('Vigencia del precio histórico (días)', 'Historical price validity (days)')} value={pv.days} placeholder={DASH} className={pol} /><p className="text-[10px] text-blue-700/70 mt-1">{tx('0 = sin vencimiento automático por días; aplican contrato y revisión comercial.', '0 = no automatic expiry by days; contract and commercial review apply.')}</p></Field>
-                <Field label={tx('Referencia de contrato / Price List', 'Contract reference / Price List')}><input type="text" readOnly aria-label={tx('Referencia de contrato / Price List', 'Contract reference / Price List')} value={pv.contractReference} placeholder={tx('Ej. Rate Card 2026 / Anexo B', 'e.g. Rate Card 2026 / Annex B')} className={pol} /></Field>
-                <Field label={tx('Vigencia contractual hasta', 'Contract valid until')}><input type="date" readOnly aria-label={tx('Vigencia contractual hasta', 'Contract valid until')} value={pv.validUntil} className={pol} /></Field>
-                <Field label={tx('Margen mínimo de referencia %', 'Minimum reference margin %')}><input type="number" readOnly aria-label={tx('Margen mínimo de referencia %', 'Minimum reference margin %')} value={pv.margin} placeholder={DASH} className={pol} /></Field>
-              </div>
-              <div className="rounded-xl border-l-4 border-blue-600 bg-blue-50/70 px-4 py-2.5 text-[11px] text-slate-700"><strong className="text-slate-900">{tx('Regla:', 'Rule:')}</strong> {en ? <>a guaranteed price policy does <u>not</u> mean reusing the supplier cost. You can honor the client price and, at the same time, require new supplier quotations.</> : <>una política de precio garantizado <u>no</u> implica reutilizar el costo del proveedor. Puedes respetar el precio al cliente y, al mismo tiempo, obligar a obtener nuevas cotizaciones de proveedores.</>}</div>
-              {f && <p className="text-[10px] text-slate-500">{pv.empty ? tx('Este cliente no tiene política de recompra registrada en MariaDB.', 'This client has no repurchase policy recorded in MariaDB.') : <>{pv.daysNote && <>{pv.daysNote}. </>}{stamp ? `${tx('Última actualización', 'Last updated')}: ${stamp.replace(/\.$/, '')}.` : ''}</>} {tx('La edición se habilitará con el endpoint de escritura de clientes.', 'Editing will be enabled with the clients write endpoint.')}</p>}
-            </section>; })()}
-          <Field label={tx('Observaciones', 'Notes / Comments')}><textarea rows={3} readOnly value={f?.notes || ''} placeholder={DASH} className="w-full p-3 text-xs bg-slate-50/50 border border-slate-200 rounded-xl outline-none text-slate-700 resize-y" /></Field>
+          <Field label={tx('Observaciones', 'Notes / Comments')}><textarea rows={3} aria-label={tx('Observaciones', 'Notes')} value={form.notes} maxLength={4000} onChange={e => set('notes', e.target.value)} className={`${inp('notes')} resize-y`} /></Field>
+
+          {/* Política de precios y recompra (clients.repeat_*) */}
+          <section aria-label={tx('Política de precios y recompra', 'Pricing and repurchase policy')} data-testid="repeat-policy" className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50/50 via-white to-purple-50/40 p-5 space-y-4">
+            <div><h4 className="text-sm font-black text-slate-900 flex items-center gap-2"><span aria-hidden="true">🕘</span>{tx('Política de precios y recompra', 'Pricing and repurchase policy')}</h4>
+              <p className="text-[11px] text-blue-700/80 mt-1">{tx('Define cómo debe tratar SupplyFlow una nueva solicitud que reutilice artículos o servicios históricos de este cliente. El precio al cliente y el abastecimiento del proveedor se controlan por separado.', 'Defines how SupplyFlow should treat a new request that reuses this client’s historical items or services. Client price and supplier sourcing are controlled separately.')}</p></div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Field label={tx('Política de precio al cliente', 'Client price policy')}><select aria-label={tx('Política de precio al cliente', 'Client price policy')} value={form.policy.sales} onChange={e => setPolicy('sales', e.target.value)} className={inp('sales')}>
+                <option value="">{tx('Sin política registrada', 'No policy recorded')}</option>{form.legacy.sales && <option value={form.legacy.sales}>{tx('Valor histórico', 'Historical value')}: {form.legacy.sales}</option>}
+                {SALES_POLICIES.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}</select>{err('sales')}</Field>
+              <Field label={tx('Política de abastecimiento', 'Sourcing policy')}><select aria-label={tx('Política de abastecimiento', 'Sourcing policy')} value={form.policy.sourcing} onChange={e => setPolicy('sourcing', e.target.value)} className={inp('sourcing')}>
+                <option value="">{tx('Sin política registrada', 'No policy recorded')}</option>{form.legacy.sourcing && <option value={form.legacy.sourcing}>{tx('Valor histórico', 'Historical value')}: {form.legacy.sourcing}</option>}
+                {SOURCING_POLICIES.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}</select>{err('sourcing')}</Field>
+              <Field label={tx('Vigencia del precio histórico (días)', 'Historical price validity (days)')}><input type="number" min="0" max="3650" step="1" aria-label={tx('Vigencia del precio histórico (días)', 'Historical price validity (days)')} value={form.policy.days} onChange={e => setPolicy('days', e.target.value)} placeholder="0" className={inp('days')} />{err('days') || <p className="text-[10px] text-blue-700/70 mt-1">{tx('0 = sin vencimiento automático por días; aplican contrato y revisión comercial.', '0 = no automatic expiry by days; contract and commercial review apply.')}</p>}</Field>
+              <Field label={tx('Referencia de contrato / Price List', 'Contract reference / Price List')}><input type="text" aria-label={tx('Referencia de contrato / Price List', 'Contract reference / Price List')} value={form.policy.ref} maxLength={255} onChange={e => setPolicy('ref', e.target.value)} placeholder={tx('Ej. Rate Card 2026 / Anexo B', 'e.g. Rate Card 2026 / Annex B')} className={inp('ref')} /></Field>
+              <Field label={tx('Vigencia contractual hasta', 'Contract valid until')}><input type="date" aria-label={tx('Vigencia contractual hasta', 'Contract valid until')} value={form.policy.until} onChange={e => setPolicy('until', e.target.value)} className={inp('until')} />{err('until')}</Field>
+              <Field label={tx('Margen mínimo de referencia %', 'Minimum reference margin %')}><input type="number" min="0" max="100" step="0.01" aria-label={tx('Margen mínimo de referencia %', 'Minimum reference margin %')} value={form.policy.margin} onChange={e => setPolicy('margin', e.target.value)} placeholder="0" className={inp('margin')} />{err('margin')}</Field>
+            </div>
+            <div className="rounded-xl border-l-4 border-blue-600 bg-blue-50/70 px-4 py-2.5 text-[11px] text-slate-700"><strong className="text-slate-900">{tx('Regla:', 'Rule:')}</strong> {en ? <>a guaranteed price policy does <u>not</u> imply reusing the supplier cost. You can honor the client price and, at the same time, require new supplier quotations.</> : <>una política de precio garantizado <u>no</u> implica reutilizar el costo del proveedor. Puedes respetar el precio al cliente y, al mismo tiempo, obligar a obtener nuevas cotizaciones de proveedores.</>}</div>
+          </section>
+
+          {saveMsg && <div role={saveMsg.kind === 'ok' ? 'status' : 'alert'} data-testid="save-message" className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${saveMsg.kind === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : saveMsg.kind === 'warn' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{saveMsg.kind === 'ok' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}<span>{saveMsg.text}</span>{saveMsg.reload && <button type="button" onClick={() => { setSaveMsg(null); setRevision(n => n + 1); }} className="ml-auto px-3 py-1 bg-white border border-rose-200 hover:bg-rose-50 text-rose-700 font-bold text-[11px] rounded-lg whitespace-nowrap">{tx('Recargar ficha', 'Reload record')}</button>}</div>}
           <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100">
-            <button type="button" disabled title={t.lock} className={lockedBtn}><Plus className="w-3.5 h-3.5" />{tx('Nuevo cliente', 'New client')}</button>
-            <button type="button" disabled title={t.lock} className={lockedBtn}><Lock className="w-3.5 h-3.5" />{tx('Guardar cliente', 'Save client')}</button>
-            <button type="button" onClick={() => setSelectedId('')} className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-1.5">🧹 {tx('Limpiar', 'Clear')}</button>
-            <button type="button" onClick={() => setTab('matrix')} className="px-4 py-2.5 bg-white hover:bg-slate-50 active:scale-95 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 shadow-sm">📋 {tx('Ver matriz', 'View matrix')}</button>
-            {f?.portal_enabled && <button type="button" onClick={() => onNavigate('portal')} className="px-4 py-2.5 bg-purple-600 hover:bg-purple-700 active:scale-95 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 shadow-sm cursor-pointer ml-auto"><ExternalLink className="w-3.5 h-3.5" />{tx('Abrir Portal', 'Open Portal')}</button>}
+            <button type="button" onClick={save} disabled={saving || logoBusy} className="px-5 py-2.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:opacity-95 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-1.5">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}{form.id ? tx('Guardar cambios', 'Save changes') : tx('Guardar cliente', 'Save client')}</button>
+            <button type="button" onClick={newClient} disabled={saving} className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />{tx('Nuevo cliente', 'New client')}</button>
+            <button type="button" onClick={resetForm} disabled={saving} className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-200">{tx('Limpiar', 'Clear')}</button>
+            <button type="button" onClick={() => setTab('matrix')} className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 flex items-center gap-1.5"><TableIcon className="w-3.5 h-3.5" />{tx('Ver matriz', 'View matrix')}</button>
+            {f?.portal_enabled && <button type="button" onClick={() => onNavigate('portal')} className="px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><ExternalLink className="w-3.5 h-3.5" />{tx('Abrir Portal del Cliente', 'Open Customer Portal')}</button>}
           </div>
         </div>
       </div>}
@@ -282,7 +367,7 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
           <div><h3 className="text-base font-black text-slate-800">{tx('Matriz de clientes', 'Client Matrix')}</h3><p className="text-[11px] text-slate-400 mt-0.5">{tx(`${summary.total ?? 0} clientes registrados · ${total} coincidencias · ${summary.incomplete ?? 0} con información incompleta.`, `${summary.total ?? 0} registered clients · ${total} matches · ${summary.incomplete ?? 0} incomplete.`)}</p></div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => setTab('import')} className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-90 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5"><Download className="w-3.5 h-3.5" />{tx('Importar Excel', 'Import Excel')}</button>
-            <button type="button" disabled title={t.lock} className="px-3.5 py-2 bg-slate-200 text-slate-500 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-not-allowed"><Plus className="w-3.5 h-3.5" />{tx('Nuevo cliente', 'New Client')}</button>
+            <button type="button" onClick={() => { newClient(); setTab('register'); }} className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />{tx('Nuevo cliente', 'New Client')}</button>
           </div>
         </div>
         <div className="space-y-3">

@@ -40,7 +40,7 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
       check(`tarjeta "${title}" visible`, await page.getByRole('button', { name: new RegExp(title) }).first().isVisible());
     await page.getByText(qa1.name, { exact: true }).first().waitFor();
     check('matriz muestra clientes reales', await page.getByText(qa2.name, { exact: true }).first().isVisible());
-    check('alta y nuevo cliente bloqueados', await page.getByRole('button', { name: /Nuevo cliente/ }).isDisabled());
+    check('"Nuevo cliente" habilitado en la matriz', await page.getByRole('button', { name: /Nuevo cliente/ }).isEnabled());
     await shot(page, 'clientes_1_matriz');
     const searchResp = page.waitForResponse(r => /\/api\/v1\/catalogs\/clients\?.*q=Dos/.test(r.url()));
     await page.getByLabel('Buscar en catálogo').fill('Dos');
@@ -58,28 +58,33 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     // Ficha desde la matriz
     await page.getByRole('row').filter({ hasText: qa1.name }).getByRole('button', { name: /Ficha/ }).click();
     await page.getByLabel('Razón social', { exact: true }).and(page.locator('input')).waitFor();
-    await page.waitForFunction(n => [...document.querySelectorAll('input[readonly]')].some(i => i.value === n), qa1.name, { timeout: 10000 });
-    const values = await page.locator('input[readonly]').evaluateAll(els => els.map(e => e.value));
+    await page.waitForFunction(n => [...document.querySelectorAll('[data-testid=client-form] input')].some(i => i.value === n), qa1.name, { timeout: 10000 });
+    const values = await page.getByTestId('client-form').locator('input').evaluateAll(els => els.map(e => e.value));
     check('ficha carga datos reales', values.includes('QA01') && values.includes(qa1.name) && values.some(v => v.includes('Contacto Cliente QA')) && values.includes('compras@cliente.invalid'), values.join(' | '));
-    check('guardar bloqueado y clave del portal no expuesta', await page.getByRole('button', { name: /Guardar cliente/ }).isDisabled() && await page.getByLabel('Clave del portal').inputValue() === '');
+    check('guardar habilitado; portal y su clave bloqueados y no expuestos', await page.getByRole('button', { name: /Guardar cambios/ }).isEnabled() && await page.getByLabel('Clave del portal').inputValue() === '' && await page.getByLabel('Clave del portal').isDisabled() && await page.getByLabel('Portal del cliente', { exact: true }).isDisabled());
+    check('ficha en modo edición con versión', /Editando QA01 · v\d+/.test(await page.getByTestId('form-mode').innerText()));
     // Política de precios y recompra (clients.repeat_*): valores reales de MariaDB, modo consulta.
     const pol = page.getByTestId('repeat-policy');
     const det1 = (await (await page.request.get(UI + '/api/v1/catalogs/clients/' + qa1.id)).json()).item.repeat_policy;
     const polText = async label => { const el = pol.getByLabel(label, { exact: true }); return (await el.evaluate(e => e.tagName)) === 'SELECT' ? (await el.locator('option:checked').textContent()).trim() : await el.inputValue(); };
-    check('política: valores de MariaDB en la ficha', await polText('Política de precio al cliente') === det1.sales_policy && await polText('Política de abastecimiento') === det1.sourcing_policy
+    const LABEL = { quote_required: 'Precio sujeto a nueva cotización', guaranteed: 'Precio al cliente garantizado', mixed: 'Mixta / por partida', contract: 'Contrato / Price List / Rate Card', manual: 'Revisión manual', requote_always: 'Recotizar proveedores siempre', validate_history: 'Validar costo/proveedor histórico', reuse_if_valid: 'Reutilizar proveedor/costo si está vigente' };
+    const shown = v => LABEL[v] || Object.values(LABEL).find(l => l.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() === String(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()) || `Valor histórico: ${v}`;
+    check('política: valores de MariaDB en la ficha', await polText('Política de precio al cliente') === shown(det1.sales_policy) && await polText('Política de abastecimiento') === shown(det1.sourcing_policy)
       && await polText('Vigencia del precio histórico (días)') === String(det1.price_validity_days) && await polText('Referencia de contrato / Price List') === det1.contract_reference
       && await polText('Vigencia contractual hasta') === det1.contract_valid_until && Number(await polText('Margen mínimo de referencia %')) === Number(det1.min_margin_pct),
       JSON.stringify(det1));
-    check('política: código no reconocido se muestra tal cual y se identifica', det1.sourcing_policy === 'reuse_if_valid' ? await pol.getByText('Código registrado en MariaDB').count() === 1 : true);
-    check('política: regla del diseño y solo lectura', await pol.getByText(/no implica reutilizar el costo del proveedor/).isVisible() && await pol.getByLabel('Política de precio al cliente', { exact: true }).isDisabled() && await pol.getByLabel('Margen mínimo de referencia %').evaluate(e => e.readOnly));
-    check('nuevo cliente y guardar bloqueados en la ficha', await page.getByRole('button', { name: /Nuevo cliente/ }).isDisabled());
+    const salesOpts = await pol.getByLabel('Política de precio al cliente', { exact: true }).locator('option').allTextContents();
+    const srcOpts = await pol.getByLabel('Política de abastecimiento', { exact: true }).locator('option').allTextContents();
+    check('política: opciones completas del diseño', ['Precio sujeto a nueva cotización', 'Precio al cliente garantizado', 'Mixta / por partida', 'Contrato / Price List / Rate Card', 'Revisión manual'].every(o => salesOpts.includes(o)) && ['Recotizar proveedores siempre', 'Validar costo/proveedor histórico', 'Reutilizar proveedor/costo si está vigente'].every(o => srcOpts.includes(o)), salesOpts.join('|') + ' / ' + srcOpts.join('|'));
+    check('política: regla del diseño y campos editables', await pol.getByText(/no implica reutilizar el costo del proveedor/).isVisible() && await pol.getByLabel('Política de precio al cliente', { exact: true }).isEnabled() && !(await pol.getByLabel('Margen mínimo de referencia %').evaluate(e => e.readOnly)));
+    check('campos de la ficha editables (sin readonly)', await page.getByTestId('client-form').locator('input[readonly]').count() === 0 && await page.getByLabel('Proyecto', { exact: true }).isEditable() && await page.getByRole('button', { name: 'Elegir archivo' }).count() + await page.getByText('Elegir archivo', { exact: true }).count() > 0);
     await pol.scrollIntoViewIfNeeded();
     await shot(page, 'clientes_2b_politica');
     await shot(page, 'clientes_2_ficha');
     await page.getByLabel('Seleccionar por número de cliente').selectOption({ label: 'QA02' });
-    await page.waitForFunction(n => [...document.querySelectorAll('input[readonly]')].some(i => i.value === n), qa2.name, { timeout: 10000 });
+    await page.waitForFunction(n => [...document.querySelectorAll('[data-testid=client-form] input')].some(i => i.value === n), qa2.name, { timeout: 10000 });
     check('selector por número carga otra ficha', true);
-    check('política: cliente sin política registrada', await page.getByTestId('repeat-policy').getByText('Este cliente no tiene política de recompra registrada en MariaDB.').isVisible() && await page.getByTestId('repeat-policy').getByLabel('Margen mínimo de referencia %').inputValue() === '');
+    check('política: cliente sin política registrada', (await page.getByTestId('repeat-policy').getByLabel('Política de precio al cliente', { exact: true }).inputValue()) === '' && await page.getByTestId('repeat-policy').getByLabel('Margen mínimo de referencia %').inputValue() === '');
 
     // Indicadores
     await page.getByRole('button', { name: /Indicadores de clientes/ }).first().click();
