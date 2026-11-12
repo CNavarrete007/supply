@@ -61,7 +61,7 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     await page.waitForFunction(n => [...document.querySelectorAll('[data-testid=client-form] input')].some(i => i.value === n), qa1.name, { timeout: 10000 });
     const values = await page.getByTestId('client-form').locator('input').evaluateAll(els => els.map(e => e.value));
     check('ficha carga datos reales', values.includes('QA01') && values.includes(qa1.name) && values.some(v => v.includes('Contacto Cliente QA')) && values.includes('compras@cliente.invalid'), values.join(' | '));
-    check('guardar habilitado; portal y su clave bloqueados y no expuestos', await page.getByRole('button', { name: /Guardar cambios/ }).isEnabled() && await page.getByLabel('Clave del portal').inputValue() === '' && await page.getByLabel('Clave del portal').isDisabled() && await page.getByLabel('Portal del cliente', { exact: true }).isDisabled());
+    check('guardar habilitado; portal y su clave bloqueados y no expuestos', await page.getByRole('button', { name: /Guardar cliente/ }).isEnabled() && await page.getByLabel('Clave del portal').inputValue() === '' && await page.getByLabel('Clave del portal').isDisabled() && await page.getByLabel('Portal del cliente', { exact: true }).isDisabled());
     check('ficha en modo edición con versión', /Editando QA01 · v\d+/.test(await page.getByTestId('form-mode').innerText()));
     // Política de precios y recompra (clients.repeat_*): valores reales de MariaDB, modo consulta.
     const pol = page.getByTestId('repeat-policy');

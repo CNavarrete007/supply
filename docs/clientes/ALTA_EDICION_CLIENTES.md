@@ -25,6 +25,10 @@ logotipo. Ahora la ficha es un formulario completo (diseño de las imágenes de 
     importado tiene la etiqueta textual, se reconoce; si tiene un valor fuera del catálogo se muestra como
     "Valor histórico" y **no se modifica** salvo que el usuario elija otra opción. *Confirmar con el Apps Script original
     qué valores guardaba.*
+- **Botones de la ficha** (13 nov 2026): solo **💾 Guardar cliente** (alta o actualización según el cliente cargado),
+  **🧹 Limpiar** (vacía el formulario y lo deja en modo alta; no borra nada en MariaDB) y **📋 Ver matriz** (abre la
+  tarjeta Matriz). Para editar otro cliente se elige en los selectores o con "Ficha" en la matriz; "Nuevo cliente"
+  sigue disponible en la matriz.
 - **Portal del cliente y su clave**: siguen bloqueados. La tabla `portal_access_tokens` exige claves con hash, vencimiento
   y bitácora; se habilitarán con el diseño de seguridad del Portal. Nunca se guardan claves en texto.
 
@@ -98,5 +102,5 @@ con autorización.
 | `tests/frontend/clients_form.test.mjs` (lógica del formulario) | 5/5 |
 | `tests/frontend/clients_model.test.mjs` | 6/6 |
 | `tests/clients_write_http_check.py` (contrato de escritura; **solo base desechable**, `SF_SYNTHETIC_WRITES=1`) | 44/44 |
-| `tests/frontend/clients_write_ui_e2e.cjs` (alta con logotipo, edición, conflicto, duplicado; **solo base desechable**) | 26/26 |
+| `tests/frontend/clients_write_ui_e2e.cjs` (alta con logotipo, edición, conflicto, Limpiar, tres botones, duplicado; **solo base desechable**) | 28/28 |
 | `tests/frontend/clients_ui_e2e.cjs` (consulta, sin escrituras) | 29/29 |

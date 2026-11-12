@@ -117,7 +117,7 @@ function png(w, h, [r, g, b]) {
     await pol.getByLabel('Política de precio al cliente', { exact: true }).selectOption({ label: 'Contrato / Price List / Rate Card' });
     await page.getByLabel('Teléfono', { exact: true }).fill('833-456-7890 / 81-1111-2222');
     const put = page.waitForResponse(r => r.request().method() === 'PUT');
-    await page.getByRole('button', { name: 'Guardar cambios' }).click();
+    await page.getByRole('button', { name: 'Guardar cliente' }).click();
     const ur = await put;
     check('edición: PUT 200 con If-Match', ur.status() === 200 && ur.request().headers()['if-match'] === '"1"', `${ur.status()} ${ur.request().headers()['if-match']}`);
     await page.getByTestId('form-mode').filter({ hasText: `Editando ${code} · v2` }).waitFor();
@@ -131,19 +131,23 @@ function png(w, h, [r, g, b]) {
       data: { code, name: `Cliente UI ${RUN} (otra sesión)`, project: 'PRY-UI', contract_reference: 'CTR-2026-001', status: 'blocked', contacts: ['Ana UI'], emails: [], phone: '', repeat_policy: {} } });
     check('otra sesión guarda v3', other.status() === 200);
     await page.getByLabel('Observaciones', { exact: true }).fill('Cambio sobre versión vieja');
-    await page.getByRole('button', { name: 'Guardar cambios' }).click();
+    await page.getByRole('button', { name: 'Guardar cliente' }).click();
     await page.getByTestId('save-message').filter({ hasText: 'Otra persona modificó este cliente' }).waitFor();
     check('versión vieja → aviso de conflicto (412), sin sobrescribir', (await api(`/api/v1/catalogs/clients/${created.id}`)).item.name.endsWith('(otra sesión)'));
-    await page.getByRole('button', { name: 'Limpiar' }).click();
-    check('"Limpiar" descarta lo no guardado (vuelve a la ficha cargada)', (await page.getByLabel('Observaciones', { exact: true }).inputValue()) === 'Alta desde la interfaz (sintética)');
-    await page.getByLabel('Observaciones', { exact: true }).fill('Cambio sobre versión vieja');
-    await page.getByRole('button', { name: 'Guardar cambios' }).click();
     await page.getByRole('button', { name: 'Recargar ficha' }).click();
     await page.getByTestId('form-mode').filter({ hasText: `Editando ${code} · v3` }).waitFor();
     check('"Recargar ficha" trae la versión vigente (v3 de la otra sesión)', (await page.getByLabel('Razón social', { exact: true }).inputValue()).endsWith('(otra sesión)'));
 
-    // Número duplicado
-    await page.getByRole('button', { name: 'Nuevo cliente' }).click();
+    // Pie de la ficha: solo Guardar cliente, Limpiar y Ver matriz
+    const footer = await page.getByTestId('form-actions').getByRole('button').allInnerTexts();
+    check('pie de la ficha con tres botones', footer.map(t => t.replace(/\s+/g, ' ').trim()).join(' | ') === '💾Guardar cliente | 🧹Limpiar | 📋Ver matriz' || footer.map(t => t.replace(/[^\p{L} ]/gu, '').trim()).join('|') === 'Guardar cliente|Limpiar|Ver matriz', footer.join(' | '));
+    // "Limpiar" vacía la ficha y la deja lista para un alta nueva (no borra nada en MariaDB)
+    await page.getByLabel('Observaciones', { exact: true }).fill('Texto sin guardar');
+    await page.getByRole('button', { name: 'Limpiar' }).click();
+    check('"Limpiar" deja el formulario vacío en modo alta', (await page.getByTestId('form-mode').innerText()).includes('Nuevo registro') && (await page.getByLabel('No. de cliente', { exact: true }).inputValue()) === '' && (await page.getByLabel('Observaciones', { exact: true }).inputValue()) === '' && (await page.getByLabel('Seleccionar por número de cliente').inputValue()) === '');
+    check('"Limpiar" no modifica el cliente guardado', (await api(`/api/v1/catalogs/clients/${created.id}`)).item.name.endsWith('(otra sesión)'));
+
+    // Número duplicado (formulario limpio)
     await page.getByLabel('No. de cliente', { exact: true }).fill(code);
     await page.getByLabel('Razón social', { exact: true }).fill('Duplicado UI');
     await page.getByLabel('Proyecto', { exact: true }).fill('P'); await page.getByLabel('Número de contrato', { exact: true }).fill('C');
@@ -159,7 +163,7 @@ function png(w, h, [r, g, b]) {
     check('el nuevo cliente aparece en la matriz', rowsTxt.length === 1 && rowsTxt[0].includes(`Cliente UI ${RUN} (otra sesión)`), rowsTxt.join(' || ').slice(0, 300));
     await page.setViewportSize({ width: 390, height: 900 });
     check('sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
-    check('solo escrituras permitidas (1 alta + 1 edición + 2 conflictos + 1 duplicado)', writes.filter(w => w.startsWith('POST')).length === 2 && writes.filter(w => w.startsWith('PUT')).length === 3 && req === 1, writes.join(', '));
+    check('solo escrituras permitidas (1 alta + 1 edición + 1 conflicto + 1 duplicado)', writes.filter(w => w.startsWith('POST')).length === 2 && writes.filter(w => w.startsWith('PUT')).length === 2 && req === 1, writes.join(', '));
   } catch (e) {
     check('flujo E2E sin excepciones', false, String(e).slice(0, 400));
   }
