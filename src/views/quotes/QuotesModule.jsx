@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer } from 'lucide-react';
-import { listRfqs, getRfq, listSupplierQuotes, getSupplierQuote, getComparison, listCustomerQuotes, getCustomerQuote, listAwards } from './api';
-import { money, label, tone, comparisonView, seriesGroups, rfqState, customerQuoteHtml } from './model.mjs';
+import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
+import { listRfqs, getRfq, listSupplierQuotes, getSupplierQuote, getComparison, listCustomerQuotes, getCustomerQuote, listAwards, listRevisionFamilies } from './api';
+import { money, label, tone, comparisonView, rfqState, customerQuoteHtml, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
+import { ChangeRequestModal } from '../recovery/ChangeRequestModal';
+import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
 // Cotizaciones y Comparativo · diseño Grupo Gerez (11 tarjetas) conectado a MariaDB en modo consulta.
 // GET /api/v1/quotes/* (Master Admin). Enviar RFQ, capturar cotizaciones, seleccionar, adjudicar, emitir la cotización al
@@ -48,12 +50,18 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
   const [supplier, setSupplier] = useState('all');
   const [client, setClient] = useState('all');
   const [decision, setDecision] = useState('all');
+  const [revStatus, setRevStatus] = useState('all');
+  const [pdfId, setPdfId] = useState('');
+  const [changeFor, setChangeFor] = useState(null);
+  const [blocked, setBlocked] = useState(null);
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
-  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setClient('all'); setDecision('all'); };
+  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setClient('all'); setDecision('all'); setRevStatus('all'); };
 
   const rfqs = useLoad(s => listRfqs({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 3 || tab === 2);
   const sqs = useLoad(s => listSupplierQuotes({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 4 || tab === 11);
-  const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: tab === 1 ? 'all' : 'current', page_size: tab === 1 ? 50 : 25 }, s), [tab, page, q, client, decision, rev], [1, 6, 7, 8, 9].includes(tab));
+  const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: 'current' }, s), [tab, page, q, client, decision, rev], [6, 7, 8, 9].includes(tab));
+  const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
+  const pdf = useLoad(s => getCustomerQuote(pdfId, s), [pdfId], !!pdfId);
   const awards = useLoad(s => listAwards({ page, q, status: 'current' }, s), [tab, page, q, rev], tab === 10);
   const compList = useLoad(s => getComparison('all', s), [tab, rev], tab === 5);
   const [compReq, setCompReq] = useState('');
@@ -62,7 +70,6 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
   const [cqId, setCqId] = useState(''); const cq = useLoad(s => getCustomerQuote(cqId, s), [cqId, rev], [6, 7, 9].includes(tab) && !!cqId);
   const [sqId, setSqId] = useState(''); const sq = useLoad(s => getSupplierQuote(sqId, s), [sqId, rev], tab === 11 && !!sqId);
   const cmp = useMemo(() => comparisonView(comp.data?.lines || []), [comp.data]);
-  const series = useMemo(() => seriesGroups(cqs.data?.items || []), [cqs.data]);
   const day = today();
 
   const Err = ({ s }) => (s?.error ? <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{s.error.message}</p> : null);
@@ -74,8 +81,8 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
   const searchBox = ph => <div className="relative flex-1 min-w-[240px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input type="search" aria-label={tx('Buscar', 'Search')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={ph} className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" /></div>;
   const pager = st => { const last = Math.max(1, Math.ceil((st.data?.total || 0) / (st.data?.page_size || 25))); return <div className="flex justify-between items-center text-xs text-slate-600"><span>{st.data?.total ?? 0} {tx('registros', 'records')} · {tx('Página', 'Page')} {page} / {last}</span><div className="flex gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => n - 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= last} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div></div>; };
   const table = (headers, rows, empty) => <div className="overflow-x-auto rounded-2xl border border-slate-200/80"><table className="w-full text-left border-collapse min-w-[900px]"><thead><tr className="bg-slate-50 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-200">{headers.map(h => <th key={h} className="py-3 px-3">{h}</th>)}</tr></thead><tbody className="divide-y divide-slate-100 text-[11px] text-slate-700">{rows}{!rows.length && <tr><td colSpan={headers.length} className="py-10 text-center text-xs text-slate-400 font-semibold">{empty}</td></tr>}</tbody></table></div>;
-  const printCq = () => { if (!cq.data) return; const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(customerQuoteHtml(cq.data, en)); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); };
-  const cqSelect = <select aria-label={tx('Cotización al cliente', 'Client quote')} value={cqId} onChange={e => setCqId(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl min-w-[280px]"><option value="">{tx('Seleccionar cotización…', 'Select quote…')}</option>{(cqs.data?.items || []).map(v => <option key={v.id} value={v.id}>{v.folio} · {v.client_name} · {label(v.client_decision_status, en)}</option>)}</select>;
+  const printCq = (d = cq.data) => { if (!d) return; const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(customerQuoteHtml(d, en)); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); };
+  const cqSelect = <select aria-label={tx('Cotización al cliente', 'Client quote')} value={cqId} onChange={e => setCqId(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl min-w-[280px]"><option value="">{tx('Seleccionar cotización…', 'Select quote…')}</option>{cqId && cq.data && !(cqs.data?.items || []).some(v => v.id === cqId) && <option value={cqId}>{cq.data.item.folio} · {cq.data.item.client_name} · {label(cq.data.item.client_decision_status, en)}</option>}{(cqs.data?.items || []).map(v => <option key={v.id} value={v.id}>{v.folio} · {v.client_name} · {label(v.client_decision_status, en)}</option>)}</select>;
 
   return <div className="space-y-6">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -91,12 +98,69 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
     </div>
     <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 flex items-start gap-2 text-[11px] text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{LOCK}</span></div>
 
-    {tab === 1 && <div className={box}>{head(tx('Revisiones / modificaciones', 'Revisions / modifications'), tx('Cada revisión conserva la versión anterior de la cotización al cliente con su decisión.', 'Each revision keeps the previous client quote version and its decision.'), lockBtn(tx('Nueva revisión', 'New revision')))}
-      <Wait s={cqs} /><Err s={cqs} />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{series.map(g => <div key={g.series} className="p-4 rounded-2xl border border-slate-200 space-y-2"><div className="flex justify-between gap-2"><div><div className="text-sm font-black text-slate-900">{g.series}</div><div className="text-[11px] text-slate-500">{g.client} · {g.requisition}</div></div><span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 rounded-full px-2 py-0.5 self-start">{g.versions.length} {tx('versión(es)', 'version(s)')}</span></div>
-        <ul className="space-y-1">{g.versions.map(v => <li key={v.id} className="text-[11px] flex flex-wrap justify-between gap-2 border-t border-slate-100 pt-1"><span className="font-bold">{v.folio} · v{v.version_number}</span><span>{ymd(v.quote_date)}</span><span>{money(v.total_amount, v.currency, en)}</span>{pill(v.client_decision_status)}</li>)}</ul></div>)}</div>
-      {cqs.status === 'ready' && !series.length && <p className="text-xs text-slate-400 text-center py-8">{tx('No hay cotizaciones al cliente registradas.', 'No client quotes recorded.')}</p>}
+    {tab === 1 && <div className={box} data-testid="revisions-card">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pb-3 border-b border-slate-100">
+        <div><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('🔄 Revisiones y modificaciones de cotizaciones al cliente', '🔄 Revisions and modifications of client quotes')}</h3>
+          <p className="text-[11px] text-slate-500 mt-0.5">{tx('Una cotización aprobada no se borra. El cambio se origina desde la requisición y genera una nueva revisión conservando la anterior.', 'An approved quote is not deleted. Changes originate from the requisition and generate a new revision while preserving the previous one.')}</p></div>
+        <span className="px-3 py-1 bg-indigo-50 text-indigo-700 font-bold text-[10px] rounded-full border border-indigo-200/60 shrink-0 font-mono">Rev. 0 → Rev. 1 → Rev. N</span>
+      </div>
+      <div className="p-3.5 bg-blue-50/60 border-l-4 border-blue-600 rounded-r-xl text-xs text-slate-700 leading-relaxed"><span className="font-bold text-slate-900">{tx('Regla:', 'Rule:')}</span> {tx('para cambiar cantidades, eliminar partidas o agregar alcance después de una aprobación, usa Solicitar modificación. SupplyFlow genera una nueva revisión de la requisición y de la cotización al cliente sin repetir RFQ/comparativo cuando no existe impacto de abastecimiento.', 'to change quantities, remove items or add scope after an approval, use Request modification. SupplyFlow generates a new revision of the requisition and of the client quote without repeating RFQ/comparison when there is no sourcing impact.')}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{[[fams.data?.summary?.families, tx('Familias de cotización', 'Quote families'), 'border-t-violet-600'], [fams.data?.summary?.with_rev_n, tx('Con Rev. N', 'With Rev. N'), 'border-t-violet-600'], [fams.data?.summary?.approved, tx('Aprobadas vigentes/históricas', 'Approved current/historical'), 'border-t-emerald-500'], [fams.data?.summary?.linked_cr, tx('Ligadas a Change Request', 'Linked to Change Request'), 'border-t-amber-500']].map(([n, t, c]) => <div key={t} data-testid="rev-kpi" className={`bg-white p-4 rounded-2xl border border-slate-200/80 border-t-4 ${c} shadow-2xs`}><div className="text-2xl font-black text-slate-900">{n ?? '—'}</div><div className="text-xs font-medium text-slate-500 mt-1">{t}</div></div>)}</div>
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-slate-50/70 p-2.5 rounded-xl border border-slate-200/70">
+        <div className="relative w-full sm:w-96 text-xs font-medium"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input type="search" aria-label={tx('Buscar', 'Search')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={tx('Buscar cotización, requisición, cliente, CR o estatus...', 'Search quote, requisition, client, CR or status...')} className="w-full pl-9 pr-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 shadow-2xs font-medium placeholder:text-slate-400" /></div>
+        <div className="w-full sm:w-auto text-xs font-semibold"><select aria-label={tx('Estatus', 'Status')} value={revStatus} onChange={e => { setRevStatus(e.target.value); setPage(1); }} className="px-3 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-xl outline-none text-slate-700 shadow-2xs cursor-pointer w-full sm:w-auto">
+          {[['all', tx('Todos los estatus', 'All statuses'), fams.data?.summary?.families], ['pending', tx('Pendientes de revisión', 'Pending review'), fams.data?.summary?.pending], ['approved', tx('Aprobadas', 'Approved'), fams.data?.summary?.current_approved], ['closed', tx('Sustituidas o rechazadas', 'Superseded or rejected'), fams.data?.summary?.closed]].map(([v, t, n]) => <option key={v} value={v}>{t}{n !== undefined ? ` (${n})` : ''}</option>)}
+        </select></div>
+      </div>
+      <Wait s={fams} /><Err s={fams} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">{(fams.data?.items || []).map(f => <div key={f.id} data-testid="rev-family" className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-3">
+        <div className="space-y-1">
+          <h4 className="text-[11px] font-black text-slate-900 leading-tight truncate" title={`${f.current_folio} · ${f.client_name}`}>{f.current_folio} · <span className="text-slate-700">{f.client_name}</span></h4>
+          <p className="text-[9.5px] font-semibold text-slate-400 truncate" title={f.change_request ? `${f.change_request} · ${crStatusLabel(f.change_request_status, en)}` : undefined}>{familyReference(f, en)}{f.change_request && f.change_request_status ? ` · ${crStatusLabel(f.change_request_status, en)}` : ''}</p>
+          <div className="pt-1 flex flex-wrap gap-1"><span className={`inline-block px-2 py-0.5 text-[9px] font-extrabold rounded-md border ${revStatusTone(f.status_label)}`}>Rev. {f.current_rev} · {revStatusLabel(f.status_label, en)}</span>{f.pending_change && <span className="inline-block px-2 py-0.5 text-[9px] font-extrabold rounded-md border bg-amber-50 text-amber-800 border-amber-200">{f.pending_change} · {tx('en revisión', 'in review')}</span>}</div>
+        </div>
+        <div className="grid grid-cols-3 gap-1 py-1.5 px-2 bg-slate-50/80 rounded-xl border border-slate-100 text-center">
+          <div><span className="block text-xs font-black text-slate-800">{f.revisions}</span><span className="block text-[8px] font-bold text-slate-400 uppercase">{tx('Revisiones', 'Revisions')}</span></div>
+          <div><span className="block text-[10px] font-black text-slate-800">{plainAmount(f.rev0_total, en)}</span><span className="block text-[8px] font-bold text-slate-400 uppercase">{f.rev0_currency} (Rev. {f.rev0_rev})</span></div>
+          <div><span className="block text-[10px] font-black text-slate-800">{plainAmount(f.current_total, en)}</span><span className="block text-[8px] font-bold text-slate-400 uppercase">{f.currency} ({tx('Vigente', 'Current')})</span></div>
+        </div>
+        <div className="space-y-1.5 text-[9.5px] font-extrabold">
+          <div className="grid grid-cols-2 gap-1.5">
+            <button type="button" onClick={() => setPdfId(f.current_id)} className="px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[9.5px] rounded-lg transition-colors cursor-pointer shadow-2xs">{tx('VER PDF', 'VIEW PDF')}</button>
+            <button type="button" onClick={() => { go(6); setCqId(f.current_id); }} className="px-2 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-extrabold text-[9.5px] rounded-lg transition-colors cursor-pointer shadow-2xs truncate">{tx('ABRIR REV. VIGENTE', 'OPEN CURRENT REV.')}</button>
+          </div>
+          <button type="button" onClick={() => (f.can_request_change ? setChangeFor(f) : setBlocked(f))} title={f.can_request_change ? undefined : changeBlockMessage(f.change_block, f.pending_change, en)} className={`w-full py-1.5 text-white font-extrabold text-[9.5px] rounded-lg transition-all cursor-pointer shadow-2xs tracking-wide ${f.can_request_change ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600' : 'bg-gradient-to-r from-orange-300 to-amber-300'}`}>{tx('SOLICITAR MODIFICACIÓN', 'REQUEST MODIFICATION')}</button>
+        </div>
+      </div>)}
+        {fams.status === 'ready' && !(fams.data?.items || []).length && <div className="col-span-full py-12 text-center text-slate-400 text-xs bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">{q || revStatus !== 'all' ? tx('No se encontraron cotizaciones que coincidan con la búsqueda.', 'No quotes matching the search were found.') : tx('No hay cotizaciones al cliente registradas.', 'No client quotes recorded.')}</div>}
+      </div>
+      {pager(fams)}
     </div>}
+
+    {pdfId && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onMouseDown={e => { if (e.target === e.currentTarget) setPdfId(''); }}>
+      <div role="dialog" aria-modal="true" aria-label={tx('Vista previa de la cotización', 'Quote preview')} data-testid="rev-pdf" className="bg-white w-full max-w-5xl h-[92vh] rounded-xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="bg-[#1e4a7a] px-5 py-3 flex justify-between items-center shrink-0 gap-3"><h2 className="text-white font-bold text-sm truncate">{tx('Vista previa', 'Preview')} · {pdf.data?.item?.folio || '…'}{pdf.data?.item ? ` · Rev. ${Number(pdf.data.item.version_number) - 1}` : ''}</h2>
+          <div className="flex gap-2 text-xs font-bold"><button type="button" onClick={() => printCq(pdf.data)} disabled={!pdf.data} className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"><Printer className="w-3.5 h-3.5" />{tx('Imprimir PDF', 'Print PDF')}</button><button type="button" onClick={() => setPdfId('')} className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-1.5 rounded text-xs font-bold flex items-center gap-1.5"><X className="w-3.5 h-3.5" />{tx('Cerrar', 'Close')}</button></div></div>
+        <div className="flex-1 overflow-hidden bg-slate-200/50 p-3 sm:p-6">
+          <Wait s={pdf} /><Err s={pdf} />
+          {pdf.data && <iframe title={tx('Cotización al cliente', 'Client quote')} srcDoc={customerQuoteHtml(pdf.data, en)} sandbox="" className="w-full h-full rounded-lg border border-slate-200 bg-white" />}
+        </div>
+      </div>
+    </div>}
+
+    {blocked && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onMouseDown={e => { if (e.target === e.currentTarget) setBlocked(null); }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="sf-rev-blocked" data-testid="rev-blocked" className="bg-white w-full max-w-lg rounded-xl shadow-2xl overflow-hidden">
+        <div className="bg-gradient-to-r from-[#2B4B9A] to-[#8C3AAA] px-5 py-3"><h2 id="sf-rev-blocked" className="text-white font-black text-sm">🔁 {tx('Modificación controlada de requisición', 'Controlled requisition modification')}</h2></div>
+        <div className="p-5 space-y-3 text-xs text-slate-700">
+          <p className="font-bold text-slate-900">{blocked.current_folio} · Rev. {blocked.current_rev} · {blocked.requisition}</p>
+          <p className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{changeBlockMessage(blocked.change_block, blocked.pending_change, en)}</span></p>
+          <div className="flex justify-end text-xs font-bold"><button type="button" onClick={() => setBlocked(null)} className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg">{tx('Entendido', 'Got it')}</button></div>
+        </div>
+      </div>
+    </div>}
+
+    {changeFor && <ChangeRequestModal requisitionId={changeFor.requisition_id} en={en} context={{ requisition: changeFor.requisition, client: changeFor.client_name, quoteFolio: changeFor.current_folio, currentRev: changeFor.current_rev }}
+      onClose={() => setChangeFor(null)} onCreated={() => setRev(n => n + 1)} onNotify={notify} />}
 
     {tab === 2 && <div className={box}>{head(tx('Solicitud a proveedores (RFQ)', 'Supplier request (RFQ)'), tx('Documento sin precios que se envía a cada proveedor.', 'Document without prices sent to each supplier.'), <div className="flex gap-2"><select aria-label="RFQ" value={rfqId} onChange={e => setRfqId(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl min-w-[260px]"><option value="">{tx('Seleccionar RFQ…', 'Select RFQ…')}</option>{(rfqs.data?.items || []).map(r => <option key={r.id} value={r.id}>{r.folio} · {r.supplier_name}</option>)}</select>{lockBtn(tx('Generar y enviar RFQ', 'Generate & send RFQ'))}</div>)}
       <Wait s={rfq} /><Err s={rfq} />
@@ -130,7 +194,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">{l.offers.map(o => <div key={o.quote_id} className={`p-3 rounded-xl border text-xs ${l.best === o.quote_id ? 'border-emerald-400 bg-emerald-50/50' : 'border-slate-200'}`}><div className="flex justify-between gap-2"><strong>{o.supplier_name}</strong>{l.best === o.quote_id && <span className="text-[10px] font-black text-emerald-700">{tx('Mejor precio', 'Best price')}</span>}</div><div className="text-[11px] text-slate-500">{o.quote_folio} · {o.offered ? tx('ofertada', 'offered') : tx('no ofertada', 'not offered')}</div><div className="mt-1 font-bold">{money(o.unit_price, o.currency, en)} <span className="font-normal text-slate-500">× {Number(o.quantity)} = {money(o.line_subtotal, o.currency, en)}</span></div>{o.lead_days !== null && <div className="text-[10px] text-slate-500">{tx('Entrega', 'Lead')} {Number(o.lead_days)} {tx('días', 'days')}</div>}{o.awarded && <div className="mt-1">{pill('awarded', tx('Adjudicada', 'Awarded'))}</div>}</div>)}{!l.offers.length && <p className="text-[11px] text-slate-400">{tx('Sin ofertas para esta partida.', 'No offers for this item.')}</p>}</div></div>)}</div>}
     </div>}
 
-    {(tab === 6 || tab === 7) && <div className={box}>{head(tab === 6 ? tx('Cotización al cliente', 'Client quotation') : tx('Formato para el cliente', 'Client format'), tab === 6 ? tx('Precio de venta consolidado; los costos internos no se muestran.', 'Consolidated sale price; internal costs are not shown.') : tx('Vista formal con firmas registradas e impresión a PDF.', 'Formal view with recorded signatures and PDF printing.'), <div className="flex gap-2">{cqSelect}{tab === 7 ? <button type="button" onClick={printCq} disabled={!cq.data} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Printer className="w-3.5 h-3.5" />{tx('Imprimir / PDF', 'Print / PDF')}</button> : lockBtn(tx('Emitir cotización', 'Issue quote'))}</div>)}
+    {(tab === 6 || tab === 7) && <div className={box}>{head(tab === 6 ? tx('Cotización al cliente', 'Client quotation') : tx('Formato para el cliente', 'Client format'), tab === 6 ? tx('Precio de venta consolidado; los costos internos no se muestran.', 'Consolidated sale price; internal costs are not shown.') : tx('Vista formal con firmas registradas e impresión a PDF.', 'Formal view with recorded signatures and PDF printing.'), <div className="flex gap-2">{cqSelect}{tab === 7 ? <button type="button" onClick={() => printCq()} disabled={!cq.data} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Printer className="w-3.5 h-3.5" />{tx('Imprimir / PDF', 'Print / PDF')}</button> : lockBtn(tx('Emitir cotización', 'Issue quote'))}</div>)}
       <Wait s={cqs} /><Err s={cqs} /><Wait s={cq} /><Err s={cq} />
       {!cqId && <div className="p-12 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500">{tx('Selecciona una cotización al cliente.', 'Select a client quote.')}</div>}
       {cq.data && tab === 6 && <div data-testid="client-quote" className="space-y-3"><div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">{[[tx('Cliente', 'Client'), cq.data.item.client_name], [tx('Requisición', 'Requisition'), cq.data.item.requisition], [tx('Vigencia', 'Valid until'), ymd(cq.data.item.valid_until)], [tx('Total', 'Total'), money(cq.data.item.total_amount, cq.data.item.currency, en)], [tx('Documento', 'Document'), label(cq.data.item.document_status, en)], [tx('Aprobación interna', 'Internal approval'), label(cq.data.item.internal_approval_status, en)], [tx('Decisión del cliente', 'Client decision'), label(cq.data.item.client_decision_status, en)], [tx('Condiciones de pago', 'Payment terms'), show(cq.data.item.payment_terms)]].map(([k, v]) => <div key={k} className="p-3 rounded-xl border border-slate-200"><div className="text-[10px] font-bold text-slate-400 uppercase">{k}</div><div className="font-semibold text-slate-800">{v}</div></div>)}</div>

@@ -30,3 +30,15 @@ test('formato para el cliente: escapado, sin costos y con condiciones', () => {
   assert.ok(html.includes('CQ-&lt;1&gt; · Rev. 1') && html.includes('Cliente &amp; Co') && html.includes('&lt;i&gt;Material&lt;/i&gt;'));
   assert.ok(html.includes('$2,262.00 USD') && html.includes('Crédito 30 días') && !html.includes('1,500.00'), 'no expone el costo');
 });
+
+test('revisiones: estatus, colores, referencia y montos de la familia', async () => {
+  const m = await import('../../src/views/quotes/model.mjs');
+  assert.equal(m.revStatusLabel('Aprobada'), 'Aprobada'); assert.equal(m.revStatusLabel('Aprobada', true), 'Approved');
+  assert.equal(m.revStatusLabel('Autorizada internamente', true), 'Internally authorized'); assert.equal(m.revStatusLabel('Estatus GAS raro', true), 'Estatus GAS raro');
+  assert.match(m.revStatusTone('Aprobada'), /emerald/); assert.match(m.revStatusTone('Borrador'), /blue/); assert.match(m.revStatusTone('Sustituida'), /slate/);
+  assert.match(m.revStatusTone('Revisada al cliente'), /purple/); assert.match(m.revStatusTone('Rechazada'), /rose/);
+  assert.equal(m.familyReference({ requisition: 'REQ-1', change_request: null }), 'REQ-1 · Sin Change Request');
+  assert.equal(m.familyReference({ requisition: 'REQ-1', change_request: 'CR-2026-001' }), 'REQ-1 · CR-2026-001');
+  assert.equal(m.plainAmount('3906.650000'), '3,906.65'); assert.equal(m.plainAmount(null), '—');
+  assert.equal(m.crStatusLabel('pending_review'), 'Pendiente de revisión'); assert.equal(m.crStatusLabel('applied', true), 'Applied');
+});

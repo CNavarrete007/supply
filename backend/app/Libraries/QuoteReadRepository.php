@@ -227,6 +227,70 @@ final class QuoteReadRepository
         return ['item' => $v, 'items' => $items, 'decisions' => $decisions, 'versions' => $versions];
     }
 
+    /** Spanish status label of a client quote version: the original (imported) label wins; otherwise derived from codes. */
+    private const STATUS_LABEL = "COALESCE(NULLIF(TRIM(v.legacy_status),''),CASE WHEN v.document_status IN ('superseded','cancelled') THEN 'Sustituida'
+        WHEN v.client_decision_status='approved' THEN 'Aprobada' WHEN v.client_decision_status='rejected' THEN 'Rechazada'
+        WHEN v.client_decision_status='change_requested' THEN 'Cambios solicitados'
+        WHEN v.document_status='draft' AND v.internal_approval_status='approved' THEN 'Autorizada internamente' WHEN v.document_status='draft' THEN 'Borrador'
+        WHEN v.document_status IN ('issued','sent') THEN 'Enviada al cliente' WHEN v.internal_approval_status='approved' THEN 'Autorizada internamente' ELSE v.document_status END)";
+    /** pending | approved | closed (superseded, cancelled or rejected) — filter groups of the original design. */
+    private const STATUS_GROUP = "CASE WHEN v.document_status IN ('superseded','cancelled') OR v.client_decision_status IN ('rejected','cancelled') THEN 'closed'
+        WHEN v.client_decision_status='approved' THEN 'approved' ELSE 'pending' END";
+
+    /**
+     * "Revisiones / modificaciones": one row per client-quote family (customer_quotes) with its first (Rev. 0) and current
+     * (Rev. N) versions, the linked Change Request and whether the signed-in Master Admin may file a controlled
+     * modification (R3A) on the requisition. The eligibility mirrors RequisitionChangeRepository::create, which stays the
+     * only authority; nothing is written here.
+     *
+     * @param array{page:int,page_size:int,q:string,status:string} $f
+     */
+    public function revisionFamilies(int $org, int $actor, array $f): array
+    {
+        $ver = static fn (string $order): string => "(SELECT x.id FROM customer_quote_versions x WHERE x.organization_id=cq.organization_id AND x.customer_quote_id=cq.id ORDER BY x.version_number {$order},x.id {$order} LIMIT 1)";
+        $family = 'SELECT cq.id AS cq_id,cq.organization_id AS org_id,cq.series_reference,cq.requisition_id,cq.client_id,' . $ver('DESC') . ' AS cur_id,' . $ver('ASC') . ' AS first_id,
+            (SELECT COUNT(*) FROM customer_quote_versions x WHERE x.organization_id=cq.organization_id AND x.customer_quote_id=cq.id) AS revisions,
+            (SELECT COUNT(*) FROM customer_quote_versions x WHERE x.organization_id=cq.organization_id AND x.customer_quote_id=cq.id AND x.client_decision_status=\'approved\') AS approved_versions,
+            COALESCE((SELECT x.change_request_id FROM customer_quote_versions x WHERE x.organization_id=cq.organization_id AND x.customer_quote_id=cq.id AND x.change_request_id IS NOT NULL ORDER BY x.version_number DESC,x.id DESC LIMIT 1),
+              (SELECT k.id FROM requisition_change_requests k JOIN customer_quote_versions x ON x.id=k.resulting_customer_quote_version_id AND x.organization_id=k.organization_id
+               WHERE k.organization_id=cq.organization_id AND x.customer_quote_id=cq.id ORDER BY x.version_number DESC,k.id DESC LIMIT 1)) AS cr_id
+            FROM customer_quotes cq WHERE cq.organization_id=?';
+        $from = "FROM ({$family}) fam JOIN customer_quotes cq ON cq.id=fam.cq_id AND cq.organization_id=fam.org_id JOIN business_entities qe ON qe.id=cq.id AND qe.organization_id=cq.organization_id
+            JOIN customer_quote_versions v ON v.id=fam.cur_id AND v.organization_id=fam.org_id JOIN business_entities ve ON ve.id=v.id AND ve.organization_id=v.organization_id
+            JOIN customer_quote_versions v0 ON v0.id=fam.first_id AND v0.organization_id=fam.org_id
+            JOIN requisitions r ON r.id=cq.requisition_id AND r.organization_id=cq.organization_id JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
+            JOIN clients c ON c.id=cq.client_id AND c.organization_id=cq.organization_id JOIN business_entities ce ON ce.id=c.id AND ce.organization_id=c.organization_id
+            LEFT JOIN requisition_change_requests cr ON cr.id=fam.cr_id AND cr.organization_id=fam.org_id";
+        $label = self::STATUS_LABEL;
+        $group = self::STATUS_GROUP;
+        $where = '1=1';
+        $binds = [$org];
+        if ($f['status'] !== 'all') { $where .= " AND ({$group})=?"; $binds[] = $f['status']; }
+        [$sq, $sb] = self::search($f['q'], ['v.folio', 'cq.series_reference', 'r.folio', 'c.legal_name', 'cr.folio', $label]);
+        $pending = "(SELECT k.folio FROM requisition_change_requests k WHERE k.organization_id=r.organization_id AND k.requisition_id=r.id AND k.status_code='pending_review' ORDER BY k.id DESC LIMIT 1)";
+        $rf1 = "EXISTS(SELECT 1 FROM requisition_revision_snapshots rs WHERE rs.organization_id=r.organization_id AND rs.requisition_id=r.id AND rs.provenance='system' AND rs.snapshot_schema_version=2
+            AND JSON_UNQUOTE(JSON_EXTRACT(rs.snapshot_json,'$.origin'))='supplyflow_recovery_rf1')";
+        $block = "CASE WHEN re.archived_at IS NOT NULL OR re.imported_at IS NOT NULL THEN 'imported' WHEN NOT {$rf1} THEN 'not_rf1' WHEN re.created_by<>? THEN 'not_owner'
+            WHEN {$pending} IS NOT NULL THEN 'pending_change' ELSE NULL END";
+        $total = (int) ($this->rows("SELECT COUNT(*) AS n {$from} WHERE {$where}{$sq}", [...$binds, ...$sb])[0]['n'] ?? 0);
+        $items = $this->rows("SELECT qe.public_id AS id,cq.series_reference AS series,ve.public_id AS current_id,v.folio AS current_folio,COALESCE(v.legacy_revision_number,v.version_number-1) AS current_rev,
+            v.version_number AS current_version,v.quote_date AS current_quote_date,v.valid_until,v.currency_code AS currency,v.total_amount AS current_total,v.document_status,v.internal_approval_status,
+            v.client_decision_status,v.legacy_status,{$label} AS status_label,{$group} AS status_group,v0.folio AS rev0_folio,COALESCE(v0.legacy_revision_number,v0.version_number-1) AS rev0_rev,
+            v0.total_amount AS rev0_total,v0.currency_code AS rev0_currency,fam.revisions,fam.approved_versions,r.folio AS requisition,re.public_id AS requisition_id,ce.public_id AS client_id,c.legal_name AS client_name,
+            cr.folio AS change_request,cr.status_code AS change_request_status,cr.change_type AS change_request_type,cr.request_date AS change_request_date,{$pending} AS pending_change,{$block} AS change_block
+            {$from} WHERE {$where}{$sq} ORDER BY COALESCE(v.quote_date,DATE(ve.created_at)) DESC,v.id DESC LIMIT ? OFFSET ?",
+            [$actor, ...$binds, ...$sb, $f['page_size'], ($f['page'] - 1) * $f['page_size']]);
+        foreach ($items as &$i) {
+            foreach (['current_rev', 'current_version', 'rev0_rev', 'revisions', 'approved_versions'] as $k) { $i[$k] = (int) $i[$k]; }
+            $i['can_request_change'] = $i['change_block'] === null;
+        }
+        unset($i);
+        $s = $this->rows("SELECT COUNT(*) AS families,COALESCE(SUM(fam.revisions>1),0) AS with_rev_n,COALESCE(SUM(fam.approved_versions>0),0) AS approved,COALESCE(SUM(fam.cr_id IS NOT NULL),0) AS linked_cr,
+            COALESCE(SUM(({$group})='pending'),0) AS pending,COALESCE(SUM(({$group})='approved'),0) AS current_approved,COALESCE(SUM(({$group})='closed'),0) AS closed
+            FROM ({$family}) fam JOIN customer_quote_versions v ON v.id=fam.cur_id AND v.organization_id=fam.org_id", [$org])[0] ?? [];
+        return ['items' => $items, 'total' => $total, 'page' => $f['page'], 'page_size' => $f['page_size'], 'summary' => array_map('intval', $s)];
+    }
+
     /** @param array{page:int,page_size:int,q:string,status:string} $f */
     public function awards(int $org, array $f): array
     {

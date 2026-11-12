@@ -18,3 +18,10 @@ export async function regularize(operation) {
  const token=await getCsrf();
  return request(reqPath(operation.id),{method:'POST',headers:{'Content-Type':'application/json','X-SF-CSRF':token,'Idempotency-Key':operation.key,'If-Match':`"${operation.version}"`},body:JSON.stringify(operation.data)});
 }
+// R3A · solicitud de modificación controlada (registra pending_review; no aplica cambios ni toca cotizaciones/OC).
+export const getRequisition=(id,signal)=>request('/requisitions/'+encodeURIComponent(id),{signal});
+export const getRecoveryCatalogs=signal=>request('/catalogs',{signal});
+export async function createChange(operation) {
+ const token=await getCsrf();
+ return request('/requisitions/'+encodeURIComponent(operation.id)+'/changes',{method:'POST',headers:{'Content-Type':'application/json','X-SF-CSRF':token,'Idempotency-Key':operation.key,'If-Match':`"${operation.version}"`},body:JSON.stringify(operation.data)});
+}

@@ -1,6 +1,7 @@
 // Cotizaciones y Comparativo · E2E de interfaz (Chromium) contra Vite + API + MariaDB SINTÉTICAS. Solo lectura: toda
 // petición /api que no sea GET (salvo login/logout) se aborta. Valores esperados calculados desde la API (RFQ-QA-0001/0004,
-// COT-QA-0001..0004, CQ-QA-0001 con su revisión R1 aprobada y la adjudicación vigente COT-QA-0004).
+// COT-QA-0001..0004, CQ-QA-0001 con su revisión R1 aprobada y la adjudicación vigente COT-QA-0004). La tarjeta 1 abre el
+// formulario R3A real pero solo valida en el navegador: el registro se prueba en quotes_revisions_write_ui_e2e.cjs.
 // Uso: SF_UI=http://127.0.0.1:5173 SF_QA_PASSWORD=... [SF_SHOTS=<dir>] node tests/frontend/quotes_ui_e2e.cjs
 const { chromium } = require('playwright');
 
@@ -140,15 +141,72 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('combobox', { name: 'Decisión' }).selectOption('approved');
     check('filtro por decisión en el servidor (200)', (await byDec).status() === 200);
 
-    // 1 · Revisiones / modificaciones
-    const scoped = page.waitForResponse(r => /\/customer-quotes\?.*scope=all/.test(r.url()));
+    // 1 · Revisiones / modificaciones (familias Rev. 0 → Rev. N)
+    const fam = await api('/api/v1/quotes/revisions?page=1&page_size=50');
+    const f0 = fam.items.find(f => f.series === cur.series);
+    const famResp = page.waitForResponse(r => /\/api\/v1\/quotes\/revisions\?/.test(r.url()));
     await page.getByRole('button', { name: /Revisiones\/modificaciones/ }).click();
-    check('historial pide todas las versiones (200)', (await scoped).status() === 200);
-    await page.getByText(`${cqAll.items.filter(v => v.series === cur.series).length} versión(es)`).first().waitFor();
-    const hist = flat(await page.getByText(cur.series, { exact: true }).locator('xpath=ancestor::div[contains(@class,"rounded-2xl")][1]').innerText());
-    check('serie con versiones y decisiones (cambios solicitados → aprobada)', !old || (hist.includes(old.folio) && hist.includes('Cambios solicitados') && hist.includes('Aprobada')), hist);
-    check('"Nueva revisión" bloqueada', await page.getByRole('button', { name: /Nueva revisión/ }).isDisabled());
+    check('familias de revisiones consultan MariaDB (200)', (await famResp).status() === 200);
+    await page.getByTestId('rev-family').first().waitFor();
+    const kpis = (await page.getByTestId('rev-kpi').allInnerTexts()).map(flat);
+    const S1 = fam.summary;
+    check('KPI: familias, Rev. N, aprobadas y ligadas a CR desde el servidor', [[S1.families, 'Familias de cotización'], [S1.with_rev_n, 'Con Rev. N'], [S1.approved, 'Aprobadas vigentes/históricas'], [S1.linked_cr, 'Ligadas a Change Request']].every(([n, t], i) => kpis[i].startsWith(String(n)) && kpis[i].includes(t)), kpis.join(' | '));
+    check('una tarjeta por familia (página 1)', await page.getByTestId('rev-family').count() === Math.min(fam.total, 24));
+    check('familia sintética con Rev. 0 y revisión vigente', !!f0 && f0.revisions === cqAll.items.filter(v => v.series === cur.series).length && f0.current_id === cur.id && (!old || Number(f0.rev0_total) === Number(old.total_amount)));
+    const famCard = page.getByTestId('rev-family').filter({ hasText: f0.current_folio });
+    const fc = flat(await famCard.innerText());
+    const amt = v => Number(v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    check('tarjeta: folio · cliente, requisición · CR, Rev. N · estatus', fc.includes(`${f0.current_folio} · ${f0.client_name}`) && fc.includes(`${f0.requisition} · ${f0.change_request || 'Sin Change Request'}`) && fc.includes(`Rev. ${f0.current_rev} · ${f0.status_label}`), fc);
+    check('tarjeta: revisiones, total Rev. 0 y total vigente con moneda', fc.includes(`${f0.revisions} REVISIONES`) && fc.includes(`${amt(f0.rev0_total)} ${f0.rev0_currency} (REV. ${f0.rev0_rev})`) && fc.includes(`${amt(f0.current_total)} ${f0.currency} (VIGENTE)`), fc);
+    const bySeries = page.waitForResponse(r => /\/quotes\/revisions\?.*q=/.test(r.url()));
+    await page.getByRole('searchbox', { name: 'Buscar' }).fill(f0.requisition);
+    check('búsqueda de familias en el servidor (200)', (await bySeries).status() === 200);
+    await page.waitForTimeout(400);
+    check('búsqueda por requisición encuentra la familia', await page.getByTestId('rev-family').filter({ hasText: f0.current_folio }).count() === 1);
+    const none = page.waitForResponse(r => /\/quotes\/revisions\?.*q=zzz-sin-coincidencias/.test(r.url()));
+    await page.getByRole('searchbox', { name: 'Buscar' }).fill('zzz-sin-coincidencias');
+    await none; await page.getByText('No se encontraron cotizaciones que coincidan con la búsqueda.').waitFor();
+    check('búsqueda sin resultados muestra el estado vacío', await page.getByTestId('rev-family').count() === 0);
+    const cleared = page.waitForResponse(r => /\/quotes\/revisions\?/.test(r.url()) && !/q=/.test(r.url()));
+    await page.getByRole('searchbox', { name: 'Buscar' }).fill(''); await cleared;
+    const byGroup = page.waitForResponse(r => /\/quotes\/revisions\?.*status=approved/.test(r.url()));
+    await page.getByRole('combobox', { name: 'Estatus' }).selectOption('approved');
+    const grp = await (await byGroup).json();
+    check('filtro de estatus en el servidor (aprobadas)', grp.total === S1.current_approved && grp.items.every(x => x.status_group === 'approved'));
+    await page.getByRole('combobox', { name: 'Estatus' }).selectOption('all');
+    await page.getByTestId('rev-family').filter({ hasText: f0.current_folio }).waitFor();
+    // VER PDF → vista previa de la revisión vigente (sin costos internos)
+    const pdfResp = page.waitForResponse(r => r.url().endsWith(`/quotes/customer-quotes/${f0.current_id}`));
+    await famCard.getByRole('button', { name: 'VER PDF' }).click();
+    check('VER PDF consulta la revisión vigente (200)', (await pdfResp).status() === 200);
+    const pdfFrame = page.getByTestId('rev-pdf').frameLocator('iframe');
+    const pdfText = flat(await pdfFrame.locator('body').innerText());
+    check('VER PDF: folio, Rev. N, cliente y total', [f0.current_folio, `Rev. ${f0.current_version - 1}`, f0.client_name, usd(f0.current_total)].every(x => pdfText.includes(x)), pdfText.slice(0, 300));
+    check('VER PDF aislado en iframe sandbox', (await page.getByTestId('rev-pdf').locator('iframe').getAttribute('sandbox')) === '');
+    await page.getByTestId('rev-pdf').getByRole('button', { name: 'Cerrar' }).click();
+    // SOLICITAR MODIFICACIÓN → formulario R3A real (o motivo de bloqueo)
+    await famCard.getByRole('button', { name: 'SOLICITAR MODIFICACIÓN' }).click();
+    if (f0.can_request_change) {
+      const req = await api(`/api/v1/recovery/requisitions/${f0.requisition_id}`);
+      const modal = page.getByTestId('change-modal'); await modal.getByTestId('change-line').first().waitFor();
+      const mt = flat(await modal.innerText());
+      check('modificación: requisición, cotización y Rev. actual → nueva', mt.includes(f0.requisition) && mt.includes(f0.current_folio) && (await modal.locator('input[disabled]').nth(1).inputValue()) === `Rev. ${req.current_revision_number} → Rev. ${req.current_revision_number + 1}`, mt.slice(0, 200));
+      check('modificación: partidas antes y después de la requisición', await modal.getByTestId('change-line').count() === req.items.length && mt.includes(req.items[0].description));
+      await modal.getByRole('button', { name: 'Registrar solicitud' }).click();
+      check('modificación: validación de obligatorios sin enviar nada', mt && await modal.getByText('Indica quién solicita el cambio.').count() >= 1 && await modal.getByText('Selecciona el origen.').count() === 1 && writes.length === 0);
+      await modal.getByRole('button', { name: 'X Cerrar' }).click();
+      check('modificación: el modal se cierra sin registrar', await page.getByTestId('change-modal').count() === 0);
+    } else {
+      await page.getByTestId('rev-blocked').waitFor();
+      check('modificación bloqueada con motivo', /importado|RF1|Solo quien capturó|pendiente de revisión/.test(await page.getByTestId('rev-blocked').innerText()));
+      await page.getByRole('button', { name: 'Entendido' }).click();
+    }
     await shot(page, 'cot_1_revisiones');
+    // ABRIR REV. VIGENTE → tarjeta 6 con la versión vigente seleccionada
+    await famCard.getByRole('button', { name: 'ABRIR REV. VIGENTE' }).click();
+    await page.getByText(f0.requisition).first().waitFor();
+    check('ABRIR REV. VIGENTE muestra la versión vigente', flat(await page.locator('main').innerText()).includes(usd(f0.current_total)));
+    check('ABRIR REV. VIGENTE abre la tarjeta 6 con la versión seleccionada', (await page.getByRole('button', { name: /Cotización al cliente/ }).first().getAttribute('aria-pressed')) === 'true' && (await page.getByRole('combobox', { name: 'Cotización al cliente' }).inputValue()) === f0.current_id);
 
     // 9 · Decisión del cliente
     await page.getByRole('button', { name: /Decisión del cliente/ }).click();

@@ -69,3 +69,31 @@ ${cond ? `<div class="box">${cond}</div>` : ''}
 <p class="note">${L('Vista generada desde MariaDB (solo lectura). No incluye costos internos del proveedor.', 'View generated from MariaDB (read-only). Internal supplier costs are not included.')}</p>
 </body></html>`;
 }
+
+// ---- Revisiones / modificaciones (familias de cotización al cliente: Rev. 0 → Rev. N) ----
+const REV_LABELS_EN = {
+  aprobada: 'Approved', borrador: 'Draft', sustituida: 'Superseded', rechazada: 'Rejected', 'cambios solicitados': 'Changes requested',
+  'autorizada internamente': 'Internally authorized', 'enviada al cliente': 'Sent to client', 'revisada al cliente': 'Reviewed with client', cancelada: 'Cancelled',
+};
+/** Status label of the current revision (server label: original imported text or derived from codes). */
+export const revStatusLabel = (label, en = false) => (en ? REV_LABELS_EN[fold(label)] || String(label || '—') : String(label || '—'));
+/** Pill colours of the original design (Aprobada green, Borrador blue, Revisada purple, Sustituida grey). */
+export function revStatusTone(label) {
+  const k = fold(label);
+  if (/sustitu|supersed|cancel/.test(k)) return 'bg-slate-100 text-slate-700 border-slate-200';
+  if (/rechaz|reject/.test(k)) return 'bg-rose-100 text-rose-800 border-rose-200';
+  if (/aprob|approv/.test(k)) return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  if (/cambio|change/.test(k)) return 'bg-amber-100 text-amber-800 border-amber-200';
+  if (/revisad|enviad|sent|issued/.test(k)) return 'bg-purple-100 text-purple-800 border-purple-200';
+  if (/autoriz/.test(k)) return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+  return 'bg-blue-100 text-blue-800 border-blue-200';
+}
+const CR_STATUS = { pending_review: ['Pendiente de revisión', 'Pending review'], applied: ['Aplicada', 'Applied'], rejected: ['Rechazada', 'Rejected'], withdrawn: ['Retirada', 'Withdrawn'] };
+export const crStatusLabel = (code, en = false) => (code ? CR_STATUS[code]?.[en ? 1 : 0] ?? String(code) : '');
+/** "requisición · CR-2026-001" or "requisición · Sin Change Request" (subtitle of each family card). */
+export const familyReference = (f, en = false) => `${f.requisition || '—'} · ${f.change_request || (en ? 'No Change Request' : 'Sin Change Request')}`;
+/** Plain amount for the stat boxes (currency shown below it, as in the design). */
+export function plainAmount(v, en = false) {
+  const n = num(v);
+  return n === null ? '—' : n.toLocaleString(en ? 'en-US' : 'es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}

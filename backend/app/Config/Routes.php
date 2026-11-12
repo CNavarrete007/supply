@@ -51,6 +51,7 @@ $routes->get('api/v1/quotes/comparison', 'QuoteController::comparison');
 $routes->get('api/v1/quotes/customer-quotes', 'QuoteController::customerQuotes');
 $routes->get('api/v1/quotes/customer-quotes/(:segment)', 'QuoteController::customerQuote/$1');
 $routes->get('api/v1/quotes/awards', 'QuoteController::awards');
+$routes->get('api/v1/quotes/revisions', 'QuoteController::revisions');
 // Órdenes de Compra: read-only, Master Admin only (issuing/authorizing/amending stays blocked).
 $routes->get('api/v1/purchase-orders', 'PurchaseOrderController::index');
 $routes->get('api/v1/purchase-orders/issuance', 'PurchaseOrderController::issuance');

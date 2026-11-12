@@ -19,3 +19,4 @@ export const getComparison = (requisition = 'all', s) => getJson(`/api/v1/quotes
 export const listCustomerQuotes = (o = {}, s) => getJson(`/api/v1/quotes/customer-quotes?${qs({ page: 1, page_size: 25, ...o })}`, s);
 export const getCustomerQuote = (id, s) => one('/api/v1/quotes/customer-quotes', id, s);
 export const listAwards = (o = {}, s) => getJson(`/api/v1/quotes/awards?${qs({ page: 1, page_size: 25, ...o })}`, s);
+export const listRevisionFamilies = (o = {}, s) => getJson(`/api/v1/quotes/revisions?${qs({ page: 1, page_size: 24, ...o })}`, s);
