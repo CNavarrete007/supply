@@ -102,6 +102,22 @@ export function toPayload(f) {
   };
 }
 
+/**
+ * Content signature used by the autosave: equal signatures = nothing new to save. The logo is represented by a marker
+ * (new file name+size / remove / unchanged) so the large data URL is not compared on every keystroke.
+ */
+export function payloadSignature(f) {
+  const marker = f.logo?.next ? `new:${f.logo.next.name}:${f.logo.next.size}` : f.logo?.remove ? 'remove' : null;
+  return JSON.stringify({ ...toPayload({ ...f, logo: { current: null, next: null, remove: false } }), logo: marker });
+}
+
+/** Required fields still missing (for the autosave hint). */
+export function missingRequired(f, en = false) {
+  const t = v => String(v ?? '').trim();
+  return [['code', 'No. de cliente', 'client number'], ['name', 'razón social', 'legal name'], ['project', 'proyecto', 'project'], ['contract_reference', 'número de contrato', 'contract number']]
+    .filter(([k]) => !t(f[k])).map(([, es, e]) => (en ? e : es));
+}
+
 /** Field from a server 422 (`error.field`, e.g. "repeat_policy.min_margin_pct") → form error key. */
 export function serverField(field) {
   const map = { 'repeat_policy.price_validity_days': 'days', 'repeat_policy.min_margin_pct': 'margin', 'repeat_policy.contract_valid_until': 'until', 'repeat_policy.sales_policy': 'sales', 'repeat_policy.sourcing_policy': 'sourcing', phone: 'phone', emails: 'emails', contacts: 'contacts' };

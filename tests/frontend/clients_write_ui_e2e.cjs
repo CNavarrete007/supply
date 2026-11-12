@@ -1,4 +1,4 @@
-// Clientes · E2E de ESCRITURA desde la interfaz (Chromium) contra Vite + API + MariaDB SINTÉTICAS. Crea y edita clientes
+// Clientes · E2E de ESCRITURA y GUARDADO AUTOMÁTICO desde la interfaz (Chromium) contra Vite + API + MariaDB SINTÉTICAS. Crea y edita clientes
 // QA-UI-*: úsese SOLO en la base desechable (exige SF_SYNTHETIC_WRITES=1). Solo se permiten POST/PUT a
 // /api/v1/catalogs/clients (y login/logout); cualquier otra escritura se aborta y hace fallar la prueba.
 // Uso: SF_UI=http://127.0.0.1:5173 SF_QA_PASSWORD=... SF_SYNTHETIC_WRITES=1 [SF_SHOTS=<dir>] node tests/frontend/clients_write_ui_e2e.cjs
@@ -42,24 +42,30 @@ function png(w, h, [r, g, b]) {
     await page.locator('button[type=submit]').click();
     await page.locator('nav button').first().waitFor({ timeout: 20000 });
     const api = async p => (await page.request.get(UI + p)).json();
+    const nextWrite = (method, re) => page.waitForResponse(r => r.request().method() === method && re.test(new URL(r.url()).pathname), { timeout: 15000 });
+    const status = async () => (await page.getByTestId('autosave-status').innerText()).replace(/\s+/g, ' ');
+    const POSTRE = /^\/api\/v1\/catalogs\/clients$/; const PUTRE = /^\/api\/v1\/catalogs\/clients\/[0-9a-f-]{36}$/;
     await page.locator('nav button').filter({ hasText: /Clientes$/ }).click();
     await page.getByRole('button', { name: /Nuevo cliente/ }).first().click();
     const form = page.getByTestId('client-form');
     await form.waitFor();
     check('"Nuevo cliente" abre el formulario en modo alta', (await page.getByTestId('form-mode').innerText()).includes('Nuevo registro'));
     check('selectores muestran captura manual', (await page.getByLabel('Seleccionar por número de cliente').locator('option:checked').textContent()).includes('+ Nuevo cliente / captura manual') && (await page.getByLabel('Seleccionar por razón social').locator('option:checked').textContent()).includes('+ Nueva compañía / captura manual'));
+    check('indicador explica cuándo inicia el guardado automático', (await status()).includes('El guardado automático inicia al completar'));
 
     // Validación en pantalla: sin red
-    const before = writes.length;
     await page.getByRole('button', { name: 'Guardar cliente' }).click();
     await page.getByTestId('save-message').waitFor();
     const errs = await form.locator('p[role=alert]').allTextContents();
-    check('obligatorios marcados sin enviar al servidor', writes.length === before && ['El número de cliente es obligatorio.', 'La razón social es obligatoria.', 'El proyecto es obligatorio.', 'El número de contrato es obligatorio.'].every(x => errs.includes(x)), errs.join(' | '));
+    check('obligatorios marcados sin enviar al servidor', writes.length === 0 && ['El número de cliente es obligatorio.', 'La razón social es obligatoria.', 'El proyecto es obligatorio.', 'El número de contrato es obligatorio.'].every(x => errs.includes(x)), errs.join(' | '));
 
-    // Captura completa
+    // Captura (un correo inválido mantiene el formulario sin guardar mientras se captura)
     const code = `QA-UI-${RUN}`;
+    await page.getByLabel('Correos electrónicos 1', { exact: true }).fill('ana@ui.invalid');
+    await page.getByLabel('Correos electrónicos 2', { exact: true }).fill('no-es-correo');
     await page.getByLabel('No. de cliente', { exact: true }).fill(code);
     await page.getByLabel('Razón social', { exact: true }).fill(`Cliente UI ${RUN}`);
+    check('incompleto: el indicador lista lo que falta', (await status()).includes('Para guardar automáticamente completa: proyecto, número de contrato.'), await status());
     await page.getByLabel('Nombre comercial', { exact: true }).fill('Marca UI');
     await page.getByLabel('RFC', { exact: true }).fill('XAXX010101000');
     await page.getByLabel('Proyecto', { exact: true }).fill('PRY-UI');
@@ -70,8 +76,6 @@ function png(w, h, [r, g, b]) {
     await page.getByRole('button', { name: 'Agregar otro contacto' }).click();
     await page.getByLabel('Contactos 3', { exact: true }).fill('Carla UI');
     check('agregar contacto crea otra fila', await page.getByTestId('rows-contacts').locator('input').count() === 3);
-    await page.getByLabel('Correos electrónicos 1', { exact: true }).fill('ana@ui.invalid');
-    await page.getByLabel('Correos electrónicos 2', { exact: true }).fill('no-es-correo');
     await page.getByLabel('Estatus', { exact: true }).selectOption('active');
     await page.getByLabel('Dirección', { exact: true }).fill('Av. Sintética 100');
     await page.getByLabel('Condiciones comerciales', { exact: true }).fill('Crédito 30 días');
@@ -85,85 +89,122 @@ function png(w, h, [r, g, b]) {
     await pol.getByLabel('Margen mínimo de referencia %').fill('15');
     await page.locator('#client-logo-file').setInputFiles({ name: 'logo-ui.png', mimeType: 'image/png', buffer: png(900, 300, [37, 99, 235]) });
     await page.getByTestId('logo-box').locator('img').waitFor();
-    const logoName = await page.getByTestId('logo-name').innerText();
-    check('logotipo elegido: vista previa y compresión', /logo-ui\.(webp|png) · \d+ KB/.test(logoName), logoName);
+    check('logotipo elegido: vista previa y compresión', /logo-ui\.(webp|png) · \d+ KB/.test(await page.getByTestId('logo-name').innerText()));
     await page.locator('#client-logo-file').setInputFiles({ name: 'falso.png', mimeType: 'text/html', buffer: Buffer.from('<script>alert(1)</script>') });
     check('archivo que no es imagen se rechaza en pantalla', (await page.getByTestId('logo-box').innerText()).includes('Solo se permiten imágenes PNG, JPG o WEBP.'));
-    await page.getByRole('button', { name: 'Guardar cliente' }).click();
-    check('correo inválido detenido antes de enviar', (await form.innerText()).includes('Revisa el formato de los correos.') && writes.length === before);
-    await page.getByLabel('Correos electrónicos 2', { exact: true }).fill('beto@ui.invalid');
+    await page.waitForTimeout(2200);
+    check('correo inválido: nada se guarda automáticamente', writes.length === 0 && (await status()).includes('Corrige los campos marcados'), await status());
     await shot(page, 'clientes_w1_captura');
-    const post = page.waitForResponse(r => r.request().method() === 'POST' && /\/api\/v1\/catalogs\/clients$/.test(r.url()));
-    await page.getByRole('button', { name: 'Guardar cliente' }).click();
+
+    // 1) Alta automática: al corregir el correo, sin pulsar "Guardar cliente"
+    const post = nextWrite('POST', POSTRE);
+    await page.getByLabel('Correos electrónicos 2', { exact: true }).fill('beto@ui.invalid');
     const pr = await post;
-    check('alta: POST 201', pr.status() === 201, String(pr.status()));
+    check('alta automática: POST 201 sin pulsar Guardar', pr.status() === 201, String(pr.status()));
     const created = await pr.json();
     await page.getByTestId('form-mode').filter({ hasText: `Editando ${code} · v1` }).waitFor();
-    check('mensaje de éxito y ficha en modo edición v1', (await page.getByTestId('save-message').innerText()).includes(`Cliente ${code} dado de alta en MariaDB.`));
-    const req = writes.length;
+    check('mensaje de alta e indicador "guardado automáticamente"', (await page.getByTestId('save-message').innerText()).includes(`Cliente ${code} dado de alta en MariaDB y agregado a la matriz.`) && (await status()).includes('✓ Guardado automáticamente en la matriz · versión 1'), await status());
     const d1 = (await api(`/api/v1/catalogs/clients/${created.id}`)).item;
     check('MariaDB: datos guardados', d1.code === code && d1.name === `Cliente UI ${RUN}` && d1.brand_name === 'Marca UI' && d1.project === 'PRY-UI' && d1.contract_reference === 'CTR-2026-001' && d1.address === 'Av. Sintética 100' && d1.terms === 'Crédito 30 días', JSON.stringify(d1).slice(0, 300));
     check('MariaDB: contactos, correos y teléfono', d1.contacts.map(c => c.name).join() === 'Ana UI,Beto UI,Carla UI' && d1.channels.filter(c => c.type === 'email').map(c => c.value).join() === 'ana@ui.invalid,beto@ui.invalid' && d1.channels.some(c => c.type === 'phone' && c.value === '833-456-7890'));
     check('MariaDB: política de recompra', d1.repeat_policy.sales_policy === 'guaranteed' && d1.repeat_policy.sourcing_policy === 'validate_history' && d1.repeat_policy.price_validity_days === 30 && d1.repeat_policy.contract_valid_until === '2027-06-30' && Number(d1.repeat_policy.min_margin_pct) === 15);
     const logo = await page.request.get(UI + `/api/v1/catalogs/clients/${created.id}/logo`);
-    check('logotipo guardado y servido como imagen (≤ 512 px)', logo.status() === 200 && /^image\/(webp|png)$/.test(logo.headers()['content-type']) && d1.logo && d1.logo.size <= 400 * 1024, `${logo.status()} ${logo.headers()['content-type']}`);
-    await page.getByTestId('logo-box').locator('img[alt="Logotipo actual"]').waitFor();
-    check('ficha muestra el logotipo guardado', true);
+    check('logotipo guardado y servido como imagen', logo.status() === 200 && /^image\/(webp|png)$/.test(logo.headers()['content-type']) && d1.logo && d1.logo.size <= 400 * 1024);
+    await page.waitForTimeout(2200);
+    check('sin cambios nuevos no hay más escrituras (no reenvía el logotipo)', writes.length === 1, writes.join(', '));
 
-    // Edición
-    await page.getByLabel('Razón social', { exact: true }).fill(`Cliente UI ${RUN} editado`);
+    // 2) Edición automática: varios cambios seguidos → una sola escritura
+    const put1 = nextWrite('PUT', PUTRE);
+    await page.getByLabel('Razón social', { exact: true }).fill('');
+    await page.getByLabel('Razón social', { exact: true }).pressSequentially(`Cliente UI ${RUN} editado`, { delay: 30 });
     await page.getByRole('button', { name: 'Quitar Contactos 2' }).click();
     await page.getByLabel('Estatus', { exact: true }).selectOption('blocked');
     await pol.getByLabel('Política de precio al cliente', { exact: true }).selectOption({ label: 'Contrato / Price List / Rate Card' });
     await page.getByLabel('Teléfono', { exact: true }).fill('833-456-7890 / 81-1111-2222');
-    const put = page.waitForResponse(r => r.request().method() === 'PUT');
-    await page.getByRole('button', { name: 'Guardar cliente' }).click();
-    const ur = await put;
-    check('edición: PUT 200 con If-Match', ur.status() === 200 && ur.request().headers()['if-match'] === '"1"', `${ur.status()} ${ur.request().headers()['if-match']}`);
+    const ur = await put1;
+    check('edición automática: PUT 200 con If-Match "1"', ur.status() === 200 && ur.request().headers()['if-match'] === '"1"', `${ur.status()} ${ur.request().headers()['if-match']}`);
     await page.getByTestId('form-mode').filter({ hasText: `Editando ${code} · v2` }).waitFor();
+    await page.waitForTimeout(2200);
+    check('una ráfaga de cambios = una sola actualización', writes.filter(w => w.startsWith('PUT')).length === 1, writes.join(', '));
     const d2 = (await api(`/api/v1/catalogs/clients/${created.id}`)).item;
     check('MariaDB: edición aplicada (razón social, estatus, contactos, teléfonos, política)', d2.name.endsWith('editado') && d2.status === 'blocked' && d2.contacts.map(c => c.name).join() === 'Ana UI,Carla UI' && d2.channels.filter(c => c.type === 'phone').length === 2 && d2.repeat_policy.sales_policy === 'contract', JSON.stringify(d2).slice(0, 300));
     await shot(page, 'clientes_w2_editado');
 
-    // Conflicto de versión: otra sesión guarda primero
-    const token = (await (await page.request.get(UI + '/api/v1/auth/csrf')).json()).csrf_token;
-    const other = await page.request.put(UI + `/api/v1/catalogs/clients/${created.id}`, { headers: { 'Content-Type': 'application/json', 'X-SF-CSRF': token, 'Idempotency-Key': crypto.randomUUID(), 'If-Match': '"2"' },
-      data: { code, name: `Cliente UI ${RUN} (otra sesión)`, project: 'PRY-UI', contract_reference: 'CTR-2026-001', status: 'blocked', contacts: ['Ana UI'], emails: [], phone: '', repeat_policy: {} } });
-    check('otra sesión guarda v3', other.status() === 200);
-    await page.getByLabel('Observaciones', { exact: true }).fill('Cambio sobre versión vieja');
-    await page.getByRole('button', { name: 'Guardar cliente' }).click();
-    await page.getByTestId('save-message').filter({ hasText: 'Otra persona modificó este cliente' }).waitFor();
-    check('versión vieja → aviso de conflicto (412), sin sobrescribir', (await api(`/api/v1/catalogs/clients/${created.id}`)).item.name.endsWith('(otra sesión)'));
-    await page.getByRole('button', { name: 'Recargar ficha' }).click();
-    await page.getByTestId('form-mode').filter({ hasText: `Editando ${code} · v3` }).waitFor();
-    check('"Recargar ficha" trae la versión vigente (v3 de la otra sesión)', (await page.getByLabel('Razón social', { exact: true }).inputValue()).endsWith('(otra sesión)'));
-
-    // Pie de la ficha: solo Guardar cliente, Limpiar y Ver matriz
-    const footer = await page.getByTestId('form-actions').getByRole('button').allInnerTexts();
-    check('pie de la ficha con tres botones', footer.map(t => t.replace(/\s+/g, ' ').trim()).join(' | ') === '💾Guardar cliente | 🧹Limpiar | 📋Ver matriz' || footer.map(t => t.replace(/[^\p{L} ]/gu, '').trim()).join('|') === 'Guardar cliente|Limpiar|Ver matriz', footer.join(' | '));
-    // "Limpiar" vacía la ficha y la deja lista para un alta nueva (no borra nada en MariaDB)
-    await page.getByLabel('Observaciones', { exact: true }).fill('Texto sin guardar');
-    await page.getByRole('button', { name: 'Limpiar' }).click();
-    check('"Limpiar" deja el formulario vacío en modo alta', (await page.getByTestId('form-mode').innerText()).includes('Nuevo registro') && (await page.getByLabel('No. de cliente', { exact: true }).inputValue()) === '' && (await page.getByLabel('Observaciones', { exact: true }).inputValue()) === '' && (await page.getByLabel('Seleccionar por número de cliente').inputValue()) === '');
-    check('"Limpiar" no modifica el cliente guardado', (await api(`/api/v1/catalogs/clients/${created.id}`)).item.name.endsWith('(otra sesión)'));
-
-    // Número duplicado (formulario limpio)
-    await page.getByLabel('No. de cliente', { exact: true }).fill(code);
-    await page.getByLabel('Razón social', { exact: true }).fill('Duplicado UI');
-    await page.getByLabel('Proyecto', { exact: true }).fill('P'); await page.getByLabel('Número de contrato', { exact: true }).fill('C');
-    await page.getByRole('button', { name: 'Guardar cliente' }).click();
-    await page.getByTestId('save-message').filter({ hasText: 'Ese número de cliente ya está registrado' }).waitFor();
-    check('número duplicado → 409 con mensaje y campo marcado', (await form.innerText()).includes('Número ya registrado.'));
-
-    // Matriz
+    // 3) Matriz sincronizada
     await page.getByRole('button', { name: 'Ver matriz' }).click();
-    await page.getByLabel('Buscar en catálogo').fill(code);
-    await page.getByRole('row').filter({ hasText: code }).first().waitFor();
+    await page.getByTestId('last-saved').waitFor();
+    check('matriz: aviso del último guardado', (await page.getByTestId('last-saved').innerText()).includes(`Cambios guardados: ${code} · Cliente UI ${RUN} editado · versión 2`));
+    await page.getByRole('button', { name: 'Mostrar en la matriz' }).click();
+    await page.locator('tr[data-saved="true"]').waitFor();
+    await page.waitForFunction(c => [...document.querySelectorAll('tbody tr')].every(tr => tr.innerText.includes(c)), code);
     const rowsTxt = await page.getByRole('row').filter({ hasText: code }).allInnerTexts();
-    check('el nuevo cliente aparece en la matriz', rowsTxt.length === 1 && rowsTxt[0].includes(`Cliente UI ${RUN} (otra sesión)`), rowsTxt.join(' || ').slice(0, 300));
+    check('matriz: fila actualizada y resaltada', rowsTxt.length === 1 && rowsTxt[0].includes(`Cliente UI ${RUN} editado`) && rowsTxt[0].includes('Recién guardado') && rowsTxt[0].includes('Bloqueado') && await page.locator('tr[data-saved="true"]').count() === 1, rowsTxt.join(' || ').slice(0, 300));
+    await shot(page, 'clientes_w3_matriz');
+
+    // 4) Guardado manual inmediato desde la ficha
+    await page.getByRole('button', { name: 'Abrir ficha' }).click();
+    await page.getByTestId('form-mode').filter({ hasText: `Editando ${code} · v2` }).waitFor();
+    const put2 = nextWrite('PUT', PUTRE);
+    await page.getByLabel('Observaciones', { exact: true }).fill('Ajuste manual');
+    await page.getByRole('button', { name: 'Guardar cliente' }).click();
+    check('"Guardar cliente" guarda al instante (PUT 200)', (await put2).status() === 200);
+    await page.getByTestId('save-message').filter({ hasText: `Cambios de ${code} guardados en la matriz (versión 3).` }).waitFor();
+    await page.getByRole('button', { name: 'Guardar cliente' }).click();
+    check('sin cambios: "Guardar cliente" lo indica sin escribir', (await page.getByTestId('save-message').innerText()).includes('Sin cambios pendientes') && writes.filter(w => w.startsWith('PUT')).length === 2);
+
+    // 5) Conflicto de versión: otra sesión guarda primero → aviso y pausa
+    const token = (await (await page.request.get(UI + '/api/v1/auth/csrf')).json()).csrf_token;
+    const other = await page.request.put(UI + `/api/v1/catalogs/clients/${created.id}`, { headers: { 'Content-Type': 'application/json', 'X-SF-CSRF': token, 'Idempotency-Key': crypto.randomUUID(), 'If-Match': '"3"' },
+      data: { code, name: `Cliente UI ${RUN} (otra sesión)`, project: 'PRY-UI', contract_reference: 'CTR-2026-001', status: 'blocked', contacts: ['Ana UI'], emails: [], phone: '', repeat_policy: {} } });
+    check('otra sesión guarda v4', other.status() === 200);
+    const put3 = nextWrite('PUT', PUTRE);
+    await page.getByLabel('Observaciones', { exact: true }).fill('Cambio sobre versión vieja');
+    check('versión vieja → 412', (await put3).status() === 412);
+    await page.getByTestId('save-message').filter({ hasText: 'Otra persona modificó este cliente' }).waitFor();
+    const putsAtConflict = writes.filter(w => w.startsWith('PUT')).length;
+    await page.getByLabel('Observaciones', { exact: true }).fill('Otro cambio');
+    await page.waitForTimeout(2200);
+    check('conflicto: guardado automático en pausa (no reintenta solo)', writes.filter(w => w.startsWith('PUT')).length === putsAtConflict && (await status()).includes('en pausa'), await status());
+    check('conflicto: no se sobrescribió la otra sesión', (await api(`/api/v1/catalogs/clients/${created.id}`)).item.name.endsWith('(otra sesión)'));
+    await page.getByRole('button', { name: 'Recargar ficha' }).click();
+    await page.getByTestId('form-mode').filter({ hasText: `Editando ${code} · v4` }).waitFor();
+    check('"Recargar ficha" trae la versión vigente y reanuda', (await page.getByLabel('Razón social', { exact: true }).inputValue()).endsWith('(otra sesión)'));
+
+    // 6) Pie de la ficha y "Limpiar": guarda lo pendiente antes de vaciar
+    const footer = await page.getByTestId('form-actions').getByRole('button').allInnerTexts();
+    check('pie de la ficha con tres botones', footer.map(t => t.replace(/[^\p{L} ]/gu, '').trim()).join('|') === 'Guardar cliente|Limpiar|Ver matriz', footer.join(' | '));
+    const put4 = nextWrite('PUT', PUTRE);
+    await page.getByLabel('Observaciones', { exact: true }).fill('Pendiente al limpiar');
+    await page.getByRole('button', { name: 'Limpiar' }).click();
+    check('"Limpiar" guarda primero lo pendiente', (await put4).status() === 200);
+    await page.getByTestId('form-mode').filter({ hasText: 'Nuevo registro' }).waitFor();
+    check('"Limpiar" deja el formulario vacío en modo alta', (await page.getByLabel('No. de cliente', { exact: true }).inputValue()) === '' && (await page.getByLabel('Observaciones', { exact: true }).inputValue()) === '' && (await page.getByLabel('Seleccionar por número de cliente').inputValue()) === '');
+    check('MariaDB conserva lo guardado antes de limpiar', (await api(`/api/v1/catalogs/clients/${created.id}`)).item.notes === 'Pendiente al limpiar');
+
+    // 7) Número duplicado en alta automática → 409; al corregirlo se da de alta solo
+    const dup = nextWrite('POST', POSTRE);
+    await page.getByLabel('No. de cliente', { exact: true }).fill(code);
+    await page.getByLabel('Razón social', { exact: true }).fill(`Segundo UI ${RUN}`);
+    await page.getByLabel('Proyecto', { exact: true }).fill('P'); await page.getByLabel('Número de contrato', { exact: true }).fill('C');
+    check('número duplicado → 409', (await dup).status() === 409);
+    await page.getByTestId('save-message').filter({ hasText: 'Ese número de cliente ya está registrado' }).waitFor();
+    check('campo de número marcado', (await form.innerText()).includes('Número ya registrado.'));
+    const post2 = nextWrite('POST', POSTRE);
+    await page.getByLabel('No. de cliente', { exact: true }).fill(`${code}-2`);
+    check('número corregido → alta automática 201', (await post2).status() === 201);
+    await page.getByTestId('form-mode').filter({ hasText: `Editando ${code}-2 · v1` }).waitFor();
+
+    // 8) "Ver matriz" guarda lo pendiente antes de cambiar de tarjeta
+    const put5 = nextWrite('PUT', PUTRE);
+    await page.getByLabel('Razón social', { exact: true }).fill(`Segundo UI ${RUN} final`);
+    await page.getByRole('button', { name: 'Ver matriz' }).click();
+    check('"Ver matriz" guarda primero lo pendiente', (await put5).status() === 200);
+    await page.getByTestId('last-saved').filter({ hasText: `Segundo UI ${RUN} final` }).waitFor();
+    await page.getByLabel('Buscar en catálogo').fill(code);
+    await page.getByRole('row').filter({ hasText: `${code}-2` }).first().waitFor();
+    check('matriz refleja el segundo cliente con su último cambio', (await page.getByRole('row').filter({ hasText: `${code}-2` }).innerText()).includes(`Segundo UI ${RUN} final`));
     await page.setViewportSize({ width: 390, height: 900 });
     check('sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
-    check('solo escrituras permitidas (1 alta + 1 edición + 1 conflicto + 1 duplicado)', writes.filter(w => w.startsWith('POST')).length === 2 && writes.filter(w => w.startsWith('PUT')).length === 2 && req === 1, writes.join(', '));
   } catch (e) {
     check('flujo E2E sin excepciones', false, String(e).slice(0, 400));
   }

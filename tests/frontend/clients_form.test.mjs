@@ -1,7 +1,7 @@
 // Clientes · formulario de alta/actualización (lógica pura). Uso: node --test tests/frontend/clients_form.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SALES_POLICIES, SOURCING_POLICIES, policyCode, policyLabel, emptyForm, formFromRecord, validateForm, toPayload, serverField, saveErrorMessage } from '../../src/views/clients/form.mjs';
+import { SALES_POLICIES, SOURCING_POLICIES, policyCode, policyLabel, emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage } from '../../src/views/clients/form.mjs';
 
 test('opciones del diseño y códigos de ≤ 32 caracteres', () => {
   assert.deepEqual(SALES_POLICIES.map(o => o[1]), ['Precio sujeto a nueva cotización', 'Precio al cliente garantizado', 'Mixta / por partida', 'Contrato / Price List / Rate Card', 'Revisión manual']);
@@ -47,4 +47,19 @@ test('mensajes de error del guardado', () => {
   assert.match(saveErrorMessage(409, 'CODE_TAKEN'), /ya está registrado/); assert.match(saveErrorMessage(412, 'STALE_VERSION'), /Otra persona/);
   assert.match(saveErrorMessage(503, 'CATALOG_WRITE_NOT_PROVISIONED'), /aprovisionar/); assert.match(saveErrorMessage(401, 'NOT_AUTHENTICATED'), /sesión/);
   assert.match(saveErrorMessage(500, 'X', true), /No partial changes/);
+});
+
+test('guardado automático: firma de contenido y obligatorios faltantes', () => {
+  const rec = formFromRecord({ id: 'x', version: 2, code: 'C1', name: 'N', project: 'P', contract_reference: 'K', contacts: [], channels: [] });
+  const sig = payloadSignature(rec);
+  assert.equal(payloadSignature({ ...rec, version: 3, id: 'y' }), sig, 'versión e id no cuentan como cambio');
+  assert.equal(payloadSignature({ ...rec, contacts: ['', ''] }), sig, 'filas vacías no cuentan como cambio');
+  assert.notEqual(payloadSignature({ ...rec, notes: 'nuevo' }), sig);
+  assert.notEqual(payloadSignature({ ...rec, policy: { ...rec.policy, margin: '10' } }), sig);
+  const withLogo = { ...rec, logo: { current: null, next: { dataUrl: 'data:image/webp;base64,' + 'A'.repeat(5000), name: 'l.webp', size: 3750 }, remove: false } };
+  assert.notEqual(payloadSignature(withLogo), sig); assert.ok(payloadSignature(withLogo).length < 1000, 'no compara el contenido completo de la imagen');
+  assert.notEqual(payloadSignature({ ...rec, logo: { current: {}, next: null, remove: true } }), sig);
+  assert.equal(payloadSignature({ ...rec, logo: { current: { name: 'a' }, next: null, remove: false } }), sig, 'logotipo ya guardado no es cambio');
+  assert.deepEqual(missingRequired(emptyForm()), ['No. de cliente', 'razón social', 'proyecto', 'número de contrato']);
+  assert.deepEqual(missingRequired({ ...emptyForm(), code: 'A', name: 'B' }, true), ['project', 'contract number']);
 });

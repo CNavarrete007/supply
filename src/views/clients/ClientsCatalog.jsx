@@ -4,7 +4,7 @@ import { listCatalog, getCatalogRecord } from '../../catalogApi';
 import { matrixClients } from '../../matrixApi';
 import { DetailPanel, translateStatus } from '../catalog/shared';
 import { analyzeImport, TEMPLATE_HEADERS, initials, clientIndicators } from './model.mjs';
-import { emptyForm, formFromRecord, validateForm, toPayload, serverField, saveErrorMessage, SALES_POLICIES, SOURCING_POLICIES, STATUSES } from './form.mjs';
+import { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage, SALES_POLICIES, SOURCING_POLICIES, STATUSES } from './form.mjs';
 import { saveClient, fetchLogo, compressLogo } from './clientWriteApi';
 
 // Clientes · diseño Grupo Gerez (4 tarjetas) conectado a MariaDB.
@@ -62,6 +62,7 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
   const notify = (title, message, type = 'info') => { if (typeof onNotify === 'function') onNotify(title, message, type); };
   const [tab, setTab] = useState('matrix');
   const [revision, setRevision] = useState(0);
+  const [listRev, setListRev] = useState(0); // refresca matriz, selectores e indicadores tras cada guardado (no la ficha)
 
   // Directorio completo (código, nombre y requisiciones) para selectores, actividad y duplicados.
   const [all, setAll] = useState({ loading: true, error: '', items: [] });
@@ -71,7 +72,7 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
     matrixClients(c.signal).then(r => { if (!c.signal.aborted) setAll({ loading: false, error: '', items: r.items || [] }); })
       .catch(e => { if (!c.signal.aborted) setAll({ loading: false, error: e.message || 'Error', items: [] }); });
     return () => c.abort();
-  }, [revision]);
+  }, [revision, listRev]);
 
   // ---------- Matriz (paginada en el servidor; lógica existente) ----------
   const [input, setInput] = useState('');
@@ -93,7 +94,7 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
       .catch(e => { if (!c.signal.aborted) setError(e.status === 401 ? tx('Tu sesión expiró. Inicia sesión nuevamente.', 'Your session expired. Sign in again.') : e.message || tx('Error de consulta.', 'Query error.')); })
       .finally(() => { if (!c.signal.aborted) setBusy(false); });
     return () => c.abort();
-  }, [page, q, status, revision]);
+  }, [page, q, status, revision, listRev]);
   const summary = list.summary || {};
   const total = Number(list.total || 0);
   const lastPage = Math.max(1, Math.ceil(total / pageSize));
@@ -113,30 +114,51 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
   const f = ficha.item;
   const channels = type => (f?.channels || []).filter(x => x.type === type).map(x => x.value);
 
-  // ---------- Formulario de alta/actualización ----------
+  // ---------- Formulario de alta/actualización con guardado automático ----------
+  // Cada cambio se guarda solo (AUTOSAVE_MS después de la última edición) cuando los obligatorios están completos:
+  // primero crea el cliente (POST) y luego lo actualiza (PUT + If-Match). La matriz, los selectores y los indicadores
+  // se refrescan tras cada guardado SIN recargar la ficha, para no pisar lo que se esté escribiendo.
+  const AUTOSAVE_MS = 1500;
   const [form, setForm] = useState(emptyForm);
+  const formRef = useRef(form);
+  formRef.current = form;
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
+  const [auto, setAuto] = useState({ state: 'idle' }); // idle | incomplete | pending | saving | saved | error | paused
+  const [lastSaved, setLastSaved] = useState(null);
   const [logoUrl, setLogoUrl] = useState(null);
   const [logoBusy, setLogoBusy] = useState(false);
-  const saveKey = useRef(null); // misma clave al reintentar el mismo contenido (el servidor no duplica)
+  const [tick, setTick] = useState(0);
+  const savedSig = useRef(payloadSignature(emptyForm()));
+  const keyFor = useRef({ sig: '', key: '' }); // misma clave al reintentar el mismo contenido (el servidor no duplica)
+  const inFlight = useRef(null);
+  const queued = useRef(false);
+  const paused = useRef(false); // conflicto de versión o escritura no habilitada: solo se reintenta con "Guardar cliente"
   const fileRef = useRef(null);
-  useEffect(() => { if (ficha.item) { setForm(formFromRecord(ficha.item)); setErrors({}); saveKey.current = null; } }, [ficha.item]);
+  const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
+  // Aplica la ficha cargada salvo que el formulario ya tenga esa versión (la produjo el propio guardado automático).
   useEffect(() => {
-    if (!ficha.item?.id || !ficha.item?.logo) { setLogoUrl(null); return undefined; }
+    const it = ficha.item;
+    if (!it) return;
+    const cur = formRef.current;
+    if (cur.id === it.id && cur.version >= Number(it.version || 1)) return;
+    const next = formFromRecord(it);
+    savedSig.current = payloadSignature(next); paused.current = false; keyFor.current = { sig: '', key: '' };
+    setForm(next); setErrors({}); setAuto({ state: 'saved', version: next.version, loaded: true });
+  }, [ficha.item]);
+  useEffect(() => {
+    if (!ficha.item?.id || !ficha.item?.logo) { if (!formRef.current.logo.next) setLogoUrl(null); return undefined; }
     const c = new AbortController(); let url = null;
     fetchLogo(ficha.item.id, c.signal).then(u => { url = u; if (!c.signal.aborted) setLogoUrl(u); else if (u) URL.revokeObjectURL(u); }).catch(() => {});
     return () => { c.abort(); if (url) URL.revokeObjectURL(url); };
   }, [ficha.item]);
-  const touch = k => { setErrors(e => (e[k] ? { ...e, [k]: undefined } : e)); saveKey.current = null; };
+  const touch = k => setErrors(e => (e[k] ? { ...e, [k]: undefined } : e));
   const set = (k, v) => { setForm(x => ({ ...x, [k]: v })); touch(k); };
   const setPolicy = (k, v) => { setForm(x => ({ ...x, policy: { ...x.policy, [k]: v } })); touch(k); };
   const setRow = (k, i, v) => { setForm(x => ({ ...x, [k]: x[k].map((r, j) => (j === i ? v : r)) })); touch(k); };
   const addRow = k => { setForm(x => (x[k].length >= 20 ? x : { ...x, [k]: [...x[k], ''] })); touch(k); };
   const removeRow = (k, i) => { setForm(x => { const rows = x[k].filter((_, j) => j !== i); return { ...x, [k]: rows.length ? rows : [''] }; }); touch(k); };
-  const newClient = () => { setSelectedId(''); setForm(emptyForm()); setErrors({}); setSaveMsg(null); setLogoUrl(null); saveKey.current = null; };
-  const pickClient = id => { if (!id) { newClient(); return; } setSaveMsg(null); setSelectedId(id); };
   const fieldCls = 'w-full px-3.5 py-2.5 text-xs bg-white border border-slate-200 rounded-xl outline-none text-slate-800 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-400';
   const inp = k => `${fieldCls} ${errors[k] ? 'border-rose-400 bg-rose-50/30' : ''}`;
   const err = k => (errors[k] ? <p className="text-[10px] text-rose-600 mt-1" role="alert">{errors[k]}</p> : null);
@@ -150,32 +172,114 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
       setErrors(x => ({ ...x, logo: e.message === 'TYPE' ? tx('Solo se permiten imágenes PNG, JPG o WEBP.', 'Only PNG, JPG or WEBP images are allowed.') : e.message === 'SIZE' ? tx('La imagen es demasiado grande (máx. 8 MB antes de comprimir).', 'The image is too large (max 8 MB before compression).') : tx('No se pudo leer la imagen.', 'The image could not be read.') }));
     } finally { setLogoBusy(false); }
   };
-  const save = async () => {
-    setSaveMsg(null);
-    const v = validateForm(form, en);
-    if (!v.ok) { setErrors(v.errors); setSaveMsg({ kind: 'error', text: tx('Revisa los campos marcados.', 'Check the highlighted fields.') }); return; }
-    if (!saveKey.current) saveKey.current = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16));
-    setSaving(true);
-    try {
-      const r = await saveClient({ id: form.id, version: form.version, payload: toPayload(form), key: saveKey.current });
-      if (r.ok) {
-        saveKey.current = null;
-        const created = !form.id;
-        setSaveMsg({ kind: 'ok', text: created ? tx(`Cliente ${r.data.code} dado de alta en MariaDB.`, `Client ${r.data.code} created in MariaDB.`) : tx(`Cambios de ${r.data.code} guardados (versión ${r.data.version}).`, `Changes to ${r.data.code} saved (version ${r.data.version}).`) });
-        notify(tx('Clientes', 'Clients'), created ? tx(`Alta de ${r.data.code}`, `Created ${r.data.code}`) : tx(`Actualización de ${r.data.code}`, `Updated ${r.data.code}`), 'success');
-        setSelectedId(r.data.id); setRevision(n => n + 1);
-      } else {
+
+  /** Saves the current form. mode 'auto' (debounced) or 'manual' (button). Returns 'clean'|'saved'|'invalid'|'paused'|'failed'. */
+  const runSave = async mode => {
+    if (inFlight.current) {
+      queued.current = true;
+      if (mode === 'manual') { await inFlight.current; return runSave('manual'); }
+      return inFlight.current;
+    }
+    const cur = formRef.current;
+    const sig = payloadSignature(cur);
+    if (cur.id && sig === savedSig.current) {
+      if (mode === 'manual') setSaveMsg({ kind: 'ok', text: tx(`Sin cambios pendientes: ${cur.code} ya está guardado en la matriz (versión ${cur.version}).`, `No pending changes: ${cur.code} is already saved in the matrix (version ${cur.version}).`) });
+      return 'clean';
+    }
+    const v = validateForm(cur, en);
+    if (!v.ok) {
+      if (mode === 'manual') { setErrors(v.errors); setSaveMsg({ kind: 'error', text: tx('Revisa los campos marcados.', 'Check the highlighted fields.') }); }
+      setAuto({ state: 'incomplete' });
+      return 'invalid';
+    }
+    if (mode === 'auto' && paused.current) return 'paused';
+    if (keyFor.current.sig !== sig) keyFor.current = { sig, key: newKey() };
+    const payload = toPayload(cur);
+    const sentLogo = cur.logo;
+    setSaving(true); setAuto({ state: 'saving' });
+    const job = (async () => {
+      try {
+        const r = await saveClient({ id: cur.id, version: cur.version, payload, key: keyFor.current.key });
+        if (r.ok) {
+          const created = !cur.id;
+          paused.current = false;
+          savedSig.current = payloadSignature({ ...cur, logo: { current: null, next: null, remove: false } });
+          setForm(x => ({ ...x, id: r.data.id, version: r.data.version,
+            logo: x.logo === sentLogo ? { current: sentLogo.next ? { name: sentLogo.next.name, mime: sentLogo.next.type, size: sentLogo.next.size } : sentLogo.remove ? null : sentLogo.current, next: null, remove: false } : x.logo }));
+          if (sentLogo.next) setLogoUrl(sentLogo.next.dataUrl); else if (sentLogo.remove) setLogoUrl(null);
+          const at = new Date();
+          setLastSaved({ id: r.data.id, code: r.data.code, name: payload.name, version: r.data.version, at, created });
+          setAuto({ state: 'saved', version: r.data.version, at });
+          setSaveMsg(created || mode === 'manual' ? { kind: 'ok', text: created ? tx(`Cliente ${r.data.code} dado de alta en MariaDB y agregado a la matriz.`, `Client ${r.data.code} created in MariaDB and added to the matrix.`) : tx(`Cambios de ${r.data.code} guardados en la matriz (versión ${r.data.version}).`, `Changes to ${r.data.code} saved to the matrix (version ${r.data.version}).`) } : null);
+          if (created || mode === 'manual') notify(tx('Clientes', 'Clients'), created ? tx(`Alta de ${r.data.code}`, `Created ${r.data.code}`) : tx(`Actualización de ${r.data.code}`, `Updated ${r.data.code}`), 'success');
+          if (created) setSelectedId(r.data.id);
+          setListRev(n => n + 1);
+          return 'saved';
+        }
         const code = r.data?.error?.code;
         if (r.status === 422 && r.data?.error?.field) setErrors(x => ({ ...x, [serverField(r.data.error.field)]: tx('Valor no aceptado por el servidor.', 'Value rejected by the server.') }));
         if (code === 'CODE_TAKEN') setErrors(x => ({ ...x, code: tx('Número ya registrado.', 'Number already registered.') }));
-        // 4xx: el contenido debe corregirse (nueva clave al reintentar); 5xx/en proceso: se reintenta con la misma clave.
-        if (r.status < 500 && !String(code).startsWith('IDEMPOTENCY')) saveKey.current = null;
+        // 4xx: el contenido debe corregirse (nueva clave); 5xx/en proceso: se reintenta con la misma clave.
+        if (r.status < 500 && !String(code).startsWith('IDEMPOTENCY')) keyFor.current = { sig: '', key: '' };
+        if (r.status === 412 || code === 'CATALOG_WRITE_NOT_PROVISIONED') paused.current = true;
+        setAuto({ state: 'error' });
         setSaveMsg({ kind: code === 'CATALOG_WRITE_NOT_PROVISIONED' ? 'warn' : 'error', text: saveErrorMessage(r.status, code, en), reload: r.status === 412 });
+        return 'failed';
+      } catch {
+        setAuto({ state: 'error' });
+        setSaveMsg({ kind: 'error', text: tx('Sin conexión con el servidor. Puedes reintentar con "Guardar cliente": no se duplicará el registro.', 'No connection to the server. Retry with "Save client": the record will not be duplicated.') });
+        return 'failed';
+      } finally {
+        setSaving(false); inFlight.current = null;
+        if (queued.current) { queued.current = false; setTick(n => n + 1); }
       }
-    } catch {
-      setSaveMsg({ kind: 'error', text: tx('Sin conexión con el servidor. Puedes reintentar: no se duplicará el registro.', 'No connection to the server. You can retry: the record will not be duplicated.') });
-    } finally { setSaving(false); }
+    })();
+    inFlight.current = job;
+    return job;
   };
+  // Guardado automático: espera AUTOSAVE_MS sin cambios; nunca envía un formulario incompleto o inválido.
+  useEffect(() => {
+    const sig = payloadSignature(form);
+    if (sig === savedSig.current) { if (!form.id) setAuto({ state: 'idle' }); return undefined; }
+    if (!validateForm(form, en).ok) { setAuto({ state: 'incomplete' }); return undefined; }
+    if (paused.current) { setAuto({ state: 'paused' }); return undefined; }
+    setAuto({ state: 'pending' });
+    const timer = setTimeout(() => { runSave('auto'); }, AUTOSAVE_MS);
+    return () => clearTimeout(timer);
+  }, [form, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Evita cerrar la pestaña con cambios sin guardar o un guardado en curso.
+  useEffect(() => {
+    const warn = e => { if (inFlight.current || (payloadSignature(formRef.current) !== savedSig.current && validateForm(formRef.current).ok && !paused.current)) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, []);
+  /** Saves pending valid changes now (before clearing, leaving the card or switching client). */
+  const flush = async () => {
+    if (inFlight.current) await inFlight.current;
+    const cur = formRef.current;
+    if (payloadSignature(cur) === savedSig.current) return 'clean';
+    if (!validateForm(cur, en).ok) return 'invalid';
+    if (paused.current) return 'paused';
+    return runSave('auto');
+  };
+  const newClient = () => { setSelectedId(''); const blank = emptyForm(); savedSig.current = payloadSignature(blank); paused.current = false; keyFor.current = { sig: '', key: '' }; setForm(blank); setErrors({}); setSaveMsg(null); setLogoUrl(null); setAuto({ state: 'idle' }); };
+  const clearForm = async () => { if ((await flush()) !== 'failed') newClient(); };
+  const goMatrix = async () => { if ((await flush()) !== 'failed') setTab('matrix'); };
+  const pickClient = async id => { if ((await flush()) === 'failed') return; if (!id) { newClient(); return; } setSaveMsg(null); setSelectedId(id); };
+  const goTab = async id => { if (tab === 'register' && id !== 'register' && (await flush()) === 'failed') return; setTab(id); };
+  const save = () => runSave('manual');
+  const autoText = (() => {
+    const hhmm = d => d.toLocaleTimeString(en ? 'en-US' : 'es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    switch (auto.state) {
+      case 'saving': return tx('Guardando en MariaDB…', 'Saving to MariaDB…');
+      case 'pending': return tx('Cambios sin guardar · se guardarán automáticamente…', 'Unsaved changes · saving automatically…');
+      case 'saved': return auto.loaded ? tx(`Ficha cargada de la matriz (versión ${auto.version}). Los cambios se guardan automáticamente.`, `Record loaded from the matrix (version ${auto.version}). Changes are saved automatically.`) : tx(`✓ Guardado automáticamente en la matriz · versión ${auto.version} · ${hhmm(auto.at)}`, `✓ Saved automatically to the matrix · version ${auto.version} · ${hhmm(auto.at)}`);
+      case 'incomplete': { const m = missingRequired(form, en); return m.length ? tx(`Para guardar automáticamente completa: ${m.join(', ')}.`, `To save automatically, fill in: ${m.join(', ')}.`) : tx('Corrige los campos marcados para guardar automáticamente.', 'Fix the highlighted fields to save automatically.'); }
+      case 'paused': return tx('Guardado automático en pausa: revisa el aviso y usa "Guardar cliente".', 'Autosave paused: check the notice and use "Save client".');
+      case 'error': return tx('No se pudo guardar automáticamente; revisa el aviso.', 'Could not save automatically; check the notice.');
+      default: return tx('El guardado automático inicia al completar No. de cliente, razón social, proyecto y número de contrato.', 'Autosave starts once client number, legal name, project and contract number are filled in.');
+    }
+  })();
 
   // ---------- Indicadores ----------
   const [fullList, setFullList] = useState(null);
@@ -186,7 +290,7 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
       .then(r => { if (!c.signal.aborted) setFullList(Number(r.total) <= (r.items || []).length ? r.items : null); })
       .catch(() => { if (!c.signal.aborted) setFullList(null); });
     return () => c.abort();
-  }, [tab, revision]);
+  }, [tab, revision, listRev]);
   const ind = useMemo(() => clientIndicators(summary, fullList, all.items), [summary, fullList, all.items]);
 
   // ---------- Importación (vista previa local) ----------
@@ -237,7 +341,7 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
 
     {/* Grid de las 4 Tarjetas Superior */}
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      {cardKeys.map(id => { const c = t.cards[id]; const active = tab === id; return <button key={id} type="button" onClick={() => setTab(id)} aria-pressed={active}
+      {cardKeys.map(id => { const c = t.cards[id]; const active = tab === id; return <button key={id} type="button" onClick={() => goTab(id)} aria-pressed={active}
         className={`text-left p-5 rounded-2xl transition-all duration-300 transform active:scale-[0.98] cursor-pointer flex flex-col justify-between h-36 border ${active ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 border-transparent -translate-y-1' : 'bg-white text-slate-700 border-slate-200/80 hover:border-blue-300 hover:shadow-md hover:-translate-y-0.5'}`}>
         <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-base transition-colors ${active ? 'bg-white/20 backdrop-blur-md' : 'bg-blue-50/80 border border-blue-100/50'}`}><span>{c.emoji}</span></div>
         <div><h3 className={`text-sm font-bold tracking-tight ${active ? 'text-white' : 'text-slate-800'}`}>{c.title}</h3><p className={`text-xs mt-0.5 leading-relaxed line-clamp-2 ${active ? 'text-blue-100' : 'text-slate-400'}`}>{c.desc}</p></div>
@@ -254,7 +358,8 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-4">
           <div><h3 className="text-base font-black text-slate-800">{tx('Alta y actualización de clientes', 'Client Registration and Update')}</h3>
             <p className="text-[11px] text-slate-400 mt-0.5">{tx('El número de cliente es único por organización. Selecciona un cliente registrado para editarlo o captura uno nuevo.', 'The client number is unique per organization. Select a registered client to edit it or enter a new one.')}</p></div>
-          <span data-testid="form-mode" className={`px-3 py-1 font-bold text-[10px] rounded-full border ${form.id ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>{form.id ? `${tx('Editando', 'Editing')} ${form.code || ''} · v${form.version}` : tx('Nuevo registro', 'New record')}</span>
+          <div className="flex flex-col items-start sm:items-end gap-1"><span data-testid="form-mode" className={`px-3 py-1 font-bold text-[10px] rounded-full border ${form.id ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>{form.id ? `${tx('Editando', 'Editing')} ${form.code || ''} · v${form.version}` : tx('Nuevo registro', 'New record')}</span>
+            <span data-testid="autosave-status" aria-live="polite" className={`text-[10px] font-semibold flex items-center gap-1 ${auto.state === 'saved' ? 'text-emerald-600' : auto.state === 'error' || auto.state === 'paused' ? 'text-rose-600' : auto.state === 'pending' || auto.state === 'saving' ? 'text-amber-600' : 'text-slate-400'}`}>{auto.state === 'saving' && <Loader2 className="w-3 h-3 animate-spin" />}{autoText}</span></div>
         </div>
         <div className="space-y-5">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -352,8 +457,8 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
           {saveMsg && <div role={saveMsg.kind === 'ok' ? 'status' : 'alert'} data-testid="save-message" className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${saveMsg.kind === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : saveMsg.kind === 'warn' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{saveMsg.kind === 'ok' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}<span>{saveMsg.text}</span>{saveMsg.reload && <button type="button" onClick={() => { setSaveMsg(null); setRevision(n => n + 1); }} className="ml-auto px-3 py-1 bg-white border border-rose-200 hover:bg-rose-50 text-rose-700 font-bold text-[11px] rounded-lg whitespace-nowrap">{tx('Recargar ficha', 'Reload record')}</button>}</div>}
           <div data-testid="form-actions" className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100">
             <button type="button" onClick={save} disabled={saving || logoBusy} className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-500/20 flex items-center gap-2">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span aria-hidden="true">💾</span>}<span className="text-sm font-bold">{tx('Guardar cliente', 'Save client')}</span></button>
-            <button type="button" onClick={newClient} disabled={saving} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 flex items-center gap-2"><span aria-hidden="true">🧹</span><span className="text-sm font-bold">{tx('Limpiar', 'Clear')}</span></button>
-            <button type="button" onClick={() => setTab('matrix')} className="px-5 py-2.5 bg-white hover:bg-slate-50 active:scale-95 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 shadow-xs flex items-center gap-2"><span aria-hidden="true">📋</span><span className="text-sm font-bold">{tx('Ver matriz', 'View matrix')}</span></button>
+            <button type="button" onClick={clearForm} disabled={saving} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 flex items-center gap-2"><span aria-hidden="true">🧹</span><span className="text-sm font-bold">{tx('Limpiar', 'Clear')}</span></button>
+            <button type="button" onClick={goMatrix} disabled={saving} className="px-5 py-2.5 bg-white hover:bg-slate-50 active:scale-95 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 shadow-xs flex items-center gap-2"><span aria-hidden="true">📋</span><span className="text-sm font-bold">{tx('Ver matriz', 'View matrix')}</span></button>
           </div>
         </div>
       </div>}
@@ -367,6 +472,11 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
             <button type="button" onClick={() => { newClient(); setTab('register'); }} className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" />{tx('Nuevo cliente', 'New Client')}</button>
           </div>
         </div>
+        {lastSaved && <div data-testid="last-saved" className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/70 text-xs text-emerald-900 flex flex-wrap items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" /><span>{lastSaved.created ? tx('Alta guardada', 'Created') : tx('Cambios guardados', 'Changes saved')}: <strong>{lastSaved.code}</strong> · {lastSaved.name} · {tx('versión', 'version')} {lastSaved.version} · {lastSaved.at.toLocaleTimeString(en ? 'en-US' : 'es-MX')}</span>
+          <button type="button" onClick={() => { setInput(lastSaved.code); setQ(lastSaved.code); setPage(1); setStatus('all'); }} className="ml-auto px-3 py-1 bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] rounded-lg">{tx('Mostrar en la matriz', 'Show in the matrix')}</button>
+          <button type="button" onClick={() => openFicha(lastSaved.id)} className="px-3 py-1 bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] rounded-lg">{tx('Abrir ficha', 'Open record')}</button>
+        </div>}
         <div className="space-y-3">
           <div className="relative"><Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input type="search" value={input} onChange={e => setInput(e.target.value)} aria-label={tx('Buscar en catálogo', 'Search catalog')} placeholder={tx('Buscar por número, razón social, nombre comercial, proyecto, contrato, RFC, contacto o correo...', 'Search by number, company name, brand name, project, contract, Tax ID, contact, or email...')} className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50/50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 transition-all" /></div>
@@ -383,9 +493,9 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
           </tr></thead>
           <tbody className="divide-y divide-slate-100 text-xs">
             {list.items.length === 0 ? <tr><td colSpan={11} className="py-12 text-center text-slate-400"><div className="flex flex-col items-center justify-center space-y-2"><span className="text-3xl">📋</span><p className="font-semibold text-slate-600 text-xs">{tx('No se encontraron clientes.', 'No clients found.')}</p><p className="text-[11px] text-slate-400">{tx('Ajusta la búsqueda o el estatus.', 'Adjust the search or status.')}</p></div></td></tr>
-              : list.items.map(c => <tr key={c.id} className="hover:bg-slate-50/50 transition-colors align-top">
+              : list.items.map(c => <tr key={c.id} data-saved={lastSaved?.id === c.id ? 'true' : undefined} className={`transition-colors align-top ${lastSaved?.id === c.id ? 'bg-emerald-50/70 hover:bg-emerald-50' : 'hover:bg-slate-50/50'}`}>
                 <td className="py-3 px-3"><div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500">{initials(c.name)}</div></td>
-                <td className="py-3 px-3 font-bold text-slate-800 whitespace-nowrap">{c.code}</td>
+                <td className="py-3 px-3 font-bold text-slate-800 whitespace-nowrap">{c.code}{lastSaved?.id === c.id && <div className="text-[9px] font-bold text-emerald-700">✓ {tx('Recién guardado', 'Just saved')}</div>}</td>
                 <td className="py-3 px-3 min-w-[180px]"><div className="font-bold text-slate-800">{c.name}</div><div className="text-[10px] text-indigo-600 font-semibold">{c.brand_name || ''}</div>{c.data_incomplete && <div className="text-[10px] text-amber-700 font-semibold">{tx('Información incompleta', 'Incomplete information')}</div>}</td>
                 <td className="py-3 px-3 text-slate-600 whitespace-nowrap">{show(c.project)}</td>
                 <td className="py-3 px-3 text-slate-600 whitespace-nowrap">{show(c.contract_reference)}</td>

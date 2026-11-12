@@ -25,6 +25,20 @@ logotipo. Ahora la ficha es un formulario completo (diseño de las imágenes de 
     importado tiene la etiqueta textual, se reconoce; si tiene un valor fuera del catálogo se muestra como
     "Valor histórico" y **no se modifica** salvo que el usuario elija otra opción. *Confirmar con el Apps Script original
     qué valores guardaba.*
+- **Guardado automático y matriz sincronizada** (13 nov 2026): cada cambio de la ficha se guarda solo, 1.5 s después de
+  la última edición, en cuanto No. de cliente, razón social, proyecto y número de contrato están completos y todos los
+  campos son válidos. La primera vez da de alta al cliente (POST) y después lo actualiza (PUT con su versión); una ráfaga
+  de cambios produce **una** sola escritura. Tras cada guardado se refrescan la **Matriz**, los selectores y los
+  indicadores sin recargar la ficha (no se pierde lo que se está escribiendo). La matriz muestra "Alta guardada / Cambios
+  guardados" con "Mostrar en la matriz" (filtra y resalta la fila "✓ Recién guardado") y "Abrir ficha".
+  - Indicador junto al modo de la ficha: qué falta para guardar, "Cambios sin guardar…", "Guardando…" y
+    "✓ Guardado automáticamente en la matriz · versión N · hora".
+  - **Limpiar**, **Ver matriz**, cambiar de tarjeta o de cliente guardan antes lo pendiente; si el navegador se cierra con
+    cambios sin guardar, avisa.
+  - Si otra persona guardó antes (412) o la escritura no está habilitada (503), el guardado automático se **pausa** y solo
+    se reintenta con "Guardar cliente" o tras "Recargar ficha". Un número duplicado (409) se marca y se reintenta solo al
+    corregirlo.
+  - Cada guardado automático incrementa la versión y deja su registro en la bitácora (antes/después).
 - **Botones de la ficha** (13 nov 2026): solo **💾 Guardar cliente** (alta o actualización según el cliente cargado),
   **🧹 Limpiar** (vacía el formulario y lo deja en modo alta; no borra nada en MariaDB) y **📋 Ver matriz** (abre la
   tarjeta Matriz). Para editar otro cliente se elige en los selectores o con "Ficha" en la matriz; "Nuevo cliente"
@@ -99,8 +113,8 @@ con autorización.
 
 | Prueba | Resultado (sandbox sintético) |
 |---|---|
-| `tests/frontend/clients_form.test.mjs` (lógica del formulario) | 5/5 |
+| `tests/frontend/clients_form.test.mjs` (lógica del formulario y firma del guardado automático) | 6/6 |
 | `tests/frontend/clients_model.test.mjs` | 6/6 |
 | `tests/clients_write_http_check.py` (contrato de escritura; **solo base desechable**, `SF_SYNTHETIC_WRITES=1`) | 44/44 |
-| `tests/frontend/clients_write_ui_e2e.cjs` (alta con logotipo, edición, conflicto, Limpiar, tres botones, duplicado; **solo base desechable**) | 28/28 |
+| `tests/frontend/clients_write_ui_e2e.cjs` (alta y edición automáticas, matriz sincronizada, guardado manual, conflicto en pausa, Limpiar/Ver matriz guardan lo pendiente, duplicado; **solo base desechable**) | 40/40 |
 | `tests/frontend/clients_ui_e2e.cjs` (consulta, sin escrituras) | 29/29 |
