@@ -46,7 +46,9 @@ final class SupplierOfferingReadRepository
         $where = ['o.organization_id=?'];
         $binds = [$org];
         if ($f['supplier'] !== 'all') { $where[] = 'se.public_id=?'; $binds[] = $f['supplier']; }
-        if ($f['status'] !== 'all') { $where[] = 'o.status_code=?'; $binds[] = $f['status']; }
+        // "active" includes the legacy synonym "available" (same rule as the supplier cards' Activos count).
+        if ($f['status'] === 'active') { $where[] = "o.status_code IN ('active','available')"; }
+        elseif ($f['status'] !== 'all') { $where[] = 'o.status_code=?'; $binds[] = $f['status']; }
         if ($f['q'] !== '') {
             $fields = ['o.name', 'o.offering_type', 'o.brand', 'o.model', 'o.description', 'o.coverage', 'cat.name', 'o.legacy_category_label', 's.legal_name', 's.code'];
             $where[] = '(' . implode(' OR ', array_map(static fn (string $x): string => $x . " LIKE ? ESCAPE '!'", $fields)) . ')';

@@ -58,9 +58,12 @@ try:
         f = get(f"?supplier={sup['id']}&page_size=50")
         check('filtro por proveedor: solo ese proveedor y conteo exacto', f['total'] == sup['total'] and all(i['supplier_id'] == sup['id'] for i in f['items']))
     if s['statuses']:
-        st = s['statuses'][0]
+        counts = {x['code']: x['count'] for x in s['statuses']}
+        st = next((x for x in s['statuses'] if x['code'] != 'active'), s['statuses'][0])
         f = get(f"?status={urllib.parse.quote(st['code'])}&page_size=50")
-        check('filtro por estatus: conteo de la faceta', f['total'] == st['count'] and all(i['status'] == st['code'] for i in f['items']))
+        check('filtro por estatus: conteo de la faceta', f['total'] == st['count'] + (counts.get('available', 0) if st['code'] == 'active' else 0) and all(i['status'] == st['code'] or (st['code'] == 'active' and i['status'] == 'available') for i in f['items']))
+        fa = get('?status=active&page_size=50')
+        check('filtro "Activo" = suma de "Activos" de las tarjetas (incluye el sinónimo histórico "available")', fa['total'] == sum(x['active'] for x in s['suppliers']) == counts.get('active', 0) + counts.get('available', 0) and all(i['status'] in ('active', 'available') for i in fa['items']))
 finally:
     logout(adm)
 w = max(len(n) for n, _, _ in results)

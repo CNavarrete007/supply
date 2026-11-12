@@ -1,7 +1,7 @@
 // Suministros de proveedores · pruebas de la lógica pura. Uso: node --test tests/frontend/supplies_model.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { typeLabel, statusKey, statusLabel, leadTime, credit, isDayUnit, supplierCommercial, supplierCards } from '../../src/views/supplies/model.mjs';
+import { typeLabel, statusKey, statusLabel, leadTime, credit, isDayUnit, supplierCommercial, supplierCards, avatarText } from '../../src/views/supplies/model.mjs';
 
 test('etiquetas: códigos conocidos traducidos y desconocidos tal cual', () => {
   assert.equal(typeLabel('product'), 'Producto'); assert.equal(typeLabel('Servicio', true), 'Service'); assert.equal(typeLabel('kit_especial'), 'kit_especial'); assert.equal(typeLabel(null), '—');
@@ -36,4 +36,8 @@ test('tarjetas por proveedor desde el resumen del servidor', () => {
   const r = supplierCards({ suppliers: [{ id: 'a', name: 'A', total: 3, active: 2 }, { id: 'b', name: 'B', total: 1, active: 1 }] });
   assert.deepEqual(r.all, { id: 'all', total: 4, active: 3, others: 1, suppliers: 2 });
   assert.equal(r.items[0].others, 1); assert.equal(supplierCards({}).all.total, 0);
+});
+
+test('iniciales del avatar de las tarjetas por proveedor (diseño)', () => {
+  assert.deepEqual(['001', 'CENTURION FR', 'MARÍA EUGENIA ROVIROSA FERIA', 'ULINE SHIPPING SUPPLIES', 'Grúas del Golfo', '', '  (S.A.) de C.V.'].map(avatarText), ['00', 'CF', 'ME', 'US', 'GD', '—', 'SD']);
 });

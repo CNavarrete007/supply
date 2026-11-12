@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Plus, CheckCircle2 } from 'lucide-react';
+import { Lock, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Plus, CheckCircle2 } from 'lucide-react';
 import { listSupplierOfferings, getCatalogRecord, listCatalog, getSupplierOffering } from '../../catalogApi';
-import { typeLabel, statusKey, statusLabel, STATUS_TONE, leadTime, credit, supplierCommercial, supplierCards } from './model.mjs';
+import { typeLabel, statusKey, statusLabel, STATUS_TONE, leadTime, credit, supplierCommercial, supplierCards, avatarText } from './model.mjs';
 import { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage, TYPES, OTHER_TYPE, CATEGORIES as OFF_CATEGORIES, LEAD_UNITS, CREDIT_TYPES, CURRENCIES as OFF_CURRENCIES, STATUSES as OFF_STATUSES } from './form.mjs';
 import { useCatalogAutosave } from '../catalog/useCatalogAutosave';
 
@@ -56,7 +56,9 @@ export function SupplierSupplyCatalog({ lang = 'es', language, isEnglish, onNoti
   const d = list.data;
   const sc = useMemo(() => supplierCards(d?.summary), [d?.summary]);
   const lastPage = Math.max(1, Math.ceil((d?.total || 0) / PAGE));
-  const pick = id => { setSupplier(id); setPage(1); };
+  const [open, setOpen] = useState(false); // la tabla se abre desde una tarjeta, el selector, la búsqueda o los filtros (diseño)
+  const pick = (id, show = true) => { setSupplier(id); setPage(1); if (show) setOpen(true); };
+  const sameName = s => sc.items.filter(x => x.name === s.name).length > 1;
 
   // ---------- Registro (ficha) y Resumen comercial: suministros completos de un proveedor ----------
   const [selSupplier, setSelSupplier] = useState('');
@@ -208,50 +210,61 @@ export function SupplierSupplyCatalog({ lang = 'es', language, isEnglish, onNoti
         </div>
       </div>}
 
-      {/* TARJETA 2: Matriz */}
-      {tab === 'matrix' && <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-1">
+      {/* TARJETA 2: Matriz (tarjetas por proveedor; la tabla se abre desde una tarjeta, la búsqueda o los filtros) */}
+      {tab === 'matrix' && <div className="space-y-4" data-testid="offerings-matrix">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-100">
           <div><h3 className="text-lg font-black text-slate-900">{tx('Matriz de productos, servicios y condiciones', 'Products, services and terms matrix')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Consulta qué suministra cada proveedor y las condiciones ofrecidas.', 'See what each supplier provides and the offered terms.')}</p></div>
-          <button type="button" onClick={async () => { if ((await flush()) === 'failed') return; newRecord(); af.setForm(x => ({ ...x, supplier_id: supplier !== 'all' ? supplier : '' })); setTab('register'); }} className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl flex items-center gap-1.5 shadow-md shadow-purple-500/20"><Plus className="w-3.5 h-3.5" /><span className="text-xs font-bold">{tx('Nuevo suministro', 'New supply')}</span></button>
+          <button type="button" onClick={async () => { if ((await flush()) === 'failed') return; newRecord(); af.setForm(x => ({ ...x, supplier_id: supplier !== 'all' ? supplier : '' })); setTab('register'); }} className="px-5 py-2.5 bg-gradient-to-r from-purple-600 via-fuchsia-600 to-purple-600 hover:opacity-95 active:scale-95 text-white rounded-xl flex items-center gap-1.5 shadow-md shadow-purple-500/25"><Plus className="w-4 h-4" /><span className="text-sm font-black">{tx('Nuevo suministro', 'New supply')}</span></button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center pt-1">
-          <div className="md:col-span-3"><select aria-label={tx('Proveedor', 'Supplier')} value={supplier} onChange={e => pick(e.target.value)} className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl text-slate-700 font-bold focus:ring-2 focus:ring-purple-500 outline-none shadow-xs"><option value="all">{tx('Todos los proveedores', 'All suppliers')}</option>{sc.items.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-          <div className="md:col-span-6 relative"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input type="search" aria-label={tx('Buscar suministros', 'Search supplies')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={tx('Buscar producto, servicio, categoría, marca o modelo...', 'Search product, service, category, brand or model...')} className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-slate-700 shadow-xs" /></div>
-          <div className="md:col-span-3"><select aria-label={tx('Estatus', 'Status')} value={status} onChange={e => { setStatus(e.target.value); setPage(1); }} className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl text-slate-700 outline-none shadow-xs font-semibold"><option value="all">{tx('Todos los estatus', 'All statuses')}</option>{(d?.summary?.statuses || []).map(s => <option key={s.code} value={s.code}>{statusLabel(s.code, en)} ({s.count})</option>)}</select></div>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+          <div className="md:col-span-4"><select aria-label={tx('Proveedor', 'Supplier')} value={supplier} onChange={e => pick(e.target.value, e.target.value !== 'all')} className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-xl text-slate-900 font-black focus:ring-2 focus:ring-purple-500/30 outline-none shadow-xs"><option value="all">{tx('Todos los proveedores', 'All suppliers')}</option>{sc.items.map(s => <option key={s.id} value={s.id}>{s.name}{sameName(s) ? ` · ${s.code}` : ''}</option>)}</select></div>
+          <div className="md:col-span-5"><input type="search" aria-label={tx('Buscar suministros', 'Search supplies')} value={input} onChange={e => { setInput(e.target.value); if (e.target.value.trim()) setOpen(true); }} maxLength={120} placeholder={tx('Buscar producto, servicio, categoría, marca o modelo...', 'Search product, service, category, brand or model...')} className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-purple-500/30 outline-none text-slate-700 shadow-xs" /></div>
+          <div className="md:col-span-3"><select aria-label={tx('Estatus', 'Status')} value={status} onChange={e => { setStatus(e.target.value); setPage(1); if (e.target.value !== 'all') setOpen(true); }} className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-xl text-slate-700 outline-none shadow-xs focus:ring-2 focus:ring-purple-500/30"><option value="all">{tx('Todos los estatus', 'All statuses')}</option>{OFF_STATUSES.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}</select></div>
         </div>
-        <div className="bg-slate-50/50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
-          <div className="flex justify-between items-center gap-3"><div><h4 className="text-xs font-black text-slate-800">{tx('Tarjetas por proveedor', 'Cards by supplier')}</h4><p className="text-[10px] text-slate-400 font-medium">{tx('Selecciona un proveedor para abrir únicamente sus productos, servicios y condiciones.', 'Select a supplier to open only its products, services and terms.')}</p></div><span className="text-[10px] font-extrabold text-slate-500 whitespace-nowrap">{sc.all.total} {tx('registro(s) cargado(s)', 'record(s) loaded')}</span></div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {[{ ...sc.all, name: tx('Vista general', 'General view'), code: tx(`${sc.all.suppliers} proveedores`, `${sc.all.suppliers} suppliers`) }, ...sc.items].map(c => { const on = supplier === c.id; return <button key={c.id} type="button" aria-pressed={on} onClick={() => pick(c.id)} className={`text-left p-3 rounded-xl border bg-white transition-all ${on ? 'border-purple-500 ring-2 ring-purple-500/10 shadow-sm' : 'border-slate-200 hover:border-purple-300'}`}>
-              <div className="text-[11px] font-extrabold text-slate-800 truncate" title={c.name}>{c.name}</div><div className="text-[10px] text-slate-400 truncate">{c.code}</div>
-              <div className="grid grid-cols-3 gap-1 mt-2 text-center">{[[c.total, tx('Registros', 'Records')], [c.active, tx('Activos', 'Active')], [c.others, tx('Otros', 'Others')]].map(([n, l]) => <div key={l}><span className="block text-sm font-black text-slate-800 tabular-nums">{n}</span><span className="block text-[9px] text-slate-400">{l}</span></div>)}</div>
-              <div className="text-[10px] font-bold text-purple-600 text-right mt-1">{c.id === 'all' ? tx('Abrir todos', 'Open all') : tx('Abrir', 'Open')} ›</div>
+        <div className="rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white via-white to-purple-50/50 p-4 space-y-3" data-testid="supplier-cards">
+          <div className="flex justify-between items-start gap-3"><div><h4 className="text-sm font-black text-slate-900">{tx('Tarjetas por proveedor', 'Cards by supplier')}</h4><p className="text-[10px] text-slate-500 font-medium">{tx('Selecciona un proveedor para abrir únicamente sus productos, servicios y condiciones.', 'Select a supplier to open only its products, services and terms.')}</p></div></div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+            {[{ ...sc.all, name: tx('Todos los proveedores', 'All suppliers'), avatar: 'TOD' }, ...sc.items].map(c => { const on = open && supplier === c.id; const all = c.id === 'all'; return <button key={c.id} type="button" aria-pressed={on} onClick={() => pick(c.id, true)} className={`relative text-left bg-white rounded-2xl border p-3.5 pl-4 overflow-hidden flex flex-col gap-3 transition-all hover:shadow-md ${on ? 'border-purple-300 ring-2 ring-purple-500/25 shadow-md' : 'border-slate-200/80 shadow-xs'}`}>
+              <span aria-hidden="true" className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-indigo-500 via-purple-600 to-fuchsia-600" />
+              <div className="flex items-center gap-3 min-w-0"><div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 text-white font-black text-sm flex items-center justify-center shadow-sm shrink-0">{c.avatar || avatarText(c.name)}</div>
+                <div className="min-w-0"><div className="text-xs font-black text-slate-900 truncate" title={c.name}>{c.name}</div><div className="text-[10px] text-slate-400 truncate">{all ? tx('Vista general', 'General view') : `${tx('Proveedor', 'Supplier')} · ${c.code}`}</div></div></div>
+              <div className="grid grid-cols-3 gap-1.5">{[[c.total, tx('Registros', 'Records')], [c.active, tx('Activos', 'Active')], [c.others, tx('Otros', 'Others')]].map(([n, l]) => <div key={l} className="rounded-xl border border-slate-200/80 bg-white px-2 py-1.5"><span className="block text-sm font-black text-slate-900 tabular-nums leading-tight">{n}</span><span className="block text-[9px] font-bold text-slate-500">{l}</span></div>)}</div>
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-600"><span>{all ? tx('Abrir todos', 'Open all') : tx('Abrir proveedor', 'Open supplier')}</span><span className="text-indigo-600 text-sm leading-none">→</span></div>
             </button>; })}
           </div>
         </div>
         {lastSaved && <div data-testid="last-saved" className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/70 text-xs text-emerald-900 flex flex-wrap items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0" /><span>{lastSaved.created ? tx('Alta guardada', 'Created') : tx('Cambios guardados', 'Changes saved')}: <strong>{lastSaved.name}</strong> · {lastSaved.at.toLocaleTimeString(en ? 'en-US' : 'es-MX')}</span>
-          <button type="button" onClick={() => { setInput(lastSaved.name); setQ(lastSaved.name); setPage(1); setStatus('all'); setSupplier('all'); }} className="ml-auto px-3 py-1 bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] rounded-lg">{tx('Mostrar en la matriz', 'Show in matrix')}</button>
+          <button type="button" onClick={() => { setInput(lastSaved.name); setQ(lastSaved.name); setPage(1); setStatus('all'); setSupplier('all'); setOpen(true); }} className="ml-auto px-3 py-1 bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] rounded-lg">{tx('Mostrar en la matriz', 'Show in matrix')}</button>
           <button type="button" onClick={() => openRecord({ id: lastSaved.id })} className="px-3 py-1 bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] rounded-lg">{tx('Abrir ficha', 'Open record')}</button>
         </div>}
         <Err e={list.error} />
-        {list.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando suministros en MariaDB…', 'Loading supplies from MariaDB…')}</p>}
-        <div className="flex items-center justify-between text-[11px] text-slate-500"><span>{d?.total ?? 0} {tx('registros mostrados', 'records shown')}</span><span>{tx('Página', 'Page')} {page} / {lastPage}</span></div>
-        <div className="overflow-x-auto rounded-2xl border border-slate-200/80"><table className="w-full text-left border-collapse min-w-[900px]">
-          <thead><tr className="bg-slate-50 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-200">{[tx('Proveedor', 'Supplier'), tx('Producto / servicio', 'Product / service'), tx('Tipo', 'Type'), tx('Categoría', 'Category'), tx('Marca', 'Brand'), tx('Tiempo de entrega', 'Delivery time'), tx('Tipo de crédito', 'Credit type'), tx('Estatus', 'Status')].map(h => <th key={h} className="py-3 px-3">{h}</th>)}<th className="py-3 px-3 text-center">{tx('Ficha', 'Record')}</th></tr></thead>
-          <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-            {(d?.items || []).map(r => <tr key={r.id} data-saved={lastSaved?.id === r.id ? 'true' : undefined} className={`align-top ${lastSaved?.id === r.id ? 'bg-emerald-50/70' : 'hover:bg-slate-50/70'}`}>
-              <td className="py-3 px-3"><div className="font-bold text-slate-900">{r.supplier_name}</div><div className="text-[10px] text-slate-400">{r.supplier_code}</div></td>
-              <td className="py-3 px-3 min-w-[180px]"><div className="font-semibold text-slate-800">{r.name}</div>{lastSaved?.id === r.id && <div className="text-[9px] font-bold text-emerald-700">✓ {tx('Recién guardado', 'Just saved')}</div>}{r.model && <div className="text-[10px] text-slate-400">{r.model}</div>}</td>
-              <td className="py-3 px-3">{typeLabel(r.type, en)}</td><td className="py-3 px-3">{show(r.category)}</td><td className="py-3 px-3">{show(r.brand)}</td>
-              <td className="py-3 px-3 whitespace-nowrap">{show(leadTime(r))}</td><td className="py-3 px-3 whitespace-nowrap">{show(credit(r, en))}</td>
-              <td className="py-3 px-3"><span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${STATUS_TONE[statusKey(r.status)]}`}>{statusLabel(r.status, en)}</span></td>
-              <td className="py-3 px-3 text-center"><button type="button" onClick={() => openRecord(r)} className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-md">{tx('Ver', 'View')}</button></td>
-            </tr>)}
-            {list.status === 'ready' && !d?.items?.length && <tr><td colSpan={9} className="py-12 text-center text-xs text-slate-400 font-semibold">{tx('Sin registros de suministros disponibles.', 'No supply records available.')}</td></tr>}
-          </tbody></table></div>
-        <div className="flex justify-end gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => Math.max(1, n - 1))} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= lastPage} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div>
-        <p className="text-[11px] text-slate-400 flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" />{tx('Catálogo sin precios: el precio se registra únicamente con la cotización formal del proveedor.', 'Catalog without prices: the price is recorded only with the supplier\'s formal quote.')}</p>
+        {open && <div className="rounded-2xl border border-slate-200/80 bg-white shadow-xs p-4 space-y-3" data-testid="offerings-table">
+          <div className="flex justify-between items-center gap-3 p-3 bg-slate-50/70 border border-slate-100 rounded-xl">
+            <div className="min-w-0"><h4 className="text-sm font-black text-slate-900 truncate">{supplier === 'all' ? tx('Todos los proveedores', 'All suppliers') : sc.items.find(s => s.id === supplier)?.name || tx('Proveedor', 'Supplier')}</h4>
+              <p className="text-[10px] font-semibold text-slate-500">{list.status === 'loading' ? tx('Consultando suministros en MariaDB…', 'Loading supplies from MariaDB…') : `${d?.total ?? 0} ${tx('registros mostrados', 'records shown')}`}{lastPage > 1 ? ` · ${tx('Página', 'Page')} ${page} / ${lastPage}` : ''}</p></div>
+            <button type="button" aria-label={tx('Cerrar matriz', 'Close matrix')} onClick={() => setOpen(false)} className="w-8 h-8 rounded-xl bg-rose-500 hover:bg-rose-600 active:scale-95 text-white font-bold flex items-center justify-center shadow-xs shrink-0">✕</button>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-slate-200/80"><table className="w-full text-left border-collapse min-w-[1000px]">
+            <thead><tr className="bg-slate-50/80 text-[10px] font-black text-slate-600 uppercase tracking-wider border-b border-slate-200">{[tx('Proveedor', 'Supplier'), tx('Producto / servicio', 'Product / service'), tx('Tipo', 'Type'), tx('Categoría', 'Category'), tx('Marca', 'Brand'), tx('Tiempo de entrega', 'Delivery time'), tx('Tipo de crédito', 'Credit type'), tx('Estatus', 'Status')].map(h => <th key={h} className="py-3 px-3">{h}</th>)}<th className="py-3 px-3 text-center">{tx('Ficha', 'Record')}</th></tr></thead>
+            <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+              {(d?.items || []).map(r => <tr key={r.id} data-saved={lastSaved?.id === r.id ? 'true' : undefined} className={`align-top ${lastSaved?.id === r.id ? 'bg-emerald-50/70' : 'hover:bg-slate-50/70'}`}>
+                <td className="py-3 px-3"><div className="font-bold text-slate-900">{r.supplier_name}</div><div className="text-[10px] text-slate-400">{r.supplier_code}</div></td>
+                <td className="py-3 px-3 min-w-[180px]"><div className="font-semibold text-slate-800">{r.name}</div>{lastSaved?.id === r.id && <div className="text-[9px] font-bold text-emerald-700">✓ {tx('Recién guardado', 'Just saved')}</div>}{r.model && <div className="text-[10px] text-slate-400">{r.model}</div>}</td>
+                <td className="py-3 px-3">{typeLabel(r.type, en)}</td><td className="py-3 px-3">{show(r.category)}</td><td className="py-3 px-3">{show(r.brand)}</td>
+                <td className="py-3 px-3 whitespace-nowrap">{show(leadTime(r))}</td><td className="py-3 px-3 whitespace-nowrap">{show(credit(r, en))}</td>
+                <td className="py-3 px-3"><span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${STATUS_TONE[statusKey(r.status)]}`}>{statusLabel(r.status, en)}</span></td>
+                <td className="py-3 px-3 text-center"><button type="button" onClick={() => openRecord(r)} className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-md">{tx('Ver', 'View')}</button></td>
+              </tr>)}
+              {list.status === 'ready' && !d?.items?.length && <tr><td colSpan={9} className="py-12 text-center text-xs text-slate-400 font-semibold">{tx('Sin registros de suministros disponibles.', 'No supply records available.')}</td></tr>}
+            </tbody></table></div>
+          {lastPage > 1 && <div className="flex justify-end gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => Math.max(1, n - 1))} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= lastPage} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div>}
+          <p className="text-[11px] text-slate-400 flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" />{tx('Catálogo sin precios: el precio se registra únicamente con la cotización formal del proveedor.', 'Catalog without prices: the price is recorded only with the supplier\'s formal quote.')}</p>
+        </div>}
+        <div data-testid="matrix-footer" className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl border border-slate-200/80 bg-white text-[11px] text-slate-600">
+          <span>{list.status === 'loading' && !d ? tx('Consultando…', 'Loading…') : <><strong className="text-slate-900">{d?.total ?? 0}</strong> {tx('suministros encontrados.', 'supplies found.')}</>}</span>
+          <span className="flex items-center gap-1.5 font-bold text-emerald-700"><span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{tx('Matriz optimizada', 'Optimized matrix')}</span>
+        </div>
       </div>}
 
       {/* TARJETA 3: Resumen comercial */}

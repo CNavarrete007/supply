@@ -23,6 +23,19 @@ La primera tarjeta ("Registro de suministro") solo consultaba: no había endpoin
   **Resumen comercial** también. "Nuevo suministro" de la matriz quedó habilitado (toma el proveedor filtrado).
 - Un mismo proveedor no puede repetir el nombre de un suministro (409); en otro proveedor sí.
 
+## Matriz (tarjeta 2) · 12 nov 2026
+
+Diseño de la imagen de referencia: encabezado con **+ Nuevo suministro**; filtros **Todos los proveedores**, búsqueda
+("Buscar producto, servicio, categoría, marca o modelo...") y **Todos los estatus** con opciones fijas (Activo, Inactivo,
+No disponible). **Tarjetas por proveedor** (Todos los proveedores / Vista general con avatar "TOD" y "Abrir todos"; una por
+proveedor con avatar de iniciales, "Proveedor · número", Registros / Activos / Otros y "Abrir proveedor →"). La **tabla se
+abre** desde una tarjeta, el selector de proveedor, la búsqueda o el filtro de estatus, con barra de título, "N registros
+mostrados" y ✕ para cerrarla; el pie muestra "N suministros encontrados." y "Matriz optimizada".
+
+Correcciones: el filtro **Activo** ahora incluye el sinónimo histórico `available`, igual que el conteo "Activos" de las
+tarjetas (antes un registro `available` contaba como activo en la tarjeta pero desaparecía al filtrar); el selector de
+estatus ya no depende de los datos (no duplica "Activo"); los proveedores con el mismo nombre se distinguen por su número.
+
 ## Servidor
 
 `POST /api/v1/catalogs/supplier-offerings`, `PUT /api/v1/catalogs/supplier-offerings/{id}` y el detalle
@@ -46,4 +59,5 @@ se reintenta ni bloquea la navegación; los fallos de red o del servidor siguen 
 | `tests/frontend/supplies_form.test.mjs` | 4/4 |
 | `tests/offerings_write_http_check.py` (**solo base desechable**; crea sus propios proveedores) | 30/30 |
 | `tests/frontend/supplies_write_ui_e2e.cjs` (**solo base desechable**; crea su propio proveedor) | 34/34 |
-| `tests/frontend/supplies_ui_e2e.cjs` (consulta) | 20/20 |
+| `tests/frontend/supplies_ui_e2e.cjs` (consulta, incluye la matriz del diseño) | 26/26 |
+| `tests/supply_offerings_http_check.py` (incluye coherencia filtro Activo = tarjetas) | 16/16 |

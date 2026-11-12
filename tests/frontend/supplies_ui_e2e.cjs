@@ -38,10 +38,22 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     check('matriz consulta suministros (200)', (await first).status() === 200);
     check('sin aviso de "pendiente de integración"', await page.getByText('Módulo pendiente de integración').count() === 0);
     for (const t of ['Registro de suministro', 'Matriz de suministros', 'Resumen comercial']) check(`tarjeta "${t}" visible`, await page.getByRole('button', { name: new RegExp(t) }).first().isVisible());
+    // Diseño: primero las tarjetas por proveedor; la tabla se abre desde una tarjeta (o búsqueda/filtros).
+    await page.getByTestId('supplier-cards').waitFor();
+    await page.getByTestId('matrix-footer').filter({ hasText: `${head.total} suministros encontrados.` }).waitFor();
+    check('tabla cerrada hasta abrir una tarjeta; pie con total y "Matriz optimizada"', await page.getByTestId('offerings-table').count() === 0 && (await page.getByTestId('matrix-footer').innerText()).includes('Matriz optimizada'));
+    const allCard = page.getByRole('button', { name: /Todos los proveedores/ }).last();
+    const allTxt = (await allCard.innerText()).replace(/\s+/g, ' ');
+    check('tarjeta "Todos los proveedores": avatar TOD, Vista general y "Abrir todos"', allTxt.startsWith('TOD Todos los proveedores Vista general') && allTxt.includes('Abrir todos'), allTxt);
+    check('opciones fijas de estatus del diseño', (await page.getByLabel('Estatus').locator('option').allTextContents()).join('|') === 'Todos los estatus|Activo|Inactivo|No disponible');
+    await allCard.click();
+    await page.getByTestId('offerings-table').waitFor();
     await page.getByText(`${head.total} registros mostrados`).waitFor();
+    check('"Abrir todos" abre la tabla con título y conteo', (await page.getByTestId('offerings-table').innerText()).includes('Todos los proveedores'));
     check('tarjeta "Vista general" con totales reales', (await page.getByRole('button', { name: /Vista general/ }).innerText()).replace(/\s+/g, ' ').includes(`${head.summary.total} Registros`));
     const card = page.getByRole('button', { name: new RegExp(aceros.name) });
-    check('tarjeta por proveedor (registros/activos/otros)', (await card.innerText()).replace(/\s+/g, ' ').includes(`${aceros.total} Registros ${aceros.active} Activos ${aceros.total - aceros.active} Otros`));
+    const cardTxt = (await card.innerText()).replace(/\s+/g, ' ');
+    check('tarjeta por proveedor (avatar, Proveedor · número, registros/activos/otros, Abrir proveedor)', cardTxt.includes(`${aceros.total} Registros ${aceros.active} Activos ${aceros.total - aceros.active} Otros`) && cardTxt.startsWith('AS ' + aceros.name) && cardTxt.includes(`Proveedor · ${aceros.code}`) && cardTxt.includes('Abrir proveedor'), cardTxt);
     const row = page.getByRole('row').filter({ hasText: 'Placa A36' });
     const rt = (await row.innerText()).replace(/\s+/g, ' ');
     check('fila con tipo, categoría, marca, entrega, crédito y estatus reales', ['Aceros Sintéticos del Norte', 'Producto', 'Materiales', 'AceroQA', '5 días hábiles', 'Crédito · 30 días', 'Activo'].every(x => rt.includes(x)), rt);
@@ -52,7 +64,10 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     check('tarjeta filtra por proveedor en el servidor (200)', (await byCard).status() === 200);
     await page.getByText(`${aceros.total} registros mostrados`).waitFor();
     check('solo suministros del proveedor', await page.getByRole('row').filter({ hasText: 'Manómetro' }).count() === 0);
-    await page.getByRole('button', { name: /Vista general/ }).click();
+    check('título de la tabla con el proveedor abierto', (await page.getByTestId('offerings-table').innerText()).includes(aceros.name));
+    await page.getByRole('button', { name: 'Cerrar matriz' }).click();
+    check('✕ cierra la tabla', await page.getByTestId('offerings-table').count() === 0);
+    await page.getByRole('button', { name: /Todos los proveedores/ }).last().click();
     const stResp = page.waitForResponse(r => /status=unavailable/.test(r.url()));
     await page.getByLabel('Estatus').selectOption('unavailable');
     check('filtro de estatus en el servidor (200)', (await stResp).status() === 200);

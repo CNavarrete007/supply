@@ -46,3 +46,10 @@ export function supplierCards(summary = {}) {
   const total = items.reduce((n, s) => n + s.total, 0), active = items.reduce((n, s) => n + s.active, 0);
   return { all: { id: 'all', total, active, others: total - active, suppliers: items.length }, items };
 }
+
+/** Avatar text of a supplier card: initials of the first two words, or the first two characters of a single word. */
+export function avatarText(name) {
+  const words = String(name ?? '').normalize('NFC').trim().split(/\s+/).filter(Boolean).map(w => w.replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean);
+  if (!words.length) return '—';
+  return (words.length > 1 ? words[0][0] + words[1][0] : words[0].slice(0, 2)).toUpperCase();
+}
