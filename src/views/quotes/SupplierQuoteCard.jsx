@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Lock, Search, Loader2, AlertCircle, RotateCw, Plus, Eraser, BarChart3, ClipboardList, Eye, Trash2, Save, CheckCircle2 } from 'lucide-react';
+import { Lock, Search, Loader2, AlertCircle, RotateCw, Eye, Trash2, CheckCircle2 } from 'lucide-react';
 import { getRfqSetup, listRfqRequisitions, getRfqRequisition, getRfq } from './api';
 import { money, label } from './model.mjs';
 import { internalReference } from './rfq.mjs';
 import { RequisitionPickerModal } from './RequisitionPickerModal';
-import { PAYMENT_METHODS, PDF_MAX_BYTES, emptyQuote, clearCapture, linesFromRfq, lineAmounts, quoteTotals, qtyNote, validateQuote, isPdfHeader } from './supplierQuote.mjs';
+import { PAYMENT_METHODS, PDF_MAX_BYTES, emptyQuote, linesFromRfq, lineAmounts, quoteTotals, qtyNote, validateQuote, isPdfHeader } from './supplierQuote.mjs';
 
 // Tarjeta 4 · Registro de cotización (oferta recibida del proveedor) con el diseño Grupo Gerez. Comprador, requisición
 // con RFQ, RFQ emitida, proveedor y partidas salen de MariaDB; importes, IVA y totales se calculan aquí. GUARDAR la
@@ -31,6 +31,8 @@ export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, loc
   const [reload, setReload] = useState(0);
   const [pdf, setPdf] = useState(null); const [pdfError, setPdfError] = useState(''); const [showPdf, setShowPdf] = useState(false);
   const fileRef = useRef(null);
+  const cardRef = useRef(null);
+  const [saveTry, setSaveTry] = useState(false);
   useEffect(() => { const t = setTimeout(() => setMq(mInput.trim()), 300); return () => clearTimeout(t); }, [mInput]);
   useEffect(() => () => { if (pdf?.url) URL.revokeObjectURL(pdf.url); }, [pdf]);
 
@@ -54,8 +56,21 @@ export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, loc
   const pickRfq = id => { setForm(f => ({ ...f, rfq: id })); setLines([]); setTouched(t => ({ ...t, rfq: true })); };
   const setLine = (key, patch) => { setLines(ls => ls.map(l => (l.key === key ? { ...l, ...patch } : l))); setTouched(t => ({ ...t, [`line:${key}`]: true })); };
   const removePdf = () => { setPdf(null); setShowPdf(false); setPdfError(''); if (fileRef.current) fileRef.current.value = ''; };
-  const newQuote = () => { setForm(emptyQuote()); setLines([]); setTouched({}); removePdf(); };
-  const clear = () => { setForm(f => clearCapture(f)); setLines(linesFromRfq(rfq.data?.items || [])); setTouched({}); removePdf(); };
+  // "Limpiar" deja el formulario como nuevo (comprador, requisición, RFQ, captura y PDF).
+  const clear = () => { setForm(emptyQuote()); setLines([]); setTouched({}); setSaveTry(false); removePdf(); };
+  // "Guardar cotización": valida TODA la captura (marca lo pendiente). El registro en MariaDB es una escritura comercial
+  // que sigue bloqueada, así que con la captura completa informa que no se guardó; nunca simula un guardado.
+  const save = () => {
+    setTouched(t => ({ ...t, ...Object.fromEntries(Object.keys(v.errors).map(k => [k, true])) }));
+    setSaveTry(true);
+    if (!v.ok) {
+      notify?.(tx('Cotización incompleta', 'Incomplete quote'), v.first, 'warning');
+      setTimeout(() => cardRef.current?.querySelector('[role=alert]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0);
+      return;
+    }
+    notify?.(tx('Registro no habilitado', 'Recording not enabled'), tx('La captura está completa, pero no se guardó: registrar cotizaciones en MariaDB es una escritura comercial pendiente de autorización.', 'The capture is complete but was not saved: recording quotes in MariaDB is a commercial write pending authorization.'), 'warning');
+  };
+  useEffect(() => { setSaveTry(false); }, [form, lines]);
   const choosePdf = async e => {
     const file = e.target.files?.[0]; setPdfError('');
     if (!file) return;
@@ -75,7 +90,7 @@ export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, loc
   const loadErr = s => (s.error ? <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{s.error.message}</p> : null);
   const cur = form.currency;
 
-  return <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-2xs space-y-5" data-testid="quote-card">
+  return <div ref={cardRef} className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-2xs space-y-5" data-testid="quote-card">
     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
       <div><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Registro de cotización', 'Quote record')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Captura las ofertas recibidas para generar el comparativo.', 'Capture the offers received to build the comparison.')}</p></div>
       <span className="px-3 py-1 bg-blue-50 text-blue-600 font-bold text-[10px] rounded-full border border-blue-100 shrink-0">{tx('Paso 3 · Cotización', 'Step 3 · Quote')}</span>
@@ -175,19 +190,21 @@ export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, loc
       <p className="text-[10px] text-slate-400">{tx('El PDF solo se muestra en este navegador; se guardará junto con la cotización cuando se habilite su registro.', 'The PDF is only shown in this browser; it will be stored with the quote once recording is enabled.')}</p>
     </div>
 
-    <div data-testid="quote-check" className={`p-3 rounded-xl border text-[11px] flex items-start gap-2 ${v.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-      {v.ok ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
-      <span>{v.ok ? tx(`Captura completa: ${totals.offered} partida(s), total ${money(totals.total, cur, en)}. Lista para guardarse cuando se habilite el registro.`, `Capture complete: ${totals.offered} item(s), total ${money(totals.total, cur, en)}. Ready to be saved once recording is enabled.`) : `${tx('Pendiente:', 'Pending:')} ${v.first}`}</span>
+    <div data-testid="quote-check" className={`p-3 rounded-xl border text-[11px] flex items-start gap-2 ${v.ok ? (saveTry ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-emerald-50 border-emerald-200 text-emerald-800') : saveTry ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+      {v.ok ? (saveTry ? <Lock className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />) : <AlertCircle className="w-4 h-4 shrink-0" />}
+      <span>{v.ok
+        ? (saveTry
+          ? tx(`Captura validada: ${totals.offered} partida(s), total ${money(totals.total, cur, en)}. No se guardó: registrar cotizaciones en MariaDB es una escritura comercial que sigue bloqueada hasta su autorización.`, `Capture validated: ${totals.offered} item(s), total ${money(totals.total, cur, en)}. Not saved: recording quotes in MariaDB is a commercial write that stays blocked until authorized.`)
+          : tx(`Captura completa: ${totals.offered} partida(s), total ${money(totals.total, cur, en)}. Presiona Guardar cotización para validarla.`, `Capture complete: ${totals.offered} item(s), total ${money(totals.total, cur, en)}. Press Save quote to validate it.`))
+        : `${saveTry ? tx('No se puede guardar. Pendiente:', 'Cannot save. Pending:') : tx('Pendiente:', 'Pending:')} ${v.first}`}</span>
     </div>
 
-    <div className="flex flex-wrap items-center gap-2 text-sm font-black">
-      <button type="button" onClick={newQuote} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-1.5"><Plus className="w-4 h-4" />{tx('Nueva cotización', 'New quote')}</button>
-      <button type="button" disabled title={lockText} className="px-4 py-2.5 bg-slate-200 text-slate-500 rounded-xl flex items-center gap-1.5 cursor-not-allowed"><Lock className="w-4 h-4" /><Save className="w-4 h-4" />{tx('Guardar cotización', 'Save quote')}</button>
-      <button type="button" onClick={clear} className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl flex items-center gap-1.5"><Eraser className="w-4 h-4" />{tx('Limpiar', 'Clear')}</button>
-      <button type="button" onClick={() => onCompare?.(form.requisition)} className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-800 rounded-xl border border-slate-200 shadow-2xs flex items-center gap-1.5"><BarChart3 className="w-4 h-4" />{tx('Ver comparativo', 'View comparison')}</button>
-      <button type="button" onClick={() => onMatrix?.()} className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-800 rounded-xl border border-slate-200 shadow-2xs flex items-center gap-1.5"><ClipboardList className="w-4 h-4" />{tx('Ver matriz', 'View matrix')}</button>
+    <div data-testid="quote-actions" className="flex flex-wrap items-center gap-3 pt-4 border-t border-slate-200/70 text-sm font-medium">
+      <button type="button" onClick={save} title={lockText} className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white rounded-xl shadow-sm flex items-center gap-2 transition-all"><span aria-hidden="true">💾</span>{tx('Guardar cotización', 'Save quote')}</button>
+      <button type="button" onClick={clear} className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl flex items-center gap-2 transition-all"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
+      <button type="button" onClick={() => onCompare?.(form.requisition)} className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-800 rounded-xl border border-slate-200 shadow-2xs flex items-center gap-2 transition-all"><span aria-hidden="true">📊</span>{tx('Ver comparativo', 'View comparison')}</button>
+      <button type="button" onClick={() => onMatrix?.()} className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-800 rounded-xl border border-slate-200 shadow-2xs flex items-center gap-2 transition-all"><span aria-hidden="true">📋</span>{tx('Ver matriz', 'View matrix')}</button>
     </div>
-    <p className="text-[10.5px] text-amber-800 flex items-start gap-1.5"><Lock className="w-3.5 h-3.5 shrink-0 mt-0.5" />{tx('Guardar la cotización registra una escritura comercial que sigue bloqueada hasta su validación integral: esta captura no se guarda en MariaDB.', 'Saving the quote is a commercial write that stays blocked until its integral validation: this capture is not stored in MariaDB.')}</p>
 
     {modal && <RequisitionPickerModal en={en} title={tx('Requisiciones validadas con RFQ emitida', 'Validated requisitions with issued RFQ')} buyerName={(S.buyers || []).find(b => b.key === form.buyer)?.name}
       search={mInput} onSearch={setMInput} state={reqs} selectedId={form.requisition} onPick={pickRequisition} onClose={() => setModal(false)}

@@ -23,10 +23,12 @@ compartida con la tarjeta 2 en `src/views/quotes/RequisitionPickerModal.jsx`.
    registro".
 7. **PDF de la cotización**: se valida por su firma `%PDF-` (máx. 10 MB) y se previsualiza solo en este navegador; no se
    sube.
-8. Botones: **Nueva cotización** (todo desde cero), **Guardar cotización** (bloqueado), **Limpiar** (borra la captura y
-   conserva comprador/requisición/RFQ), **Ver comparativo** (tarjeta 5 con la requisición) y **Ver matriz** (tarjeta 11).
+8. Botones (diseño de referencia, en este orden): **💾 Guardar cotización**, **🧹 Limpiar** (deja el formulario como
+   nuevo: comprador, requisición, RFQ, captura, partidas y PDF), **📊 Ver comparativo** (tarjeta 5 con la requisición) y
+   **📋 Ver matriz** (tarjeta 11).
 
-**Guardar cotización** sigue bloqueado: registrar la oferta (`supplier_quotes`, `supplier_quote_items`, PDF) es una
+**Guardar cotización** valida toda la captura: si falta algo marca los campos y partidas pendientes; si está completa
+responde "Captura validada … No se guardó", porque registrar la oferta (`supplier_quotes`, `supplier_quote_items`, PDF) es una
 escritura comercial sin pruebas integrales. Cuando se autorice, el formulario ya produce todos los campos del esquema
 (`supplier_reference`, `quote_date`, `valid_until`, `currency_code`, `subtotal_amount`, `tax_rate_pct`, `tax_amount`,
 `total_amount`, `lead_days`, `payment_terms`, `technical_score`, `document_score`, `notes` y por partida `offered`,
@@ -40,5 +42,5 @@ en la tarjeta 11 *Matriz interna de proveedores*.
 | Prueba | Resultado |
 | --- | --- |
 | `node --test tests/frontend/supplier_quote.test.mjs` | 6/6 |
-| `tests/frontend/quotes_ui_e2e.cjs` (aborta toda escritura) | 122/122 |
+| `tests/frontend/quotes_ui_e2e.cjs` (aborta toda escritura) | 123/123 |
 | `tests/quotes_http_check.py` | 76/76 |

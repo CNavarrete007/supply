@@ -192,6 +192,10 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const banner4 = flat(await page.getByTestId('quote-rfq-banner').innerText());
     check('registro: resumen de la RFQ y aviso si ya tiene cotización', banner4.includes(rfq4.folio) && (!rfq4.quote_folios || banner4.includes(`ya tiene cotización registrada (${rfq4.quote_folios})`)), banner4);
     check('registro: pendiente mientras faltan datos', flat(await page.getByTestId('quote-check').innerText()).startsWith('Pendiente:'));
+    const actions4 = (await page.getByTestId('quote-actions').getByRole('button').allInnerTexts()).map(flat);
+    check('botones del diseño en orden: Guardar, Limpiar, Ver comparativo, Ver matriz (sin "Nueva cotización")', JSON.stringify(actions4) === JSON.stringify(['💾 Guardar cotización', '🧹 Limpiar', '📊 Ver comparativo', '📋 Ver matriz']) && await page.getByRole('button', { name: /Guardar cotización/ }).isEnabled(), JSON.stringify(actions4));
+    await page.getByRole('button', { name: /Guardar cotización/ }).click();
+    check('Guardar con datos faltantes: marca lo pendiente y no envía nada', flat(await page.getByTestId('quote-check').innerText()).startsWith('No se puede guardar. Pendiente:') && await page.getByText('Indica la fecha de cotización.', { exact: true }).isVisible() && writes.length === 0);
     await page.getByLabel('Fecha de cotización').fill('2026-11-10');
     await page.getByLabel('Días de entrega').fill('7');
     await page.getByRole('combobox', { name: 'Condiciones de pago (SAT / SHCP)' }).selectOption('PPD');
@@ -217,10 +221,10 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('registro: PDF visible en el navegador', await page.getByTestId('quote-pdf').isVisible());
     await page.getByRole('button', { name: 'Quitar PDF' }).click();
     check('registro: Quitar PDF', await page.getByTestId('quote-pdf').count() === 0 && await page.getByText('No se ha cargado el PDF de la cotización.').isVisible());
-    check('"Guardar cotización" bloqueado (escritura comercial)', await page.getByRole('button', { name: /Guardar cotización/ }).isDisabled());
+    await page.getByRole('button', { name: /Guardar cotización/ }).click();
+    const saved4 = flat(await page.getByTestId('quote-check').innerText());
+    check('Guardar con captura completa: valida y avisa que NO se guardó (escritura comercial bloqueada)', saved4.startsWith('Captura validada') && saved4.includes('No se guardó') && writes.length === 0, saved4);
     await shot(page, 'cot_4_registro');
-    await page.getByRole('button', { name: 'Limpiar' }).click();
-    check('Limpiar: borra la captura y conserva la RFQ', (await page.getByLabel('Fecha de cotización').inputValue()) === '' && (await page.getByLabel(`Precio unitario partida ${Number(rfqDet4.items[0].line_number)}`).inputValue()) === '' && (await page.getByRole('combobox', { name: 'RFQ emitida' }).inputValue()) === rfq4.id);
     await page.getByRole('button', { name: 'Ver comparativo' }).click();
     await page.locator('[data-testid="comparison"], [data-testid="comparison-empty"]').first().waitFor();
     check('"Ver comparativo" abre la tarjeta 5 con la requisición', (await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).getAttribute('aria-pressed')) === 'true');
@@ -229,8 +233,11 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer4.key);
     await page.getByTestId('rfq-req-option').filter({ hasText: req4.folio }).getByRole('button', { name: 'Seleccionar' }).click();
     await page.waitForFunction(f => document.querySelector('input[aria-label="Requisición validada"]')?.value.startsWith(f), req4.folio);
-    await page.getByRole('button', { name: 'Nueva cotización' }).click();
-    check('"Nueva cotización" reinicia comprador, requisición y RFQ', (await page.getByRole('combobox', { name: 'Comprador responsable' }).inputValue()) === '' && (await page.getByRole('textbox', { name: 'Requisición validada' }).inputValue()) === '' && await page.getByRole('combobox', { name: 'RFQ emitida' }).isDisabled());
+    await page.getByRole('combobox', { name: 'RFQ emitida' }).selectOption(rfq4.id);
+    await page.getByTestId('quote-line').first().waitFor();
+    await page.getByLabel('Fecha de cotización').fill('2026-11-10');
+    await page.getByRole('button', { name: 'Limpiar' }).click();
+    check('Limpiar deja el formulario como nuevo (comprador, requisición, RFQ, captura y partidas)', (await page.getByRole('combobox', { name: 'Comprador responsable' }).inputValue()) === '' && (await page.getByRole('textbox', { name: 'Requisición validada' }).inputValue()) === '' && await page.getByRole('combobox', { name: 'RFQ emitida' }).isDisabled() && (await page.getByLabel('Fecha de cotización').inputValue()) === '' && await page.getByTestId('quote-line').count() === 0);
     await page.getByRole('button', { name: 'Ver matriz' }).click();
     check('"Ver matriz" abre la Matriz interna de proveedores', (await page.getByRole('button', { name: /Matriz interna de proveedores/ }).getAttribute('aria-pressed')) === 'true');
 

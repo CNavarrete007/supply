@@ -1,7 +1,7 @@
 // Cotizaciones › Registro de cotización · lógica pura. node --test tests/frontend/supplier_quote.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyQuote, clearCapture, linesFromRfq, lineAmounts, quoteTotals, qtyNote, validateQuote, isPdfHeader, normQty } from '../../src/views/quotes/supplierQuote.mjs';
+import { emptyQuote, linesFromRfq, lineAmounts, quoteTotals, qtyNote, validateQuote, isPdfHeader, normQty } from '../../src/views/quotes/supplierQuote.mjs';
 
 const items = [{ line_number: '1', description: 'Material', specification: null, category: 'Materiales', unit_label: 'pza', quantity: '2.000000' },
   { line_number: '2', description: 'Flete', specification: 'Local', category: null, unit_label: 'viaje', quantity: '1.500000' }];
@@ -44,9 +44,9 @@ test('validación: obligatorios del diseño, fechas, porcentajes y partidas con 
   assert.match(validateQuote(emptyQuote(), [], true).errors.buyer, /Select the responsible buyer/);
 });
 
-test('Limpiar conserva comprador, requisición, RFQ y moneda', () => {
-  const c = clearCapture(ready({ currency: 'USD', supplier_reference: 'X', notes: 'n', vat: '8' }));
-  assert.deepEqual([c.buyer, c.requisition, c.rfq, c.currency, c.supplier_reference, c.notes, c.vat, c.quote_date], ['b', 'r', 'f', 'USD', '', '', '16', '']);
+test('formulario vacío con los valores por defecto del diseño', () => {
+  const e = emptyQuote();
+  assert.deepEqual([e.buyer, e.requisition, e.rfq, e.vat, e.currency, e.technical, e.documentation, e.payment, e.lead_days], ['', '', '', '16', 'MXN', '100', '100', '', '']);
 });
 
 test('PDF: se valida por su firma, no solo por el tipo declarado', () => {

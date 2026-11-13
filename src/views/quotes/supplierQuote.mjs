@@ -16,8 +16,6 @@ export const normQty = v => { const s = t(v); return DEC.test(s) && s.includes('
 export function emptyQuote() {
   return { buyer: '', requisition: '', rfq: '', supplier_reference: '', quote_date: '', valid_until: '', vat: '16', currency: 'MXN', lead_days: '', payment: '', technical: '100', documentation: '100', notes: '' };
 }
-/** Captured fields back to defaults, keeping the buyer / requisition / RFQ selection ("Limpiar"). */
-export const clearCapture = f => ({ ...emptyQuote(), buyer: f.buyer, requisition: f.requisition, rfq: f.rfq, currency: f.currency });
 
 /** Lines of the quote from the RFQ items (GET /api/v1/quotes/rfqs/{id} → items): all offered, quoted qty = requested. */
 export function linesFromRfq(items = []) {
