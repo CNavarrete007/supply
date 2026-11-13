@@ -226,8 +226,8 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('Guardar con captura completa: valida y avisa que NO se guardó (escritura comercial bloqueada)', saved4.startsWith('Captura validada') && saved4.includes('No se guardó') && writes.length === 0, saved4);
     await shot(page, 'cot_4_registro');
     await page.getByRole('button', { name: 'Ver comparativo' }).click();
-    await page.locator('[data-testid="comparison"], [data-testid="comparison-empty"]').first().waitFor();
-    check('"Ver comparativo" abre la tarjeta 5 con la requisición', (await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).getAttribute('aria-pressed')) === 'true');
+    await page.getByTestId('cmp-summary').waitFor();
+    check('"Ver comparativo" abre la tarjeta 5 con la requisición', (await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).first().getAttribute('aria-pressed')) === 'true' && (await page.getByRole('combobox', { name: 'Requisición' }).inputValue()) === req4.id && flat(await page.getByTestId('cmp-summary').innerText()).includes(req4.folio));
     await page.getByRole('button', { name: /Cotizaciones recibidas/ }).click();
     await page.getByTestId('quote-card').waitFor();
     await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer4.key);
@@ -255,21 +255,71 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await shot(page, 'cot_11_recibidas');
 
 
-    // 5 · Comparativo
-    await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).click();
+    // 5 · Comparativo y selección preliminar: resumen, productos, puntaje/recomendación, adjudicación (sin guardar) e interpretación
+    const cmpModel = await import(require('url').pathToFileURL(require('path').join(__dirname, '../../src/views/quotes/comparison.mjs')).href);
+    await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).first().click();
+    await page.getByTestId('comparison-card').waitFor();
+    await page.getByRole('combobox', { name: 'Requisición' }).selectOption('');
+    check('comparativo: estado inicial sin requisición', await page.getByTestId('cmp-empty').isVisible() && await page.locator('select[aria-label="Requisición"] option').count() === comp.requisitions.length + 1);
     const req = comp.requisitions.find(r => r.quotes > 1) || comp.requisitions[0];
-    const cmp = page.waitForResponse(r => new RegExp(`/quotes/comparison\\?requisition=${req.id}`).test(r.url()));
+    const cmpResp = page.waitForResponse(r => new RegExp(`/quotes/comparison\\?requisition=${req.id}`).test(r.url()));
     await page.getByRole('combobox', { name: 'Requisición' }).selectOption(req.id);
-    const cmpJson = await (await cmp).json();
-    const ct = flat(await page.getByTestId('comparison').innerText());
-    const offers = cmpJson.lines[0].offers.filter(o => o.offered);
-    const cheapest = offers.reduce((m, o) => (Number(o.unit_price) < Number(m.unit_price) ? o : m));
-    check('comparativo: todas las ofertas de la partida', offers.every(o => ct.includes(o.supplier_name)), ct.slice(0, 300));
-    const bestCard = flat(await page.getByTestId('comparison').locator('div.border-emerald-400').first().innerText());
-    check('mejor precio resaltado (menor unitario)', bestCard.includes(cheapest.supplier_name) && bestCard.includes('Mejor precio'), bestCard);
-    check('adjudicación registrada visible en el comparativo', ct.includes('Adjudicada'));
-    check('"Guardar selección" bloqueado', await page.getByRole('button', { name: /Guardar selección/ }).isDisabled());
-    await shot(page, 'cot_5_comparativo');
+    const cmpJson = await (await cmpResp).json();
+    const R5 = cmpJson.requisition; const act = cmpJson.lines.filter(l => l.line_status === 'active');
+    const ranked5 = cmpModel.scoreQuotes(cmpJson.quotes, act); const rec5 = ranked5.find(q => q.recommended);
+    await page.getByTestId('cmp-summary').waitFor();
+    const sum5 = flat(await page.getByTestId('cmp-summary').innerText());
+    check('resumen: requisición, cliente, proyecto, contrato, partidas, presupuesto y empresas', [R5.folio, R5.client_name, R5.project || '—', R5.contract || '—', `Partidas: ${R5.item_count}`, `Empresas participantes: ${new Set(cmpJson.quotes.map(q => q.supplier_id)).size}`].every(x => sum5.includes(x)) && (R5.budget_amount === null || sum5.includes(usd(R5.budget_amount).replace(' USD', ''))), sum5);
+    check('resumen: recomendación actual', !rec5 || sum5.includes(`Recomendación actual: ${rec5.supplier_name}`));
+    await page.getByTestId('cmp-sub-products').click();
+    check('productos: partidas vigentes con su mejor precio ofertado', await page.getByTestId('cmp-product').count() === act.length && act.every(l => true) && flat(await page.getByTestId('cmp-products').innerText()).includes(act[0].description));
+    await page.getByTestId('cmp-sub-compare').click();
+    await page.getByTestId('cmp-quote').first().waitFor();
+    const rows5 = (await page.getByTestId('cmp-quote').allInnerTexts()).map(flat);
+    check('comparativo: una fila por cotización ordenada por puntaje', rows5.length === ranked5.length && ranked5.every((q, i) => rows5[i].includes(q.supplier_name) && rows5[i].includes(`${q.score.toFixed(1)}/100`)), rows5.join(' | '));
+    check('comparativo: la recomendada encabeza la tabla', !rec5 || (rows5[0].startsWith('Recomendada') && flat(await page.getByTestId('cmp-recommendation').innerText()).includes(`${rec5.supplier_name} · ${usd(rec5.total_amount)}`)));
+    const awardedQ = ranked5.find(q => q.awarded_lines > 0);
+    check('comparativo: estatus de adjudicación por proveedor', !awardedQ || rows5[ranked5.indexOf(awardedQ)].includes(awardedQ.awarded_lines >= act.length ? 'Adjudicada total' : 'Adjudicada parcial'));
+    await page.getByTestId('cmp-sub-award').click();
+    await page.getByTestId('cmp-award-line').first().waitFor();
+    check('adjudicación: OC vigentes de la requisición', flat(await page.getByTestId('cmp-po-count').innerText()).startsWith(`${cmpJson.orders.length} OC vigente(s)`));
+    const l5 = act[0];
+    const sel5 = page.getByRole('combobox', { name: `Proveedor adjudicado partida ${l5.line_number}` });
+    check('adjudicación: por defecto la adjudicación vigente y sin vista previa', (await sel5.inputValue()) === (l5.award?.quote_id || '') && await page.getByTestId('cmp-po-preview').count() === 0);
+    check('adjudicación: opciones = empresas que ofrecen la partida', await page.locator(`select[aria-label="Proveedor adjudicado partida ${l5.line_number}"] option`).count() === l5.offers.filter(o => o.offered).length + 1);
+    await page.getByRole('button', { name: /Guardar adjudicación/ }).click();
+    check('Guardar sin cambios: lo indica y no envía nada', flat(await page.getByTestId('cmp-award-check').innerText()).startsWith('Sin cambios') && writes.length === 0);
+    const other5 = l5.offers.find(o => o.offered && o.quote_id !== l5.award?.quote_id);
+    if (other5) {
+      await sel5.selectOption(other5.quote_id);
+      check('adjudicación: precio unitario de la oferta elegida', (await page.getByRole('textbox', { name: `Precio unitario adjudicado partida ${l5.line_number}` }).inputValue()) === usd(other5.unit_price));
+      check('vista previa: una OC por proveedor con los cambios', flat(await page.getByTestId('cmp-po-preview').innerText()).includes(`${other5.supplier_name} · 1 partida(s)`));
+      await page.getByRole('textbox', { name: `Cantidad a comprar partida ${l5.line_number}` }).fill('0');
+      await page.getByRole('button', { name: /Guardar adjudicación/ }).click();
+      check('Guardar con cantidad inválida: lo marca', flat(await page.getByTestId('cmp-award-check').innerText()).startsWith('No se puede guardar') && await page.getByText('Cantidad mayor a cero.').isVisible());
+      await page.getByRole('textbox', { name: `Cantidad a comprar partida ${l5.line_number}` }).fill(String(Number(l5.quantity)));
+      await page.getByRole('button', { name: /Guardar adjudicación/ }).click();
+      const chk5 = flat(await page.getByTestId('cmp-award-check').innerText());
+      check('Guardar con cambios: prepara la adjudicación y avisa que NO se guardó', chk5.startsWith('Adjudicación preparada') && chk5.includes('No se guardó') && writes.length === 0, chk5);
+    }
+    await page.getByRole('button', { name: 'Ver órdenes generadas' }).click();
+    await page.getByTestId('cmp-orders').waitFor();
+    const ord5 = flat(await page.getByTestId('cmp-orders').innerText());
+    check('Ver órdenes generadas: OC vigentes con proveedor, partidas y total', cmpJson.orders.every(o => ord5.includes(o.folio) && ord5.includes(o.supplier_name) && ord5.includes(usd(o.total_amount))) && (cmpJson.orders.length || ord5.includes('aún no tiene órdenes')), ord5);
+    await shot(page, 'cot_5_adjudicacion');
+    await page.getByTestId('cmp-sub-interpret').click();
+    check('interpretación: explicación y 3 preguntas (la primera abierta)', await page.locator('[data-testid="cmp-interpret"] details').count() === 3 && await page.getByText('Registra en cada cotización únicamente las partidas').isVisible() && flat(await page.getByTestId('cmp-interpret').innerText()).includes(`precio por partida ${cmpModel.WEIGHTS.price}%`) === false);
+    await page.getByText('¿Qué significa la recomendación?').click();
+    check('interpretación: criterio del puntaje visible', await page.getByText(`precio por partida ${cmpModel.WEIGHTS.price}%`, { exact: false }).isVisible());
+    await page.getByTestId('cmp-sub-summary').click();
+    await page.getByRole('button', { name: /Agregar otra empresa/ }).click();
+    check('"Agregar otra empresa" abre el registro de cotización', (await page.getByRole('button', { name: /Cotizaciones recibidas/ }).getAttribute('aria-pressed')) === 'true');
+    await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).first().click();
+    await page.getByRole('button', { name: /Registrar empresa \/ proveedor/ }).click();
+    await page.getByRole('heading', { name: /Proveedores|Catálogo de proveedores/ }).first().waitFor({ timeout: 10000 }).catch(() => {});
+    check('"Registrar empresa / proveedor" abre el catálogo de proveedores', (await page.locator('nav button').filter({ hasText: /^.*Proveedores$/ }).first().getAttribute('class')).length > 0 && !(await page.getByTestId('comparison-card').count()));
+    await page.locator('nav button').filter({ hasText: /Cotizaciones y Comparativo$/ }).click();
+    await page.getByTestId('rfq-matrix-card').waitFor();
 
     // 6 · Cotización al cliente (sin costos internos)
     const cur = cqCur.items[0];

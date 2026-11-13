@@ -57,6 +57,14 @@ try:
     if cm['requisitions']:
         d = get(f"{R}/comparison?requisition={cm['requisitions'][0]['id']}")
         check('comparativo: partidas con ofertas por proveedor', d['requisition']['folio'] == cm['requisitions'][0]['folio'] and all({'quote_id', 'supplier_name', 'unit_price', 'currency', 'offered', 'awarded'} <= set(o) for l in d['lines'] for o in l['offers']))
+    for rq in cm['requisitions'][:5]:
+        d = get(f"{R}/comparison?requisition={rq['id']}"); rr = d['requisition']
+        check(f"comparativo {rq['folio']}: contexto de la requisición", rr['id'] == rq['id'] and {'project', 'contract', 'budget_amount', 'currency', 'min_quotes', 'item_count'} <= set(rr) and rr['item_count'] == sum(1 for l in d['lines'] if l['line_status'] == 'active'))
+        check(f"comparativo {rq['folio']}: una cotización por oferta registrada", len(d['quotes']) == rq['quotes'] and len({q['supplier_id'] for q in d['quotes']}) == rq['suppliers'] and all(0 <= q['offered_lines'] <= len(d['lines']) and 0 <= q['awarded_lines'] <= q['offered_lines'] for q in d['quotes']))
+        qids = {q['id'] for q in d['quotes']}
+        check(f"comparativo {rq['folio']}: adjudicación vigente y ofertas ligadas a sus cotizaciones", all(o['quote_id'] in qids for l in d['lines'] for o in l['offers']) and all(l['award'] is None or l['award']['quote_id'] in qids for l in d['lines']))
+        check(f"comparativo {rq['folio']}: OC vigentes sin repetir serie", len({o['folio'] for o in d['orders']}) == len(d['orders']) and all(o['item_count'] >= 1 for o in d['orders']))
+        check(f"comparativo {rq['folio']}: sin costos internos de margen", not re.search(r'margin|markup|cost_amount', json.dumps(d), re.I))
     cur = get(f'{R}/customer-quotes?page_size=50'); allv = get(f'{R}/customer-quotes?page_size=50&scope=all')
     check('cliente: versión vigente única por serie', len({v['series'] for v in cur['items']}) == len(cur['items']) and allv['total'] >= cur['total'])
     check('cliente: resúmenes coherentes', sum(x['count'] for x in cur['summary']['decisions']) == cur['total'] == sum(c['total'] for c in cur['summary']['clients']) and all(isinstance(m['quotes'], int) for m in cur['summary']['money']))

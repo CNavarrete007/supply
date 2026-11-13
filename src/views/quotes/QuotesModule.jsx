@@ -1,11 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
-import { listSupplierQuotes, getSupplierQuote, getComparison, listCustomerQuotes, getCustomerQuote, listAwards, listRevisionFamilies } from './api';
-import { money, label, tone, comparisonView, customerQuoteHtml, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
+import { listSupplierQuotes, getSupplierQuote, listCustomerQuotes, getCustomerQuote, listAwards, listRevisionFamilies } from './api';
+import { money, label, tone, customerQuoteHtml, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
 import { ChangeRequestModal } from '../recovery/ChangeRequestModal';
 import { RfqRequestCard } from './RfqRequestCard';
 import { RfqMatrixCard } from './RfqMatrixCard';
 import { SupplierQuoteCard } from './SupplierQuoteCard';
+import { ComparisonCard } from './ComparisonCard';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
 // Cotizaciones y Comparativo · diseño Grupo Gerez (11 tarjetas) conectado a MariaDB en modo consulta.
@@ -28,7 +29,7 @@ function useLoad(fn, deps, enabled = true) {
   return st;
 }
 
-export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
+export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNavigate }) {
   const en = Boolean(isEnglish || lang === 'en' || language === 'en');
   const tx = (es, e) => (en ? e : es);
   const notify = (t, m, k = 'info') => { if (typeof onNotify === 'function') onNotify(t, m, k); };
@@ -65,13 +66,10 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
   const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
   const pdf = useLoad(s => getCustomerQuote(pdfId, s), [pdfId], !!pdfId);
   const awards = useLoad(s => listAwards({ page, q, status: 'current' }, s), [tab, page, q, rev], tab === 10);
-  const compList = useLoad(s => getComparison('all', s), [tab, rev], tab === 5);
   const [compReq, setCompReq] = useState('');
-  const comp = useLoad(s => getComparison(compReq, s), [compReq, rev], tab === 5 && !!compReq);
   const [rfqLang, setRfqLang] = useState(en ? 'en' : 'es');
   const [cqId, setCqId] = useState(''); const cq = useLoad(s => getCustomerQuote(cqId, s), [cqId, rev], [6, 7, 9].includes(tab) && !!cqId);
   const [sqId, setSqId] = useState(''); const sq = useLoad(s => getSupplierQuote(sqId, s), [sqId, rev], tab === 11 && !!sqId);
-  const cmp = useMemo(() => comparisonView(comp.data?.lines || []), [comp.data]);
   const day = today();
 
   const Err = ({ s }) => (s?.error ? <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{s.error.message}</p> : null);
@@ -179,13 +177,8 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
       {tab === 11 && sq.data && <div data-testid="internal-quote" className="space-y-2"><h4 className="text-xs font-black text-slate-800">{sq.data.item.folio} · {sq.data.item.supplier_name} · {money(sq.data.item.total_amount, sq.data.item.currency, en)}</h4>{table(['#', tx('Descripción', 'Description'), tx('Cant. solicitada', 'Requested'), tx('Ofertada', 'Offered'), tx('Cantidad', 'Qty'), tx('Precio unitario', 'Unit price'), tx('Importe', 'Amount')], sq.data.items.map(i => <tr key={i.line_number}><td className="py-2.5 px-3">{i.line_number}</td><td className="py-2.5 px-3 font-semibold">{i.description}</td><td className="py-2.5 px-3">{Number(i.requested_quantity)}</td><td className="py-2.5 px-3">{i.offered ? tx('Sí', 'Yes') : 'No'}</td><td className="py-2.5 px-3">{Number(i.quantity)} {i.unit_label}</td><td className="py-2.5 px-3">{money(i.unit_price, sq.data.item.currency, en)}</td><td className="py-2.5 px-3 font-bold">{money(i.line_subtotal, sq.data.item.currency, en)}</td></tr>), tx('Sin partidas.', 'No items.'))}</div>}
     </div>}
 
-    {tab === 5 && <div className={box}>{head(tx('Comparativo y selección preliminar', 'Comparison & preliminary selection'), tx('Ofertas por partida; la mejor es el menor precio unitario ofertado en la moneda predominante (no se comparan monedas distintas).', 'Offers per item; best is the lowest offered unit price in the predominant currency (different currencies are never compared).'), <div className="flex gap-2"><select aria-label={tx('Requisición', 'Requisition')} value={compReq} onChange={e => setCompReq(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl min-w-[280px]"><option value="">{tx('Seleccionar requisición…', 'Select requisition…')}</option>{(compList.data?.requisitions || []).map(r => <option key={r.id} value={r.id}>{r.folio} · {r.client_name} · {r.quotes} {tx('cotización(es)', 'quote(s)')}</option>)}</select>{lockBtn(tx('Guardar selección', 'Save selection'))}</div>)}
-      <Wait s={compList} /><Err s={compList} /><Wait s={comp} /><Err s={comp} />
-      {!compReq && <div className="p-12 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500">{tx('Selecciona una requisición con cotizaciones para comparar.', 'Select a requisition with quotes to compare.')}</div>}
-      {comp.data && !cmp.length && <div data-testid="comparison-empty" className="p-10 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500">{tx('Esta requisición aún no tiene cotizaciones de proveedor registradas para comparar.', 'This requisition has no supplier quotes recorded to compare yet.')}</div>}
-      {comp.data && <div data-testid="comparison" className="space-y-3">{cmp.map(l => <div key={l.line_number} className="rounded-2xl border border-slate-200 p-4 space-y-2"><div className="flex flex-wrap justify-between gap-2"><div className="text-xs font-black text-slate-900">{tx('Partida', 'Item')} {l.line_number} · {l.description}</div><span className="text-[11px] text-slate-500">{Number(l.quantity)} {l.unit_label}{l.mixed ? ` · ${tx('monedas distintas: solo se compara', 'different currencies: only comparing')} ${l.currency}` : ''}</span></div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">{l.offers.map(o => <div key={o.quote_id} className={`p-3 rounded-xl border text-xs ${l.best === o.quote_id ? 'border-emerald-400 bg-emerald-50/50' : 'border-slate-200'}`}><div className="flex justify-between gap-2"><strong>{o.supplier_name}</strong>{l.best === o.quote_id && <span className="text-[10px] font-black text-emerald-700">{tx('Mejor precio', 'Best price')}</span>}</div><div className="text-[11px] text-slate-500">{o.quote_folio} · {o.offered ? tx('ofertada', 'offered') : tx('no ofertada', 'not offered')}</div><div className="mt-1 font-bold">{money(o.unit_price, o.currency, en)} <span className="font-normal text-slate-500">× {Number(o.quantity)} = {money(o.line_subtotal, o.currency, en)}</span></div>{o.lead_days !== null && <div className="text-[10px] text-slate-500">{tx('Entrega', 'Lead')} {Number(o.lead_days)} {tx('días', 'days')}</div>}{o.awarded && <div className="mt-1">{pill('awarded', tx('Adjudicada', 'Awarded'))}</div>}</div>)}{!l.offers.length && <p className="text-[11px] text-slate-400">{tx('Sin ofertas para esta partida.', 'No offers for this item.')}</p>}</div></div>)}</div>}
-    </div>}
+    {tab === 5 && <ComparisonCard en={en} notify={notify} requisition={compReq} onRequisition={setCompReq} refresh={rev} onAddCompany={() => go(4)}
+      onRegisterSupplier={() => onNavigate?.('suppliers')} onOpenOrders={() => onNavigate?.('purchase_orders')} />}
 
     {(tab === 6 || tab === 7) && <div className={box}>{head(tab === 6 ? tx('Cotización al cliente', 'Client quotation') : tx('Formato para el cliente', 'Client format'), tab === 6 ? tx('Precio de venta consolidado; los costos internos no se muestran.', 'Consolidated sale price; internal costs are not shown.') : tx('Vista formal con firmas registradas e impresión a PDF.', 'Formal view with recorded signatures and PDF printing.'), <div className="flex gap-2">{cqSelect}{tab === 7 ? <button type="button" onClick={() => printCq()} disabled={!cq.data} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Printer className="w-3.5 h-3.5" />{tx('Imprimir / PDF', 'Print / PDF')}</button> : lockBtn(tx('Emitir cotización', 'Issue quote'))}</div>)}
       <Wait s={cqs} /><Err s={cqs} /><Wait s={cq} /><Err s={cq} />

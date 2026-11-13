@@ -53,6 +53,10 @@ final class QuoteReadRepository
         return ['items' => $items, 'total' => $total, 'page' => $f['page'], 'page_size' => $f['page_size']];
     }
 
+    /** Current (latest) PO version and not cancelled/superseded — same rule as PurchaseOrderReadRepository. */
+    private const PO_LATEST = 'NOT EXISTS (SELECT 1 FROM purchase_orders nx WHERE nx.organization_id=po.organization_id AND nx.series_public_id=po.series_public_id AND nx.version_number>po.version_number)';
+    private const PO_CANCELLED = "LOWER(COALESCE(po.legacy_status,po.operational_status,'')) IN ('cancelada','sustituida','cancelled','superseded')";
+
     private const REQ = ' JOIN requisitions r ON r.id=%1$s.requisition_id AND r.organization_id=%1$s.organization_id JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id';
     private const SUP = ' JOIN suppliers s ON s.id=%1$s.supplier_id AND s.organization_id=%1$s.organization_id JOIN business_entities se ON se.id=s.id AND se.organization_id=s.organization_id';
 
@@ -292,18 +296,22 @@ final class QuoteReadRepository
                  JOIN requisitions r ON r.id=q.requisition_id AND r.organization_id=q.organization_id JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
                  JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id WHERE q.organization_id=? GROUP BY re.public_id,r.folio,c.legal_name ORDER BY r.folio LIMIT 1000', [$org]))];
         }
-        $req = $this->rows('SELECT r.id,r.folio,c.legal_name AS client_name FROM requisitions r JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id WHERE r.organization_id=? AND re.public_id=? LIMIT 1', [$org, $requisition]);
+        $req = $this->rows('SELECT r.id,r.folio,c.legal_name AS client_name,re.public_id AS public_id,r.internal_reference,r.project_reference_snapshot AS project,r.contract_reference_snapshot AS contract,
+            r.budget_amount,r.currency_code AS currency,r.need_date,
+            (SELECT rv.min_quotes FROM requisition_reviews rv WHERE rv.organization_id=r.organization_id AND rv.requisition_id=r.id ORDER BY rv.id DESC LIMIT 1) AS min_quotes,
+            (SELECT rv.folio FROM requisition_reviews rv WHERE rv.organization_id=r.organization_id AND rv.requisition_id=r.id ORDER BY rv.id DESC LIMIT 1) AS review_folio
+            FROM requisitions r JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id WHERE r.organization_id=? AND re.public_id=? LIMIT 1', [$org, $requisition]);
         if (! $req) {
             return ['requisition' => null, 'lines' => [], 'offers' => []];
         }
         $rid = (int) $req[0]['id'];
-        $lines = $this->rows('SELECT li.id,li.line_number,li.description,li.quantity,li.unit_label FROM requisition_items li WHERE li.organization_id=? AND li.requisition_id=? ORDER BY li.line_number,li.id LIMIT 500', [$org, $rid]);
+        $lines = $this->rows('SELECT li.id,li.public_id,li.line_number,li.description,li.quantity,li.unit_label,li.category_label_snapshot AS category,li.line_status FROM requisition_items li WHERE li.organization_id=? AND li.requisition_id=? ORDER BY li.line_number,li.id LIMIT 500', [$org, $rid]);
         $offers = $this->rows("SELECT it.requisition_item_id AS line_id,qe.public_id AS quote_id,q.folio AS quote_folio,s.legal_name AS supplier_name,q.currency_code AS currency,it.offered,it.quantity,it.unit_price,it.line_subtotal,q.lead_days,q.status_code AS status,q.legacy_status,
               EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=it.organization_id AND aw.requisition_item_id=it.requisition_item_id AND aw.supplier_quote_id=q.id AND aw.status_code='active' AND aw.superseded_at IS NULL) AS awarded
             FROM supplier_quote_items it JOIN supplier_quotes q ON q.id=it.supplier_quote_id AND q.organization_id=it.organization_id JOIN business_entities qe ON qe.id=q.id AND qe.organization_id=q.organization_id
             JOIN suppliers s ON s.id=q.supplier_id AND s.organization_id=q.organization_id WHERE it.organization_id=? AND it.requisition_id=? AND it.requisition_item_id IS NOT NULL ORDER BY it.requisition_item_id,it.unit_price", [$org, $rid]);
         $map = [];
-        foreach ($lines as $l) { $map[(int) $l['id']] = ['line_number' => (int) $l['line_number'], 'description' => $l['description'], 'quantity' => $l['quantity'], 'unit_label' => $l['unit_label'], 'offers' => []]; }
+        foreach ($lines as $l) { $map[(int) $l['id']] = ['id' => $l['public_id'], 'line_number' => (int) $l['line_number'], 'description' => $l['description'], 'quantity' => $l['quantity'], 'unit_label' => $l['unit_label'], 'category' => $l['category'], 'line_status' => $l['line_status'], 'award' => null, 'offers' => []]; }
         foreach ($offers as $o) {
             $k = (int) $o['line_id'];
             if (! isset($map[$k])) { continue; }
@@ -311,7 +319,33 @@ final class QuoteReadRepository
             $o['offered'] = (bool) $o['offered']; $o['awarded'] = (bool) $o['awarded'];
             $map[$k]['offers'][] = $o;
         }
-        return ['requisition' => ['folio' => $req[0]['folio'], 'client_name' => $req[0]['client_name']], 'lines' => array_values($map)];
+        // Additive (tarjeta 5): current definitive award per line, quote summary per supplier and current POs. Read-only.
+        foreach ($this->rows("SELECT aw.requisition_item_id AS line_id,qe.public_id AS quote_id,s.legal_name AS supplier_name,aw.quantity,aw.unit_price,aw.subtotal_amount,aw.currency_code AS currency
+            FROM awards aw JOIN suppliers s ON s.id=aw.supplier_id AND s.organization_id=aw.organization_id LEFT JOIN business_entities qe ON qe.id=aw.supplier_quote_id AND qe.organization_id=aw.organization_id
+            WHERE aw.organization_id=? AND aw.requisition_id=? AND aw.status_code='active' AND aw.superseded_at IS NULL ORDER BY aw.id", [$org, $rid]) as $a) {
+            $k = (int) $a['line_id'];
+            if (isset($map[$k]) && $map[$k]['award'] === null) { unset($a['line_id']); $map[$k]['award'] = $a; }
+        }
+        $quotes = $this->rows("SELECT qe.public_id AS id,q.folio,se.public_id AS supplier_id,s.legal_name AS supplier_name,s.code AS supplier_code,q.supplier_reference,q.quote_date,q.valid_until,q.currency_code AS currency,
+              q.subtotal_amount,q.tax_amount,q.total_amount,q.lead_days,q.payment_terms,q.technical_score,q.document_score,q.status_code AS status,q.legacy_status,
+              (SELECT COUNT(*) FROM supplier_quote_items it WHERE it.organization_id=q.organization_id AND it.supplier_quote_id=q.id AND it.offered=1 AND it.requisition_item_id IS NOT NULL) AS offered_lines,
+              (SELECT COUNT(DISTINCT aw.requisition_item_id) FROM awards aw WHERE aw.organization_id=q.organization_id AND aw.supplier_quote_id=q.id AND aw.status_code='active' AND aw.superseded_at IS NULL) AS awarded_lines
+            FROM supplier_quotes q JOIN business_entities qe ON qe.id=q.id AND qe.organization_id=q.organization_id JOIN suppliers s ON s.id=q.supplier_id AND s.organization_id=q.organization_id
+            JOIN business_entities se ON se.id=s.id AND se.organization_id=s.organization_id WHERE q.organization_id=? AND q.requisition_id=? ORDER BY q.total_amount,q.id", [$org, $rid]);
+        foreach ($quotes as &$x) { foreach (['offered_lines', 'awarded_lines'] as $k) { $x[$k] = (int) $x[$k]; } $x['lead_days'] = $x['lead_days'] === null ? null : (float) $x['lead_days']; }
+        unset($x);
+        $orders = $this->rows("SELECT e.public_id AS id,po.folio,po.version_number,s.legal_name AS supplier_name,po.currency_code AS currency,po.total_amount,po.order_date,
+              COALESCE(po.legacy_status,po.operational_status) AS status,(SELECT COUNT(*) FROM purchase_order_items it WHERE it.organization_id=po.organization_id AND it.purchase_order_id=po.id) AS item_count
+            FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
+            JOIN business_entities e ON e.id=po.id AND e.organization_id=po.organization_id JOIN suppliers s ON s.id=po.supplier_id AND s.organization_id=po.organization_id
+            WHERE pr.organization_id=? AND pr.requisition_id=? AND " . self::PO_LATEST . " AND NOT " . self::PO_CANCELLED . " ORDER BY po.folio", [$org, $rid]);
+        foreach ($orders as &$o) { $o['item_count'] = (int) $o['item_count']; $o['version_number'] = (int) $o['version_number']; }
+        unset($o);
+        $h = $req[0];
+        $requisitionInfo = ['id' => $h['public_id'], 'folio' => $h['folio'], 'client_name' => $h['client_name'], 'internal_reference' => $h['internal_reference'], 'project' => $h['project'], 'contract' => $h['contract'],
+            'budget_amount' => $h['budget_amount'], 'currency' => $h['currency'], 'need_date' => $h['need_date'], 'min_quotes' => $h['min_quotes'] === null ? null : (int) $h['min_quotes'], 'review_folio' => $h['review_folio'],
+            'item_count' => count(array_filter($map, static fn ($l) => $l['line_status'] === 'active'))];
+        return ['requisition' => $requisitionInfo, 'lines' => array_values($map), 'quotes' => $quotes, 'orders' => $orders];
     }
 
     /** @param array{page:int,page_size:int,q:string,decision:string,client:string,scope:string} $f */
