@@ -52,6 +52,13 @@ final class QuoteController extends ReadOnlyModuleController
 
     public function rfqs(): ResponseInterface { return $this->run(self::BASIC, fn ($r, $o, $f) => $r->rfqs($o, $f)); }
     public function rfq(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->rfq($o, $i)); }
+    /** Tarjeta 2 (RFQ): catálogos para preparar la solicitud. Solo lectura: guardar/enviar una RFQ sigue bloqueado. */
+    public function rfqSetup(): ResponseInterface { return $this->run([], fn ($r, $o, $f) => $r->rfqSetup($o), false); }
+    public function rfqRequisitions(): ResponseInterface
+    {
+        return $this->run(['q' => [self::TEXT, ''], 'buyer' => ['/^(all|unassigned|legacy-[0-9a-f]{16}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/D', 'all']], fn ($r, $o, $f) => $r->rfqRequisitions($o, $f));
+    }
+    public function rfqRequisition(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->rfqRequisition($o, $i)); }
     public function supplierQuotes(): ResponseInterface { return $this->run(self::BASIC, fn ($r, $o, $f) => $r->supplierQuotes($o, $f)); }
     public function supplierQuote(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->supplierQuote($o, $i)); }
     public function comparison(): ResponseInterface { return $this->run(['requisition' => [self::UUID_OR_ALL, 'all']], fn ($r, $o, $f) => $r->comparison($o, $f['requisition']), false); }

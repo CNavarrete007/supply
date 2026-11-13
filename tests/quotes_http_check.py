@@ -24,7 +24,7 @@ def logout(op):
     try:
         tok = json.loads(op.open(API + '/api/v1/auth/csrf').read())['csrf_token']; op.open(urllib.request.Request(API + '/api/v1/auth/logout', b'{}', {'Content-Type': 'application/json', 'X-SF-CSRF': tok}))
     except Exception: pass
-LISTS = ['/rfqs', '/supplier-quotes', '/comparison', '/customer-quotes', '/awards', '/revisions']
+LISTS = ['/rfqs', '/supplier-quotes', '/comparison', '/customer-quotes', '/awards', '/revisions', '/rfq-setup', '/rfq-requisitions']
 EPS = [R + p for p in LISTS]
 anon = session(); check('sin sesión: 401', all(status(anon, p) == 401 for p in EPS + [f'{R}/rfqs/{ZERO}']))
 if NONADMIN:
@@ -35,11 +35,12 @@ try:
     check('Master Admin: 200', all(status(adm, p) == 200 for p in EPS))
     for bad in ['/rfqs?x=1', '/rfqs?page_size=51', '/rfqs?supplier=abc', '/supplier-quotes?status=%27or', '/comparison?requisition=abc', '/comparison?page=1',
                 '/customer-quotes?scope=x', '/customer-quotes?client=1', '/awards?status=%27x', f'/rfqs/{ZERO}?a=1',
-                '/revisions?status=superseded', '/revisions?client=1', '/revisions?page_size=51', '/revisions?q=%01']:
+                '/revisions?status=superseded', '/revisions?client=1', '/revisions?page_size=51', '/revisions?q=%01',
+                '/rfq-setup?x=1', '/rfq-setup?page=1', '/rfq-requisitions?buyer=abc', '/rfq-requisitions?buyer=legacy-xyz', '/rfq-requisitions?supplier=all', f'/rfq-requisitions/{ZERO}?a=1']:
         check(f'422 con parámetro inválido ({bad})', status(adm, R + bad) == 422)
-    check('detalle con UUID inexistente: 404', all(status(adm, f'{R}{p}/{ZERO}') == 404 for p in ['/rfqs', '/supplier-quotes', '/customer-quotes']))
+    check('detalle con UUID inexistente: 404', all(status(adm, f'{R}{p}/{ZERO}') == 404 for p in ['/rfqs', '/supplier-quotes', '/customer-quotes', '/rfq-requisitions']))
     check('detalle con identificador no UUID: 404', status(adm, R + '/rfqs/abc') == 404)
-    check('sin rutas de escritura (POST/PUT/DELETE ≠ 2xx)', all(status(adm, R + s, m) >= 400 for s in LISTS + [f'/rfqs/{ZERO}', f'/customer-quotes/{ZERO}'] for m in ['POST', 'PUT', 'DELETE']))
+    check('sin rutas de escritura (POST/PUT/DELETE ≠ 2xx)', all(status(adm, R + s, m) >= 400 for s in LISTS + [f'/rfqs/{ZERO}', f'/customer-quotes/{ZERO}', f'/rfq-requisitions/{ZERO}'] for m in ['POST', 'PUT', 'DELETE']))
 
     rf = get(f'{R}/rfqs?page_size=50'); s = rf['summary']
     check('RFQ: resumen coherente', s['total'] == rf['total'] and 0 <= s['responded'] <= s['total'] and 0 <= s['overdue'] <= s['total'] - s['responded'] and sum(x['count'] for x in s['statuses']) == s['total'])
@@ -87,6 +88,22 @@ try:
             check('revisiones: otro Master Admin no puede solicitar sobre requisiciones ajenas', all(other[i['id']]['change_block'] == 'not_owner' for i in mine), [i['series'] for i in mine])
         finally:
             logout(o2)
+    # Tarjeta 2 · RFQ: compradores de la validación, requisiciones validadas por comprador y su detalle (solo lectura).
+    st = get(f'{R}/rfq-setup'); allreq = get(f'{R}/rfq-requisitions?page_size=50')
+    check('RFQ setup: compradores cubren todas las requisiciones validadas', sum(b['requisitions'] for b in st['buyers']) == allreq['total'] and len({b['key'] for b in st['buyers']}) == len(st['buyers']))
+    check('RFQ setup: contactos solo de compras/Master Admin', all(set(c['roles'].split(',')) & {'buyer', 'master_admin'} for c in st['contacts']))
+    check('RFQ setup: proveedores con estatus y folios por año', all(x['status'] for x in st['suppliers']) and all(re.match(r'^\d{4}$', y) and isinstance(n, int) for y, n in st['folios'].items()) and st['currencies'] == ['MXN', 'USD', 'EUR'])
+    for b in st['buyers']:
+        lst = get(f"{R}/rfq-requisitions?page_size=50&buyer={b['key']}")
+        check(f"RFQ: requisiciones del comprador {b['name'] or b['key']}", lst['total'] == b['requisitions'] and all(i['buyer_key'] == b['key'] for i in lst['items']))
+    for i in allreq['items'][:5]:
+        d = get(f"{R}/rfq-requisitions/{i['id']}")
+        sent = {x['rfq'] for it in d['items'] for x in it['sent_to']}
+        check(f"RFQ {i['folio']}: partidas vigentes, RFQ y envíos coherentes", len(d['items']) == i['item_count'] and len(d['rfqs']) == i['rfq_count'] and sent <= {x['folio'] for x in d['rfqs']} and d['item']['folio'] == i['folio'])
+        check(f"RFQ {i['folio']}: sin precios ni importes", not re.search(r'price|amount|cost|subtotal', json.dumps(d), re.I))
+    if rf['items']:
+        d = get(f"{R}/rfqs/{rf['items'][0]['id']}")
+        check('RFQ registrada: contacto y referencias para el formato', {'contact_name', 'contact_email', 'contact_phone', 'internal_reference', 'project', 'contract'} <= set(d['item']))
     aw = get(f'{R}/awards?page_size=50'); awa = get(f'{R}/awards?page_size=50&status=all')
     check('adjudicaciones: vigentes ⊆ todas', aw['total'] <= awa['total'] and all(a['superseded_at'] is None for a in aw['items']))
 finally:

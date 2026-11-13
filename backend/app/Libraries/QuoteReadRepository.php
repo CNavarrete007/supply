@@ -82,7 +82,11 @@ final class QuoteReadRepository
     public function rfq(int $org, string $id): ?array
     {
         $h = $this->rows('SELECT e.public_id AS id,f.id AS db_id,f.folio,f.request_date,f.deadline,f.required_date,f.currency_code AS currency,f.status_code AS status,f.legacy_status,f.delivery_place,f.requested_documents_text,f.terms_text,
-            r.folio AS requisition,c.legal_name AS client_name,s.legal_name AS supplier_name,s.code AS supplier_code,s.tax_identifier AS supplier_tax_id
+            r.folio AS requisition,c.legal_name AS client_name,s.legal_name AS supplier_name,s.code AS supplier_code,s.tax_identifier AS supplier_tax_id,
+            r.internal_reference,r.project_reference_snapshot AS project,r.contract_reference_snapshot AS contract,
+            COALESCE((SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=f.internal_contact_user_id AND u.organization_id=f.organization_id),' . self::snapName('f.contact_snapshot') . ') AS contact_name,
+            COALESCE((SELECT p.email FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=f.internal_contact_user_id AND u.organization_id=f.organization_id),JSON_UNQUOTE(JSON_EXTRACT(f.contact_snapshot,\'$.email\'))) AS contact_email,
+            COALESCE((SELECT p.phone FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=f.internal_contact_user_id AND u.organization_id=f.organization_id),JSON_UNQUOTE(JSON_EXTRACT(f.contact_snapshot,\'$.phone\'))) AS contact_phone
             FROM rfqs f JOIN business_entities e ON e.id=f.id AND e.organization_id=f.organization_id' . sprintf(self::REQ, 'f') . sprintf(self::SUP, 'f') . ' WHERE f.organization_id=? AND e.public_id=? LIMIT 1', [$org, $id]);
         if (! $h) {
             return null;
@@ -91,6 +95,107 @@ final class QuoteReadRepository
         $items = $this->rows('SELECT line_number,description,specification,category_snapshot AS category,unit_label,quantity FROM rfq_items WHERE organization_id=? AND rfq_id=? ORDER BY line_number,id', [$org, (int) $rfq['db_id']]);
         unset($rfq['db_id']);
         return ['item' => $rfq, 'items' => $items];
+    }
+
+    // ---- Tarjeta 2 · Solicitud a proveedores (RFQ): catálogos y requisiciones validadas (solo lectura) ----
+    /** Name inside a JSON snapshot ({"name"}, {"display_name"}, {"nombre"} or a plain JSON string). */
+    private static function snapName(string $col): string
+    {
+        return "COALESCE(JSON_UNQUOTE(JSON_EXTRACT({$col},'$.name')),JSON_UNQUOTE(JSON_EXTRACT({$col},'$.display_name')),JSON_UNQUOTE(JSON_EXTRACT({$col},'$.nombre')),CASE WHEN JSON_TYPE({$col})='STRING' THEN JSON_UNQUOTE({$col}) END)";
+    }
+
+    /** Latest contractor validation (requisition_reviews) per requisition with its buyer key/name. */
+    private static function validations(): string
+    {
+        $person = "(SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=rv.buyer_user_id AND u.organization_id=rv.organization_id)";
+        $snap = self::snapName('rv.buyer_snapshot');
+        return "SELECT rv.id AS rv_id,rv.organization_id AS org_id,rv.requisition_id,rv.folio AS review_folio,rv.deadline AS review_deadline,rv.strategy,rv.min_quotes,
+            rv.technical_result,rv.contract_result,rv.budget_result,COALESCE({$person},{$snap}) AS buyer_name,
+            (SELECT p.email FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=rv.buyer_user_id AND u.organization_id=rv.organization_id) AS buyer_email,
+            CASE WHEN rv.buyer_user_id IS NOT NULL THEN CONVERT((SELECT u.public_id FROM users u WHERE u.id=rv.buyer_user_id AND u.organization_id=rv.organization_id) USING utf8mb4)
+                 WHEN {$snap} IS NOT NULL AND TRIM({$snap})<>'' THEN CONCAT('legacy-',LEFT(SHA2(TRIM({$snap}),256),16)) ELSE 'unassigned' END AS buyer_key
+            FROM requisition_reviews rv WHERE rv.organization_id=?
+              AND NOT EXISTS (SELECT 1 FROM requisition_reviews n WHERE n.organization_id=rv.organization_id AND n.requisition_id=rv.requisition_id AND n.id>rv.id)";
+    }
+
+    /** Buyers (from the validations), invitable suppliers, purchasing contacts and the highest RFQ-YYYY-NNNN per year. */
+    public function rfqSetup(int $org): array
+    {
+        $buyers = $this->rows('SELECT V.buyer_key AS `key`,MAX(V.buyer_name) AS name,MAX(V.buyer_email) AS email,COUNT(DISTINCT V.requisition_id) AS requisitions
+            FROM (' . self::validations() . ') V GROUP BY V.buyer_key ORDER BY V.buyer_key=\'unassigned\',name', [$org]);
+        foreach ($buyers as &$b) { $b['requisitions'] = (int) $b['requisitions']; }
+        unset($b);
+        $suppliers = $this->rows('SELECT se.public_id AS id,s.code,s.legal_name AS name,s.default_currency AS currency,s.status_code AS status
+            FROM suppliers s JOIN business_entities se ON se.id=s.id AND se.organization_id=s.organization_id WHERE s.organization_id=? AND se.archived_at IS NULL ORDER BY s.legal_name,s.id', [$org]);
+        $contacts = $this->rows("SELECT u.public_id AS id,p.display_name AS name,p.email,p.phone,p.position_title AS position,
+                GROUP_CONCAT(DISTINCT ro.code ORDER BY ro.code SEPARATOR ',') AS roles
+            FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id
+            JOIN user_roles ur ON ur.user_id=u.id AND ur.organization_id=u.organization_id JOIN roles ro ON ro.id=ur.role_id AND ro.organization_id=ur.organization_id
+            WHERE u.organization_id=? AND u.access_enabled=1 AND u.status_code='active' AND ro.code IN ('buyer','master_admin')
+            GROUP BY u.id,u.public_id,p.display_name,p.email,p.phone,p.position_title ORDER BY p.display_name", [$org]);
+        $folios = [];
+        foreach ($this->rows("SELECT SUBSTRING(folio,5,4) AS y,MAX(CAST(SUBSTRING(folio,10) AS UNSIGNED)) AS n FROM rfqs WHERE organization_id=? AND folio REGEXP '^RFQ-[0-9]{4}-[0-9]{1,9}$' GROUP BY y", [$org]) as $r) {
+            $folios[(string) $r['y']] = (int) $r['n'];
+        }
+        return ['buyers' => $buyers, 'suppliers' => $suppliers, 'contacts' => $contacts, 'folios' => (object) $folios, 'currencies' => ['MXN', 'USD', 'EUR']];
+    }
+
+    private const RFQ_REQ_FIELDS = "re.public_id AS id,r.folio,c.legal_name AS client_name,r.internal_reference,r.client_reference,r.project_reference_snapshot AS project,r.contract_reference_snapshot AS contract,
+        r.description,r.need_date,r.delivery_place,r.currency_code AS currency,V.review_folio,V.review_deadline,V.strategy,V.min_quotes,V.technical_result,V.contract_result,V.budget_result,
+        V.buyer_key,V.buyer_name,
+        (SELECT COUNT(*) FROM requisition_items i WHERE i.organization_id=r.organization_id AND i.requisition_id=r.id AND i.line_status='active') AS item_count,
+        (SELECT COUNT(*) FROM rfqs f WHERE f.organization_id=r.organization_id AND f.requisition_id=r.id) AS rfq_count,
+        (SELECT COUNT(*) FROM supplier_quotes q WHERE q.organization_id=r.organization_id AND q.requisition_id=r.id) AS quote_count,
+        EXISTS(SELECT 1 FROM purchase_order_requisitions pr WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id) AS has_po";
+    private const RFQ_REQ_FROM = ' JOIN requisitions r ON r.id=V.requisition_id AND r.organization_id=V.org_id JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
+        JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id';
+
+    private static function rfqReqRow(array $i): array
+    {
+        foreach (['item_count', 'rfq_count', 'quote_count', 'min_quotes'] as $k) { $i[$k] = (int) $i[$k]; }
+        $i['has_po'] = (bool) $i['has_po'];
+        return $i;
+    }
+
+    /** Validated requisitions (latest contractor validation) of a buyer, without purchase order first. @param array{page:int,page_size:int,q:string,buyer:string} $f */
+    public function rfqRequisitions(int $org, array $f): array
+    {
+        $from = 'FROM (' . self::validations() . ') V' . self::RFQ_REQ_FROM;
+        $where = 're.archived_at IS NULL';
+        $binds = [$org];
+        if ($f['buyer'] !== 'all') { $where .= ' AND V.buyer_key=?'; $binds[] = $f['buyer']; }
+        [$sq, $sb] = self::search($f['q'], ['r.folio', 'c.legal_name', 'r.internal_reference', 'r.description', 'V.review_folio']);
+        $res = $this->page(self::RFQ_REQ_FIELDS, $from, $where . $sq, [...$binds, ...$sb], 'has_po,r.request_date DESC,r.id DESC', $f);
+        $res['items'] = array_map(self::rfqReqRow(...), $res['items']);
+        return $res;
+    }
+
+    /** One validated requisition with its active lines, the suppliers each line was already sent to and its RFQs. */
+    public function rfqRequisition(int $org, string $id): ?array
+    {
+        $h = $this->rows('SELECT r.id AS db_id,' . self::RFQ_REQ_FIELDS . ' FROM (' . self::validations() . ') V' . self::RFQ_REQ_FROM . ' WHERE re.public_id=? AND re.archived_at IS NULL LIMIT 1', [$org, $id]);
+        if (! $h) {
+            return null;
+        }
+        $req = self::rfqReqRow($h[0]);
+        $rid = (int) $req['db_id'];
+        unset($req['db_id']);
+        $items = $this->rows("SELECT i.id AS db_id,i.public_id AS id,i.line_number,i.description,i.category_label_snapshot AS category,i.quantity,i.unit_label AS unit
+            FROM requisition_items i WHERE i.organization_id=? AND i.requisition_id=? AND i.line_status='active' ORDER BY i.line_number,i.id", [$org, $rid]);
+        $sent = [];
+        foreach ($this->rows('SELECT it.requisition_item_id AS item,f.folio,s.legal_name AS supplier_name FROM rfq_items it JOIN rfqs f ON f.id=it.rfq_id AND f.organization_id=it.organization_id
+            JOIN suppliers s ON s.id=f.supplier_id AND s.organization_id=f.organization_id WHERE it.organization_id=? AND it.requisition_id=? AND it.requisition_item_id IS NOT NULL ORDER BY f.folio', [$org, $rid]) as $x) {
+            $sent[(int) $x['item']][] = ['rfq' => $x['folio'], 'supplier_name' => $x['supplier_name']];
+        }
+        foreach ($items as &$i) { $i['sent_to'] = $sent[(int) $i['db_id']] ?? []; $i['line_number'] = (int) $i['line_number']; unset($i['db_id']); }
+        unset($i);
+        $rfqs = $this->rows('SELECT e.public_id AS id,f.folio,s.legal_name AS supplier_name,f.status_code AS status,f.request_date,f.deadline,
+            (SELECT COUNT(*) FROM rfq_items it WHERE it.organization_id=f.organization_id AND it.rfq_id=f.id) AS item_count
+            FROM rfqs f JOIN business_entities e ON e.id=f.id AND e.organization_id=f.organization_id JOIN suppliers s ON s.id=f.supplier_id AND s.organization_id=f.organization_id
+            WHERE f.organization_id=? AND f.requisition_id=? ORDER BY f.folio', [$org, $rid]);
+        foreach ($rfqs as &$x) { $x['item_count'] = (int) $x['item_count']; }
+        unset($x);
+        return ['item' => $req, 'items' => $items, 'rfqs' => $rfqs];
     }
 
     private function facet(string $sql, int $org): array

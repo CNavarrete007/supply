@@ -20,3 +20,7 @@ export const listCustomerQuotes = (o = {}, s) => getJson(`/api/v1/quotes/custome
 export const getCustomerQuote = (id, s) => one('/api/v1/quotes/customer-quotes', id, s);
 export const listAwards = (o = {}, s) => getJson(`/api/v1/quotes/awards?${qs({ page: 1, page_size: 25, ...o })}`, s);
 export const listRevisionFamilies = (o = {}, s) => getJson(`/api/v1/quotes/revisions?${qs({ page: 1, page_size: 24, ...o })}`, s);
+// Tarjeta 2 · RFQ (solo lectura): catálogos, requisiciones validadas por comprador y detalle con partidas.
+export const getRfqSetup = s => getJson('/api/v1/quotes/rfq-setup', s);
+export const listRfqRequisitions = (o = {}, s) => getJson(`/api/v1/quotes/rfq-requisitions?${qs({ page: 1, page_size: 50, ...o })}`, s);
+export const getRfqRequisition = (id, s) => one('/api/v1/quotes/rfq-requisitions', id, s);

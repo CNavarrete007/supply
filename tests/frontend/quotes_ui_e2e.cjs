@@ -56,21 +56,70 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const answered = rfqs.items.find(r => r.responded);
     check('RFQ vencida sin respuesta marcada', overdue && flat(await page.getByRole('row').filter({ hasText: overdue.folio }).innerText()).includes('Vencida'));
     check('RFQ respondida muestra la cotización', answered && flat(await page.getByRole('row').filter({ hasText: answered.folio }).innerText()).includes(`Respondida · ${answered.quote_folio}`));
-    check('"Nueva RFQ" bloqueada', await page.getByRole('button', { name: /Nueva RFQ/ }).isDisabled());
     const searched = page.waitForResponse(r => /\/quotes\/rfqs\?.*q=RFQ-QA-0004/.test(r.url()));
     await page.getByRole('searchbox', { name: 'Buscar' }).fill('RFQ-QA-0004');
     check('búsqueda en el servidor (200)', (await searched).status() === 200);
     await page.getByText('1 registros').waitFor();
     await shot(page, 'cot_3_matriz_rfq');
 
-    // 2 · Documento de RFQ sin precios
-    await page.getByRole('button', { name: /Solicitud a proveedores \(RFQ\)/ }).click();
+    // 3 · "Ver" abre el formato de una RFQ registrada (sin precios)
     const rfqDoc = page.waitForResponse(r => /\/quotes\/rfqs\/[0-9a-f-]{36}$/.test(r.url()));
-    await page.getByRole('combobox', { name: 'RFQ' }).selectOption({ label: `${rfqs.items[0].folio} · ${rfqs.items[0].supplier_name}` });
+    await page.getByRole('button', { name: 'Ver formato RFQ-QA-0004' }).click();
     check('detalle de RFQ (200)', (await rfqDoc).status() === 200);
-    const doc = flat(await page.getByTestId('rfq-doc').innerText());
-    check('RFQ: proveedor, requisición, partida y sin precios', [rfqs.items[0].supplier_name, rfqs.items[0].requisition, 'Material sintético', 'no incluye precios'].every(x => doc.includes(x)) && !/\$\d/.test(doc), doc.slice(0, 200));
-    check('"Generar y enviar RFQ" bloqueado', await page.getByRole('button', { name: /Generar y enviar RFQ/ }).isDisabled());
+    const rq4 = rfqs.items.find(r => r.folio === 'RFQ-QA-0004');
+    const docText = flat(await page.getByTestId('rfq-doc').frameLocator('iframe').locator('body').innerText());
+    check('RFQ registrada: folio, proveedor, requisición, partida y sin precios', ['RFQ-QA-0004', rq4.supplier_name, rq4.requisition, 'Material sintético', 'no incluye precios'].every(x => docText.includes(x)) && !/\$\d|precio unitario/i.test(docText) && !docText.includes('NO REGISTRADA'), docText.slice(0, 300));
+    check('RFQ registrada aislada en iframe sandbox', (await page.getByTestId('rfq-doc').locator('iframe').getAttribute('sandbox')) === '');
+    await page.getByTestId('rfq-doc').getByRole('button', { name: 'Cerrar' }).click();
+
+    // 2 · Solicitud a proveedores (RFQ): formulario con datos reales → partidas y vista previa; guardar sigue bloqueado
+    const setup = await api('/api/v1/quotes/rfq-setup');
+    await page.getByRole('button', { name: 'Nueva RFQ' }).click();
+    await page.getByTestId('rfq-card').waitFor();
+    check('"Nueva RFQ" abre la tarjeta 2', (await page.getByRole('button', { name: /Solicitud a proveedores \(RFQ\)/ }).getAttribute('aria-pressed')) === 'true');
+    check('RFQ: partidas y vista previa ocultas al inicio', await page.getByTestId('rfq-hidden').isVisible());
+    await page.getByRole('button', { name: 'Generar Solicitud y Partidas' }).click();
+    check('RFQ: obligatorios marcados y nada generado', await page.getByText('Selecciona el comprador responsable.').count() >= 1 && await page.getByText('Selecciona el proveedor invitado.').count() >= 1 && await page.getByTestId('rfq-items').count() === 0);
+    const buyer = setup.buyers.find(b => b.requisitions > 0 && setup.contacts.some(c => c.id === b.key)) || setup.buyers[0];
+    const breqs = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&buyer=${buyer.key}`);
+    await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer.key);
+    await page.getByTestId('rfq-req-modal').waitFor(); await page.getByTestId('rfq-req-option').first().waitFor();
+    check('el comprador abre la ventana con sus requisiciones validadas', await page.getByTestId('rfq-req-option').count() === breqs.items.length && breqs.items.every(r => r.buyer_key === buyer.key));
+    const target = breqs.items.find(r => r.rfq_count > 0) || breqs.items[0];
+    const det = await api(`/api/v1/quotes/rfq-requisitions/${target.id}`);
+    const detResp = page.waitForResponse(r => r.url().endsWith(`/quotes/rfq-requisitions/${target.id}`));
+    await page.getByTestId('rfq-req-option').filter({ hasText: target.folio }).getByRole('button', { name: 'Seleccionar' }).click();
+    check('detalle de la requisición validada (200)', (await detResp).status() === 200);
+    await page.waitForFunction(v => document.querySelector('input[aria-label="Lugar de entrega"]')?.value === v, det.item.delivery_place || '');
+    const ref = await page.getByRole('textbox', { name: 'Referencia interna' }).inputValue();
+    check('la requisición llena lugar de entrega, fecha requerida y referencia interna', (await page.getByLabel('Fecha requerida').inputValue()) === String(det.item.need_date || '').slice(0, 10) && ref.startsWith(det.item.internal_reference || det.item.folio), ref);
+    check('contacto de compras = comprador responsable', (await page.getByRole('combobox', { name: 'Contacto de compras' }).inputValue()) === buyer.key);
+    const sentName = det.items.flatMap(i => i.sent_to).map(x => x.supplier_name)[0];
+    const rfqSup = setup.suppliers.find(s => s.name === sentName && !['suspended', 'inactive'].includes(s.status)) || setup.suppliers.find(s => s.status === 'authorized');
+    await page.getByRole('combobox', { name: 'Proveedor invitado' }).selectOption(rfqSup.id);
+    check('moneda tomada del proveedor', (await page.getByRole('combobox', { name: 'Moneda solicitada' }).inputValue()) === (['MXN', 'USD', 'EUR'].includes(rfqSup.currency) ? rfqSup.currency : 'MXN'));
+    const blockedSup = setup.suppliers.find(s => ['suspended', 'inactive'].includes(s.status));
+    check('proveedores suspendidos o inactivos no se pueden invitar', !blockedSup || await page.locator(`select[aria-label="Proveedor invitado"] option[value="${blockedSup.id}"]`).evaluate(o => o.disabled));
+    const issue = await page.getByLabel('Fecha de emisión').inputValue(); const y = issue.slice(0, 4);
+    const expectedFolio = `RFQ-${y}-${String((Number(setup.folios[y]) || 0) + 1).padStart(4, '0')}`;
+    check('folio previsto calculado desde MariaDB', (await page.getByRole('textbox', { name: 'Folio RFQ' }).inputValue()) === expectedFolio, expectedFolio);
+    await page.getByRole('button', { name: 'Generar Solicitud y Partidas' }).click();
+    await page.getByTestId('rfq-items').waitFor();
+    check('partidas vigentes de la requisición, todas incluidas', await page.getByTestId('rfq-line').count() === det.items.length && flat(await page.getByTestId('rfq-items').innerText()).includes(`${det.items.length} seleccionada(s) de ${det.items.length}`));
+    const itemsText = flat(await page.getByTestId('rfq-items').innerText());
+    check('muestra a qué proveedores ya se envió cada partida', det.items.flatMap(i => i.sent_to).every(x => itemsText.includes(x.rfq)));
+    check('aviso de partida ya enviada al mismo proveedor', !sentName || rfqSup.name !== sentName || itemsText.includes('ya se enviaron a este proveedor'));
+    const pv = page.getByTestId('rfq-preview').contentFrame();
+    const pvText = flat(await pv.locator('body').innerText());
+    check('vista previa: folio, proveedor, comprador, partidas y marca de no registrada', [expectedFolio, rfqSup.name, buyer.name, det.items[0].description, 'VISTA PREVIA'].every(x => pvText.includes(x)), pvText.slice(0, 300));
+    check('vista previa sin precios ni importes', !/precio unitario|importe|subtotal|\$\s?\d/i.test(pvText) && pvText.includes('no incluye precios'), pvText.match(/.{0,60}(precio unitario|importe|subtotal|\$\s?\d).{0,60}/i)?.[0]);
+    await page.getByRole('checkbox', { name: `Incluir partida ${det.items[0].line_number}` }).uncheck();
+    check('excluir una partida actualiza el contador y la vista previa', flat(await page.getByTestId('rfq-items').innerText()).includes(`${det.items.length - 1} seleccionada(s) de ${det.items.length}`) && (det.items.length > 1 || flat(await pv.locator('body').innerText()).includes('No hay partidas seleccionadas')));
+    await page.getByRole('button', { name: 'Seleccionar todas' }).click();
+    check('"Guardar y siguiente RFQ" bloqueado (escritura comercial)', await page.getByRole('button', { name: /Guardar y siguiente RFQ/ }).isDisabled());
+    await shot(page, 'cot_2_rfq');
+    await page.getByRole('button', { name: 'Ver matriz' }).click();
+    check('"Ver matriz" vuelve a la matriz de RFQ', (await page.getByRole('button', { name: /Matriz de RFQ/ }).getAttribute('aria-pressed')) === 'true');
 
     // 4 · Cotizaciones recibidas con tarjetas por proveedor
     await page.getByRole('button', { name: /Cotizaciones recibidas/ }).click();
