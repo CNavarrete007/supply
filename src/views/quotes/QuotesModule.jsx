@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
 import { listSupplierQuotes, getSupplierQuote, listCustomerQuotes, getCustomerQuote, listAwards, listRevisionFamilies } from './api';
-import { money, label, tone, customerQuoteHtml, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
+import { money, label, tone, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
 import { ChangeRequestModal } from '../recovery/ChangeRequestModal';
 import { RfqRequestCard } from './RfqRequestCard';
 import { RfqMatrixCard } from './RfqMatrixCard';
 import { SupplierQuoteCard } from './SupplierQuoteCard';
 import { ComparisonCard } from './ComparisonCard';
 import { CustomerQuoteCard } from './CustomerQuoteCard';
+import { ClientFormatCard } from './ClientFormatCard';
+import { docModel, quoteDocHtml } from './quoteDocument.mjs';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
 // Cotizaciones y Comparativo · diseño Grupo Gerez (11 tarjetas) conectado a MariaDB en modo consulta.
@@ -63,13 +65,13 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setClient('all'); setDecision('all'); setRevStatus('all'); };
 
   const sqs = useLoad(s => listSupplierQuotes({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 11);
-  const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: 'current' }, s), [tab, page, q, client, decision, rev], [7, 8, 9].includes(tab));
+  const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: 'current' }, s), [tab, page, q, client, decision, rev], [8, 9].includes(tab));
   const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
   const pdf = useLoad(s => getCustomerQuote(pdfId, s), [pdfId], !!pdfId);
   const awards = useLoad(s => listAwards({ page, q, status: 'current' }, s), [tab, page, q, rev], tab === 10);
   const [compReq, setCompReq] = useState('');
   const [rfqLang, setRfqLang] = useState(en ? 'en' : 'es');
-  const [cqId, setCqId] = useState(''); const cq = useLoad(s => getCustomerQuote(cqId, s), [cqId, rev], [7, 9].includes(tab) && !!cqId);
+  const [cqId, setCqId] = useState(''); const cq = useLoad(s => getCustomerQuote(cqId, s), [cqId, rev, tab === 9], tab === 9 && !!cqId);
   const [sqId, setSqId] = useState(''); const sq = useLoad(s => getSupplierQuote(sqId, s), [sqId, rev], tab === 11 && !!sqId);
   const day = today();
 
@@ -82,7 +84,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const searchBox = ph => <div className="relative flex-1 min-w-[240px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input type="search" aria-label={tx('Buscar', 'Search')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={ph} className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" /></div>;
   const pager = st => { const last = Math.max(1, Math.ceil((st.data?.total || 0) / (st.data?.page_size || 25))); return <div className="flex justify-between items-center text-xs text-slate-600"><span>{st.data?.total ?? 0} {tx('registros', 'records')} · {tx('Página', 'Page')} {page} / {last}</span><div className="flex gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => n - 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= last} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div></div>; };
   const table = (headers, rows, empty) => <div className="overflow-x-auto rounded-2xl border border-slate-200/80"><table className="w-full text-left border-collapse min-w-[900px]"><thead><tr className="bg-slate-50 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-200">{headers.map(h => <th key={h} className="py-3 px-3">{h}</th>)}</tr></thead><tbody className="divide-y divide-slate-100 text-[11px] text-slate-700">{rows}{!rows.length && <tr><td colSpan={headers.length} className="py-10 text-center text-xs text-slate-400 font-semibold">{empty}</td></tr>}</tbody></table></div>;
-  const printCq = (d = cq.data) => { if (!d) return; const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(customerQuoteHtml(d, en)); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); };
+  const printCq = (d = cq.data) => { if (!d) return; const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(quoteDocHtml(docModel(d, en), en, { logoUrl: `${window.location.origin}/image_923273.svg` }).html); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); };
   const cqSelect = <select aria-label={tx('Cotización al cliente', 'Client quote')} value={cqId} onChange={e => setCqId(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl min-w-[280px]"><option value="">{tx('Seleccionar cotización…', 'Select quote…')}</option>{cqId && cq.data && !(cqs.data?.items || []).some(v => v.id === cqId) && <option value={cqId}>{cq.data.item.folio} · {cq.data.item.client_name} · {label(cq.data.item.client_decision_status, en)}</option>}{(cqs.data?.items || []).map(v => <option key={v.id} value={v.id}>{v.folio} · {v.client_name} · {label(v.client_decision_status, en)}</option>)}</select>;
 
   return <div className="space-y-6">
@@ -144,7 +146,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
           <div className="flex gap-2 text-xs font-bold"><button type="button" onClick={() => printCq(pdf.data)} disabled={!pdf.data} className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1.5 rounded text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"><Printer className="w-3.5 h-3.5" />{tx('Imprimir PDF', 'Print PDF')}</button><button type="button" onClick={() => setPdfId('')} className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-1.5 rounded text-xs font-bold flex items-center gap-1.5"><X className="w-3.5 h-3.5" />{tx('Cerrar', 'Close')}</button></div></div>
         <div className="flex-1 overflow-hidden bg-slate-200/50 p-3 sm:p-6">
           <Wait s={pdf} /><Err s={pdf} />
-          {pdf.data && <iframe title={tx('Cotización al cliente', 'Client quote')} srcDoc={customerQuoteHtml(pdf.data, en)} sandbox="" className="w-full h-full rounded-lg border border-slate-200 bg-white" />}
+          {pdf.data && <iframe title={tx('Cotización al cliente', 'Client quote')} srcDoc={quoteDocHtml(docModel(pdf.data, en), en, { logoUrl: `${window.location.origin}/image_923273.svg` }).html} sandbox="" className="w-full h-full rounded-lg border border-slate-200 bg-white" />}
         </div>
       </div>
     </div>}
@@ -183,13 +185,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
 
     {tab === 6 && <CustomerQuoteCard en={en} notify={notify} lockText={LOCK} refresh={rev} onMatrix={() => go(8)} />}
 
-    {tab === 7 && <div className={box}>{head(tx('Formato para el cliente', 'Client format'), tx('Cotizaciones al cliente registradas: precio de venta (sin costos internos), vista formal con firmas registradas e impresión a PDF.', 'Recorded client quotes: selling price (no internal costs), formal view with recorded signatures and PDF printing.'), <div className="flex gap-2">{cqSelect}<button type="button" onClick={() => printCq()} disabled={!cq.data} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Printer className="w-3.5 h-3.5" />{tx('Imprimir / PDF', 'Print / PDF')}</button>{lockBtn(tx('Emitir cotización', 'Issue quote'))}</div>)}
-      <Wait s={cqs} /><Err s={cqs} /><Wait s={cq} /><Err s={cq} />
-      {!cqId && <div className="p-12 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500">{tx('Selecciona una cotización al cliente.', 'Select a client quote.')}</div>}
-      {cq.data && <div data-testid="client-quote" className="space-y-3"><div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">{[[tx('Cliente', 'Client'), cq.data.item.client_name], [tx('Requisición', 'Requisition'), cq.data.item.requisition], [tx('Vigencia', 'Valid until'), ymd(cq.data.item.valid_until)], [tx('Total', 'Total'), money(cq.data.item.total_amount, cq.data.item.currency, en)], [tx('Documento', 'Document'), label(cq.data.item.document_status, en)], [tx('Aprobación interna', 'Internal approval'), label(cq.data.item.internal_approval_status, en)], [tx('Decisión del cliente', 'Client decision'), label(cq.data.item.client_decision_status, en)], [tx('Condiciones de pago', 'Payment terms'), show(cq.data.item.payment_terms)]].map(([k, v]) => <div key={k} className="p-3 rounded-xl border border-slate-200"><div className="text-[10px] font-bold text-slate-400 uppercase">{k}</div><div className="font-semibold text-slate-800">{v}</div></div>)}</div>
-        {table(['#', tx('Descripción', 'Description'), tx('Marca / modelo', 'Brand / model'), tx('Cantidad', 'Qty'), tx('Precio unitario', 'Unit price'), tx('Importe', 'Amount')], cq.data.items.map(i => <tr key={i.line_number}><td className="py-2.5 px-3">{i.line_number}</td><td className="py-2.5 px-3 font-semibold">{i.description}</td><td className="py-2.5 px-3">{show(i.brand_model)}</td><td className="py-2.5 px-3">{Number(i.quantity)} {i.unit_label}</td><td className="py-2.5 px-3">{money(i.unit_price, cq.data.item.currency, en)}</td><td className="py-2.5 px-3 font-bold">{money(i.line_subtotal, cq.data.item.currency, en)}</td></tr>), tx('Sin partidas.', 'No items.'))}</div>}
-      {cq.data && <iframe title={tx('Formato para el cliente', 'Client format')} srcDoc={customerQuoteHtml(cq.data, en)} sandbox="" className="w-full h-[900px] rounded-xl border border-slate-200 bg-white" />}
-    </div>}
+    {tab === 7 && <ClientFormatCard en={en} notify={notify} selectedId={cqId} onSelect={setCqId} refresh={rev} />}
 
     {tab === 8 && <div className={box}>{head(tx('Matriz de cotizaciones al cliente', 'Client quotes matrix'), tx('Versión vigente de cada cotización: montos, vigencia, aprobación interna y decisión del cliente.', 'Current version of each quote: amounts, validity, internal approval and client decision.'), lockBtn(tx('Nueva cotización', 'New quote')))}
       <div className="flex flex-wrap gap-3">{searchBox(tx('Buscar folio, serie, requisición o cliente...', 'Search folio, series, requisition or client...'))}<select aria-label={tx('Decisión', 'Decision')} value={decision} onChange={e => { setDecision(e.target.value); setPage(1); }} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"><option value="all">{tx('Todas las decisiones', 'All decisions')}</option>{(cqs.data?.summary?.decisions || []).map(x => <option key={x.code} value={x.code}>{label(x.code, en)} ({x.count})</option>)}</select></div>

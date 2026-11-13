@@ -252,7 +252,8 @@ final class QuoteReadRepository
             ORDER BY applies_to,version_number DESC,id DESC', [$org]);
         foreach ($policies as &$p) { $p['version_number'] = (int) $p['version_number']; $p['rules'] = $p['rules_json'] === null ? null : json_decode((string) $p['rules_json'], true); unset($p['rules_json'], $p['id']); }
         unset($p);
-        return ['fx' => $fx ? ['usd_mxn' => $fx[0]['usd_mxn_rate'], 'eur_mxn' => $fx[0]['eur_mxn_rate'], 'date' => $fx[0]['exchange_rate_date'], 'source' => $fx[0]['exchange_rate_source'], 'folio' => $fx[0]['folio']] : null, 'policies' => $policies];
+        $issuer = $this->rows('SELECT legal_name,tax_identifier,phone,email,postal_address FROM organizations WHERE id=? LIMIT 1', [$org])[0] ?? null;
+        return ['issuer' => $issuer, 'fx' => $fx ? ['usd_mxn' => $fx[0]['usd_mxn_rate'], 'eur_mxn' => $fx[0]['eur_mxn_rate'], 'date' => $fx[0]['exchange_rate_date'], 'source' => $fx[0]['exchange_rate_source'], 'folio' => $fx[0]['folio']] : null, 'policies' => $policies];
     }
 
     private function facet(string $sql, int $org): array
@@ -381,14 +382,14 @@ final class QuoteReadRepository
         if ($f['client'] !== 'all') { $where .= ' AND ce.public_id=?'; $binds[] = $f['client']; }
         [$sq, $sb] = self::search($f['q'], ['v.folio', 'cq.series_reference', 'r.folio', 'c.legal_name', 'v.legacy_status']);
         $person = static fn (string $col): string => "(SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id={$col} AND u.organization_id=v.organization_id)";
-        $res = $this->page("e.public_id AS id,v.folio,cq.series_reference AS series,v.version_number,v.quote_date,v.valid_until,v.currency_code AS currency,v.subtotal_amount,v.tax_amount,v.total_amount,
+        $res = $this->page("e.public_id AS id,v.folio,cq.series_reference AS series,v.version_number,COALESCE(v.legacy_revision_number,v.version_number-1) AS revision,r.client_reference,v.quote_date,v.valid_until,v.currency_code AS currency,v.subtotal_amount,v.tax_amount,v.total_amount,
             v.document_status,v.internal_approval_status,v.client_decision_status,v.legacy_status,v.legacy_client_decision,v.service_fee_enabled,
             r.folio AS requisition,ce.public_id AS client_id,c.legal_name AS client_name,{$person('v.prepared_by')} AS prepared_by,{$person('v.approved_by')} AS approved_by,
             (SELECT COUNT(*) FROM customer_quote_versions x WHERE x.organization_id=v.organization_id AND x.customer_quote_id=v.customer_quote_id) AS versions,
             (SELECT d.decision_code FROM customer_quote_decisions d WHERE d.organization_id=v.organization_id AND d.customer_quote_version_id=v.id ORDER BY d.decision_at DESC,d.id DESC LIMIT 1) AS last_decision,
             (SELECT d.decision_at FROM customer_quote_decisions d WHERE d.organization_id=v.organization_id AND d.customer_quote_version_id=v.id ORDER BY d.decision_at DESC,d.id DESC LIMIT 1) AS last_decision_at",
             $from, $where . $sq, [...$binds, ...$sb], 'COALESCE(v.quote_date,DATE(e.created_at)) DESC,v.id DESC', $f);
-        foreach ($res['items'] as &$i) { $i['version_number'] = (int) $i['version_number']; $i['versions'] = (int) $i['versions']; $i['service_fee_enabled'] = (bool) $i['service_fee_enabled']; }
+        foreach ($res['items'] as &$i) { $i['version_number'] = (int) $i['version_number']; $i['revision'] = (int) $i['revision']; $i['versions'] = (int) $i['versions']; $i['service_fee_enabled'] = (bool) $i['service_fee_enabled']; }
         unset($i);
         $res['summary'] = [
             'decisions' => $this->facet("SELECT v.client_decision_status AS code,COUNT(*) AS count FROM customer_quote_versions v WHERE v.organization_id=? AND {$latest} GROUP BY v.client_decision_status ORDER BY count DESC", $org),
@@ -409,7 +410,16 @@ final class QuoteReadRepository
             r.folio AS requisition,c.legal_name AS client_name,c.tax_identifier AS client_tax_id,
             (SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.prepared_by AND u.organization_id=v.organization_id) AS prepared_by,
             (SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.reviewed_by AND u.organization_id=v.organization_id) AS reviewed_by,
-            (SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.approved_by AND u.organization_id=v.organization_id) AS approved_by
+            (SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.approved_by AND u.organization_id=v.organization_id) AS approved_by,
+            COALESCE(v.legacy_revision_number,v.version_number-1) AS revision,v.third_party_taxable_amount,v.third_party_tax_amount,v.third_party_total_amount,
+            v.service_fee_rate_pct,v.service_fee_subtotal_amount,v.service_fee_tax_rate_pct,v.service_fee_tax_amount,
+            r.client_reference,r.internal_reference,r.project_reference_snapshot AS project,r.contract_reference_snapshot AS contract,
+            (SELECT pc.display_name FROM party_contacts pc WHERE pc.organization_id=c.organization_id AND pc.owner_entity_id=c.id ORDER BY pc.is_primary DESC,pc.source_ordinal,pc.id LIMIT 1) AS client_contact,
+            (SELECT cc.value FROM party_contact_channels cc WHERE cc.organization_id=c.organization_id AND cc.owner_entity_id=c.id AND cc.channel_type=\'email\' ORDER BY cc.is_primary DESC,cc.source_ordinal,cc.id LIMIT 1) AS client_email,
+            (SELECT cc.value FROM party_contact_channels cc WHERE cc.organization_id=c.organization_id AND cc.owner_entity_id=c.id AND cc.channel_type=\'phone\' ORDER BY cc.is_primary DESC,cc.source_ordinal,cc.id LIMIT 1) AS client_phone,
+            (SELECT p.position_title FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.prepared_by AND u.organization_id=v.organization_id) AS prepared_by_position,
+            (SELECT p.position_title FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.reviewed_by AND u.organization_id=v.organization_id) AS reviewed_by_position,
+            (SELECT p.position_title FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.approved_by AND u.organization_id=v.organization_id) AS approved_by_position
             FROM customer_quote_versions v JOIN business_entities e ON e.id=v.id AND e.organization_id=v.organization_id' . sprintf(self::REQ, 'v') . ' WHERE v.organization_id=? AND e.public_id=? LIMIT 1', [$org, $id]);
         if (! $h) {
             return null;
@@ -418,11 +428,14 @@ final class QuoteReadRepository
         $vid = (int) $v['db_id']; $cq = (int) $v['cq_id'];
         unset($v['db_id'], $v['cq_id']);
         $v['service_fee_enabled'] = (bool) $v['service_fee_enabled'];
+        $v['revision'] = (int) $v['revision'];
         $items = $this->rows('SELECT line_number,description,brand_model,unit_label,quantity,unit_price,line_subtotal FROM customer_quote_items WHERE organization_id=? AND customer_quote_version_id=? ORDER BY line_number,id', [$org, $vid]);
         $decisions = $this->rows('SELECT d.decision_code,d.decision_at,d.decision_channel,d.note,d.provenance,(SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=d.actor_user_id AND u.organization_id=d.organization_id) AS actor
             FROM customer_quote_decisions d WHERE d.organization_id=? AND d.customer_quote_version_id=? ORDER BY d.decision_at,d.id', [$org, $vid]);
         $versions = $this->rows('SELECT e.public_id AS id,x.folio,x.version_number,x.quote_date,x.total_amount,x.currency_code AS currency,x.client_decision_status,x.document_status FROM customer_quote_versions x JOIN business_entities e ON e.id=x.id AND e.organization_id=x.organization_id WHERE x.organization_id=? AND x.customer_quote_id=? ORDER BY x.version_number', [$org, $cq]);
-        return ['item' => $v, 'items' => $items, 'decisions' => $decisions, 'versions' => $versions];
+        // Issuer block ("COTIZA") from the organization record; additive and read-only.
+        $issuer = $this->rows('SELECT legal_name,tax_identifier,phone,email,postal_address FROM organizations WHERE id=? LIMIT 1', [$org])[0] ?? null;
+        return ['item' => $v, 'items' => $items, 'decisions' => $decisions, 'versions' => $versions, 'issuer' => $issuer];
     }
 
     /** Spanish status label of a client quote version: the original (imported) label wins; otherwise derived from codes. */

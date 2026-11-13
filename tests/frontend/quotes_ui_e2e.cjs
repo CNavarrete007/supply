@@ -17,7 +17,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
 
 (async () => {
   const browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: SHOTS ? 2 : 1 });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: SHOTS ? 2 : 1, acceptDownloads: true });
   await context.addInitScript(() => { window.print = () => {}; window.close = () => {}; });
   const page = await context.newPage();
   const jsErrors = []; page.on('pageerror', e => jsErrors.push(String(e)));
@@ -364,7 +364,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('Guardar completo: valida y avisa que NO se guardó', st6msg.startsWith('Cotización validada') && st6msg.includes('No se guardó') && writes.length === 0, st6msg);
     await page.getByRole('button', { name: 'Vista previa' }).click();
     const pv6 = flat(await page.getByTestId('cq-preview').frameLocator('iframe').locator('body').innerText());
-    check('vista previa para el cliente: precio de venta y total, sin costos ni margen', pv6.includes(cmp6.requisition.client_name) && pv6.includes('VISTA PREVIA') && pv6.includes(usd(t6.total).replace('USD', f6.currency)) && !pv6.includes(usd(priced6[0].cost_unit).replace(' USD', '')) && !/margen de ganancia|manipulación|costo del producto/i.test(pv6), pv6.slice(0, 300));
+    check('vista previa para el cliente: precio de venta y total, sin costos ni margen', pv6.includes(cmp6.requisition.client_name) && pv6.includes('VISTA PREVIA') && pv6.includes(`${f6.currency} ${t6.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) && !pv6.includes(`${f6.currency} ${Number(priced6[0].cost_unit).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) && !/margen de ganancia|manipulación|costo del producto/i.test(pv6), pv6.slice(0, 300));
     check('vista previa aislada en iframe sandbox', (await page.getByTestId('cq-preview').locator('iframe').getAttribute('sandbox')) === '');
     await page.getByTestId('cq-preview').getByRole('button', { name: 'Cerrar' }).click();
     await shot(page, 'cot_6_cotizacion_cliente');
@@ -373,26 +373,28 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('button', { name: 'Ver matriz' }).click();
     check('"Ver matriz" abre la matriz de cotizaciones al cliente', (await page.getByRole('button', { name: /Matriz de cotizaciones al cliente/ }).getAttribute('aria-pressed')) === 'true');
 
-    // 7 · Formato para el cliente (cotizaciones registradas, sin costos internos)
+    // 7 · Formato de cotización para el cliente (documento externo, cualquier revisión registrada, PDF real)
+    const allCq = await api('/api/v1/quotes/customer-quotes?page=1&page_size=50&scope=all');
+    const firstDet = page.waitForResponse(r => /\/quotes\/customer-quotes\/[0-9a-f-]{36}$/.test(r.url()));
     await page.getByRole('button', { name: /Formato para el cliente/ }).click();
+    await page.getByTestId('format-card').waitFor();
+    check('formato: abre la revisión más reciente por defecto (200)', (await firstDet).status() === 200 && (await page.getByRole('combobox', { name: 'Cotización al cliente' }).inputValue()) === allCq.items[0].id);
+    check('formato: selector con todas las revisiones (folio · Rev. · cliente)', await page.locator('select[aria-label="Cotización al cliente"] option').count() === allCq.items.length + 1
+      && (await page.locator('select[aria-label="Cotización al cliente"] option').nth(1).innerText()).startsWith(`${allCq.items[0].folio} · Rev. ${allCq.items[0].revision} · ${allCq.items[0].client_name}`));
+    const old7 = allCq.items.find(x => x.series === cur.series && x.id !== cur.id);
     const cqDet = page.waitForResponse(r => /\/quotes\/customer-quotes\/[0-9a-f-]{36}$/.test(r.url()));
-    await page.getByRole('combobox', { name: 'Cotización al cliente' }).selectOption(cur.id);
+    await page.getByRole('combobox', { name: 'Cotización al cliente' }).selectOption(old7 ? old7.id : cur.id);
     const cqJson = await (await cqDet).json();
-    const cq = flat(await page.getByTestId('client-quote').innerText());
-    check('cotización registrada: cliente, total y decisión', [cur.client_name, usd(cur.total_amount), 'Aprobada'].every(x => cq.includes(x)), cq.slice(0, 300));
     check('la API del cliente no expone costos', !JSON.stringify(cqJson).match(/cost|margin|supplier_unit/i));
-    check('"Emitir cotización" bloqueado', await page.getByRole('button', { name: /Emitir cotización/ }).isDisabled());
-    const frame = page.frameLocator('iframe[title="Formato para el cliente"]');
-    await frame.getByText(`Cotización ${cur.folio}`).first().waitFor();
-    const ft = flat(await frame.locator('body').innerText());
-    check('formato: folio, cliente, total y firmas registradas', [cur.folio, cur.client_name, usd(cur.total_amount), 'Elaboró', cur.prepared_by].every(x => ft.includes(x)), ft.slice(0, 300));
-    check('formato aislado en iframe sandbox', (await page.locator('iframe[title="Formato para el cliente"]').getAttribute('sandbox')) === '');
-    const popup = page.waitForEvent('popup');
-    await page.getByRole('button', { name: /Imprimir \/ PDF/ }).click();
-    const pop = await popup;
-    await pop.waitForLoadState();
-    check('impresión abre el formato del cliente', flat(await pop.locator('body').innerText()).includes(cur.folio));
-    await pop.close().catch(() => {});
+    const D7 = cqJson.item; const ft = flat(await page.getByTestId('format-doc').contentFrame().locator('body').innerText());
+    const money7 = v => `${D7.currency} ${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    check('formato: encabezado, emisor (organización), cliente, partidas y total', ['COTIZACIÓN', D7.folio, `Revisión: ${D7.revision}`, cqJson.issuer.legal_name, D7.client_name, `Proyecto: ${D7.project || 'N/A'}`, 'T H I R D', cqJson.items[0].description, money7(D7.total_amount), 'TOTAL GENERAL'].every(x => ft.includes(x)), ft.slice(0, 400));
+    check('formato: firmas electrónicas (comprador) y sin firmas gráficas', ft.includes('COMPRADOR') && ft.includes(D7.prepared_by || '—') && /Firmado electrónicamente|Pendiente/.test(ft) && await page.getByTestId('format-doc').contentFrame().locator('img').count() === 1);
+    check('formato aislado en iframe sandbox', (await page.getByTestId('format-doc').getAttribute('sandbox')) === '');
+    const dl7 = page.waitForEvent('download', { timeout: 60000 });
+    await page.getByRole('button', { name: 'Descargar PDF' }).click();
+    const file7 = await dl7; const p7 = await file7.path(); const bytes7 = require('fs').readFileSync(p7);
+    check('Descargar PDF: archivo PDF real con folio y revisión en el nombre', file7.suggestedFilename() === `${D7.folio}_Rev${D7.revision}.pdf` && bytes7.slice(0, 5).toString() === '%PDF-' && bytes7.length > 10000, `${file7.suggestedFilename()} ${bytes7.length}`);
     await shot(page, 'cot_7_formato');
 
     // 8 · Matriz de cotizaciones al cliente (versión vigente)
@@ -446,7 +448,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('VER PDF consulta la revisión vigente (200)', (await pdfResp).status() === 200);
     const pdfFrame = page.getByTestId('rev-pdf').frameLocator('iframe');
     const pdfText = flat(await pdfFrame.locator('body').innerText());
-    check('VER PDF: folio, Rev. N, cliente y total', [f0.current_folio, `Rev. ${f0.current_version - 1}`, f0.client_name, usd(f0.current_total)].every(x => pdfText.includes(x)), pdfText.slice(0, 300));
+    check('VER PDF: folio, revisión, cliente y total', [f0.current_folio, `Revisión: ${f0.current_rev}`, f0.client_name, `${f0.currency} ${Number(f0.current_total).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`].every(x => pdfText.includes(x)), pdfText.slice(0, 300));
     check('VER PDF aislado en iframe sandbox', (await page.getByTestId('rev-pdf').locator('iframe').getAttribute('sandbox')) === '');
     await page.getByTestId('rev-pdf').getByRole('button', { name: 'Cerrar' }).click();
     // SOLICITAR MODIFICACIÓN → formulario R3A real (o motivo de bloqueo)
@@ -469,8 +471,9 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await shot(page, 'cot_1_revisiones');
     // ABRIR REV. VIGENTE → tarjeta 7 (formato) con la versión vigente seleccionada
     await famCard.getByRole('button', { name: 'ABRIR REV. VIGENTE' }).click();
-    await page.getByText(f0.requisition).first().waitFor();
-    check('ABRIR REV. VIGENTE muestra la versión vigente', flat(await page.locator('main').innerText()).includes(usd(f0.current_total)));
+    await page.getByTestId('format-doc').waitFor();
+    await page.getByTestId('format-doc').contentFrame().getByText(f0.current_folio).first().waitFor();
+    check('ABRIR REV. VIGENTE muestra la versión vigente', flat(await page.getByTestId('format-doc').contentFrame().locator('body').innerText()).includes(`${f0.currency} ${Number(f0.current_total).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
     check('ABRIR REV. VIGENTE abre el formato (tarjeta 7) con la versión seleccionada', (await page.getByRole('button', { name: /Formato para el cliente/ }).first().getAttribute('aria-pressed')) === 'true' && (await page.getByRole('combobox', { name: 'Cotización al cliente' }).inputValue()) === f0.current_id);
 
     // 9 · Decisión del cliente

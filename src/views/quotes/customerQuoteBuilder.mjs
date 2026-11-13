@@ -111,11 +111,14 @@ export function validateCq(f, lines = [], en = false) {
 }
 
 /** Client-facing document data for customerQuoteHtml (no internal cost, handling or margin). */
-export function previewData({ form, lines, totals, req, preparerName, en = false }) {
+export function previewData({ form, lines, totals, req, preparerName, preparerPosition = '', issuer = null, en = false }) {
   return {
-    item: { folio: en ? 'To be assigned' : 'Por asignar', version_number: (num(form.revision) ?? 0) + 1, quote_date: form.issue_date, valid_until: form.valid_until, currency: form.currency,
-      client_name: req?.client_name || '', client_tax_id: req?.client_tax_id || '', requisition: req?.folio || '', subtotal_amount: totals.taxable + totals.discount, discount_amount: totals.discount,
-      tax_amount: r2(totals.tax + totals.sfTax), service_fee_enabled: Boolean(form.sf_enabled) && totals.sfSubtotal > 0, service_fee_total_amount: totals.sfSubtotal, total_amount: totals.total,
+    issuer,
+    item: { folio: en ? 'To be assigned' : 'Por asignar', version_number: (num(form.revision) ?? 0) + 1, revision: num(form.revision) ?? 0, quote_date: form.issue_date, valid_until: form.valid_until, currency: form.currency,
+      client_name: req?.client_name || '', client_tax_id: req?.client_tax_id || '', requisition: req?.folio || '', client_reference: req?.internal_reference || req?.folio || '', project: req?.project || '', contract: req?.contract || '',
+      subtotal_amount: totals.taxable + totals.discount, discount_amount: totals.discount, tax_rate_pct: num(form.vat), third_party_taxable_amount: totals.taxable, third_party_tax_amount: totals.tax, third_party_total_amount: totals.thirdTotal,
+      tax_amount: r2(totals.tax + totals.sfTax), service_fee_enabled: Boolean(form.sf_enabled) && totals.sfSubtotal > 0, service_fee_rate_pct: num(form.sf_pct), service_fee_subtotal_amount: totals.sfSubtotal, service_fee_tax_amount: totals.sfTax, service_fee_total_amount: totals.sfSubtotal, total_amount: totals.total,
+      prepared_by_position: preparerPosition, internal_approval_status: 'pending',
       delivery_place: form.delivery_place, lead_time_text: form.lead_time, payment_terms: form.payment_terms, warranty_text: form.warranty, inclusions_text: form.inclusions, exclusions_text: form.exclusions,
       notes: t(form.notes) || DEFAULT_PDF_NOTES[en ? 1 : 0], prepared_by: preparerName || '', reviewed_by: '', approved_by: '' },
     items: lines.map(l => { const p = priceLine(l, form); return { line_number: l.line_number, description: l.description, brand_model: t(l.brand_model), quantity: l.qty, unit_label: l.unit, unit_price: p.unit, line_subtotal: p.subtotal }; }),

@@ -119,10 +119,19 @@ try:
         sent = {x['rfq'] for it in d['items'] for x in it['sent_to']}
         check(f"RFQ {i['folio']}: partidas vigentes, RFQ y envíos coherentes", len(d['items']) == i['item_count'] and len(d['rfqs']) == i['rfq_count'] and sent <= {x['folio'] for x in d['rfqs']} and d['item']['folio'] == i['folio'])
         check(f"RFQ {i['folio']}: sin precios ni importes", not re.search(r'price|amount|cost|subtotal', json.dumps(d), re.I))
+    # Tarjeta 7 · Formato para el cliente: revisión, emisor, contacto, desglose y lista de todas las revisiones.
+    allcq = get(f'{R}/customer-quotes?page_size=50&scope=all')
+    check('Formato: la lista trae revisión y referencia del cliente', all(isinstance(x['revision'], int) and x['revision'] >= 0 and 'client_reference' in x for x in allcq['items']))
+    for x in allcq['items'][:3]:
+        d = get(f"{R}/customer-quotes/{x['id']}"); it = d['item']
+        check(f"Formato {x['folio']}: campos del documento externo", it['revision'] == x['revision'] and {'client_contact', 'client_email', 'client_phone', 'project', 'contract', 'client_reference', 'prepared_by_position', 'third_party_taxable_amount', 'service_fee_subtotal_amount'} <= set(it)
+              and d['issuer'] is not None and d['issuer'].get('legal_name') and not re.search(r'cost_amount|charge_pct|extra_amount|margin', json.dumps(d), re.I))
+
     # Tarjeta 6 · Cotización al cliente: requisiciones con ofertas, tipo de cambio registrado y política de aprobación.
     quoted = get(f'{R}/rfq-requisitions?page_size=50&rfq=quoted')
     check('Cotización al cliente: rfq=quoted solo con cotizaciones de proveedor', all(i['quote_count'] > 0 for i in quoted['items']) and quoted['total'] <= allreq['total'])
     cs = get(f'{R}/customer-quote-setup')
+    check('Cotización al cliente: emisor de la organización', cs['issuer'] is not None and cs['issuer'].get('legal_name'))
     check('Cotización al cliente: tipo de cambio registrado (o nulo) y políticas vigentes', (cs['fx'] is None or (float(cs['fx']['usd_mxn'] or 1) > 0 and cs['fx']['folio'])) and all(p['comparison_operator'] in ('>', '>=') and p['currency'] for p in cs['policies']))
     for i in quoted['items'][:3]:
         d = get(f"{R}/comparison?requisition={i['id']}")

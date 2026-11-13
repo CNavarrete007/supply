@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, AlertCircle, Lock, CheckCircle2, RotateCw, Printer, X } from 'lucide-react';
 import { getRfqSetup, listRfqRequisitions, getComparison, getCustomerQuoteSetup } from './api';
-import { money, customerQuoteHtml } from './model.mjs';
+import { money } from './model.mjs';
+import { docModel, quoteDocHtml } from './quoteDocument.mjs';
 import { internalReference } from './rfq.mjs';
 import { CQ_STATUSES, CURRENCIES, emptyCq, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData } from './customerQuoteBuilder.mjs';
 
@@ -67,8 +68,8 @@ export function CustomerQuoteCard({ en = false, notify, onMatrix, lockText, refr
     if (!v.ok) { notify?.(tx('Cotización incompleta', 'Incomplete quote'), v.first, 'warning'); setTimeout(() => cardRef.current?.querySelector('[role=alert]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0); return; }
     notify?.(tx('Registro no habilitado', 'Recording not enabled'), tx('La cotización al cliente está validada, pero no se guardó: registrarla y emitirla es una escritura comercial pendiente de autorización.', 'The client quote is validated but was not saved: recording and issuing it is a commercial write pending authorization.'), 'warning');
   };
-  const preparerName = (S.contacts || []).find(c => c.id === form.preparer)?.name || '';
-  const docHtml = useMemo(() => (preview ? customerQuoteHtml(previewData({ form, lines, totals, req: R, preparerName, en }), en, { preview: true }) : ''), [preview, form, lines, totals, R, preparerName, en]);
+  const preparerRec = (S.contacts || []).find(c => c.id === form.preparer); const preparerName = preparerRec?.name || '';
+  const docHtml = useMemo(() => (preview ? quoteDocHtml(docModel(previewData({ form, lines, totals, req: R, preparerName, preparerPosition: preparerRec?.position || '', issuer: cqSetup.data?.issuer, en }), en), en, { preview: true, logoUrl: `${window.location.origin}/image_923273.svg` }).html : ''), [preview, form, lines, totals, R, preparerName, preparerRec, cqSetup.data, en]);
   const print = () => {
     const w = window.open('', '_blank', 'width=900,height=1000');
     if (!w) { notify?.(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; }
