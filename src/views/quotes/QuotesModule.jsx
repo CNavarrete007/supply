@@ -7,6 +7,7 @@ import { RfqRequestCard } from './RfqRequestCard';
 import { RfqMatrixCard } from './RfqMatrixCard';
 import { SupplierQuoteCard } from './SupplierQuoteCard';
 import { ComparisonCard } from './ComparisonCard';
+import { CustomerQuoteCard } from './CustomerQuoteCard';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
 // Cotizaciones y Comparativo · diseño Grupo Gerez (11 tarjetas) conectado a MariaDB en modo consulta.
@@ -62,13 +63,13 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setClient('all'); setDecision('all'); setRevStatus('all'); };
 
   const sqs = useLoad(s => listSupplierQuotes({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 11);
-  const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: 'current' }, s), [tab, page, q, client, decision, rev], [6, 7, 8, 9].includes(tab));
+  const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: 'current' }, s), [tab, page, q, client, decision, rev], [7, 8, 9].includes(tab));
   const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
   const pdf = useLoad(s => getCustomerQuote(pdfId, s), [pdfId], !!pdfId);
   const awards = useLoad(s => listAwards({ page, q, status: 'current' }, s), [tab, page, q, rev], tab === 10);
   const [compReq, setCompReq] = useState('');
   const [rfqLang, setRfqLang] = useState(en ? 'en' : 'es');
-  const [cqId, setCqId] = useState(''); const cq = useLoad(s => getCustomerQuote(cqId, s), [cqId, rev], [6, 7, 9].includes(tab) && !!cqId);
+  const [cqId, setCqId] = useState(''); const cq = useLoad(s => getCustomerQuote(cqId, s), [cqId, rev], [7, 9].includes(tab) && !!cqId);
   const [sqId, setSqId] = useState(''); const sq = useLoad(s => getSupplierQuote(sqId, s), [sqId, rev], tab === 11 && !!sqId);
   const day = today();
 
@@ -127,7 +128,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
         <div className="space-y-1.5 text-[9.5px] font-extrabold">
           <div className="grid grid-cols-2 gap-1.5">
             <button type="button" onClick={() => setPdfId(f.current_id)} className="px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[9.5px] rounded-lg transition-colors cursor-pointer shadow-2xs">{tx('VER PDF', 'VIEW PDF')}</button>
-            <button type="button" onClick={() => { go(6); setCqId(f.current_id); }} className="px-2 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-extrabold text-[9.5px] rounded-lg transition-colors cursor-pointer shadow-2xs truncate">{tx('ABRIR REV. VIGENTE', 'OPEN CURRENT REV.')}</button>
+            <button type="button" onClick={() => { go(7); setCqId(f.current_id); }} className="px-2 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-extrabold text-[9.5px] rounded-lg transition-colors cursor-pointer shadow-2xs truncate">{tx('ABRIR REV. VIGENTE', 'OPEN CURRENT REV.')}</button>
           </div>
           <button type="button" onClick={() => (f.can_request_change ? setChangeFor(f) : setBlocked(f))} title={f.can_request_change ? undefined : changeBlockMessage(f.change_block, f.pending_change, en)} className={`w-full py-1.5 text-white font-extrabold text-[9.5px] rounded-lg transition-all cursor-pointer shadow-2xs tracking-wide ${f.can_request_change ? 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600' : 'bg-gradient-to-r from-orange-300 to-amber-300'}`}>{tx('SOLICITAR MODIFICACIÓN', 'REQUEST MODIFICATION')}</button>
         </div>
@@ -180,12 +181,14 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
     {tab === 5 && <ComparisonCard en={en} notify={notify} requisition={compReq} onRequisition={setCompReq} refresh={rev} onAddCompany={() => go(4)}
       onRegisterSupplier={() => onNavigate?.('suppliers')} onOpenOrders={() => onNavigate?.('purchase_orders')} />}
 
-    {(tab === 6 || tab === 7) && <div className={box}>{head(tab === 6 ? tx('Cotización al cliente', 'Client quotation') : tx('Formato para el cliente', 'Client format'), tab === 6 ? tx('Precio de venta consolidado; los costos internos no se muestran.', 'Consolidated sale price; internal costs are not shown.') : tx('Vista formal con firmas registradas e impresión a PDF.', 'Formal view with recorded signatures and PDF printing.'), <div className="flex gap-2">{cqSelect}{tab === 7 ? <button type="button" onClick={() => printCq()} disabled={!cq.data} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Printer className="w-3.5 h-3.5" />{tx('Imprimir / PDF', 'Print / PDF')}</button> : lockBtn(tx('Emitir cotización', 'Issue quote'))}</div>)}
+    {tab === 6 && <CustomerQuoteCard en={en} notify={notify} lockText={LOCK} refresh={rev} onMatrix={() => go(8)} />}
+
+    {tab === 7 && <div className={box}>{head(tx('Formato para el cliente', 'Client format'), tx('Cotizaciones al cliente registradas: precio de venta (sin costos internos), vista formal con firmas registradas e impresión a PDF.', 'Recorded client quotes: selling price (no internal costs), formal view with recorded signatures and PDF printing.'), <div className="flex gap-2">{cqSelect}<button type="button" onClick={() => printCq()} disabled={!cq.data} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Printer className="w-3.5 h-3.5" />{tx('Imprimir / PDF', 'Print / PDF')}</button>{lockBtn(tx('Emitir cotización', 'Issue quote'))}</div>)}
       <Wait s={cqs} /><Err s={cqs} /><Wait s={cq} /><Err s={cq} />
       {!cqId && <div className="p-12 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500">{tx('Selecciona una cotización al cliente.', 'Select a client quote.')}</div>}
-      {cq.data && tab === 6 && <div data-testid="client-quote" className="space-y-3"><div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">{[[tx('Cliente', 'Client'), cq.data.item.client_name], [tx('Requisición', 'Requisition'), cq.data.item.requisition], [tx('Vigencia', 'Valid until'), ymd(cq.data.item.valid_until)], [tx('Total', 'Total'), money(cq.data.item.total_amount, cq.data.item.currency, en)], [tx('Documento', 'Document'), label(cq.data.item.document_status, en)], [tx('Aprobación interna', 'Internal approval'), label(cq.data.item.internal_approval_status, en)], [tx('Decisión del cliente', 'Client decision'), label(cq.data.item.client_decision_status, en)], [tx('Condiciones de pago', 'Payment terms'), show(cq.data.item.payment_terms)]].map(([k, v]) => <div key={k} className="p-3 rounded-xl border border-slate-200"><div className="text-[10px] font-bold text-slate-400 uppercase">{k}</div><div className="font-semibold text-slate-800">{v}</div></div>)}</div>
+      {cq.data && <div data-testid="client-quote" className="space-y-3"><div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">{[[tx('Cliente', 'Client'), cq.data.item.client_name], [tx('Requisición', 'Requisition'), cq.data.item.requisition], [tx('Vigencia', 'Valid until'), ymd(cq.data.item.valid_until)], [tx('Total', 'Total'), money(cq.data.item.total_amount, cq.data.item.currency, en)], [tx('Documento', 'Document'), label(cq.data.item.document_status, en)], [tx('Aprobación interna', 'Internal approval'), label(cq.data.item.internal_approval_status, en)], [tx('Decisión del cliente', 'Client decision'), label(cq.data.item.client_decision_status, en)], [tx('Condiciones de pago', 'Payment terms'), show(cq.data.item.payment_terms)]].map(([k, v]) => <div key={k} className="p-3 rounded-xl border border-slate-200"><div className="text-[10px] font-bold text-slate-400 uppercase">{k}</div><div className="font-semibold text-slate-800">{v}</div></div>)}</div>
         {table(['#', tx('Descripción', 'Description'), tx('Marca / modelo', 'Brand / model'), tx('Cantidad', 'Qty'), tx('Precio unitario', 'Unit price'), tx('Importe', 'Amount')], cq.data.items.map(i => <tr key={i.line_number}><td className="py-2.5 px-3">{i.line_number}</td><td className="py-2.5 px-3 font-semibold">{i.description}</td><td className="py-2.5 px-3">{show(i.brand_model)}</td><td className="py-2.5 px-3">{Number(i.quantity)} {i.unit_label}</td><td className="py-2.5 px-3">{money(i.unit_price, cq.data.item.currency, en)}</td><td className="py-2.5 px-3 font-bold">{money(i.line_subtotal, cq.data.item.currency, en)}</td></tr>), tx('Sin partidas.', 'No items.'))}</div>}
-      {cq.data && tab === 7 && <iframe title={tx('Formato para el cliente', 'Client format')} srcDoc={customerQuoteHtml(cq.data, en)} sandbox="" className="w-full h-[900px] rounded-xl border border-slate-200 bg-white" />}
+      {cq.data && <iframe title={tx('Formato para el cliente', 'Client format')} srcDoc={customerQuoteHtml(cq.data, en)} sandbox="" className="w-full h-[900px] rounded-xl border border-slate-200 bg-white" />}
     </div>}
 
     {tab === 8 && <div className={box}>{head(tx('Matriz de cotizaciones al cliente', 'Client quotes matrix'), tx('Versión vigente de cada cotización: montos, vigencia, aprobación interna y decisión del cliente.', 'Current version of each quote: amounts, validity, internal approval and client decision.'), lockBtn(tx('Nueva cotización', 'New quote')))}

@@ -26,3 +26,5 @@ export const listRfqRequisitions = (o = {}, s) => getJson(`/api/v1/quotes/rfq-re
 export const getRfqRequisition = (id, s) => one('/api/v1/quotes/rfq-requisitions', id, s);
 // Tarjeta 3 · Matriz de RFQ por contacto de compras (solo lectura).
 export const getRfqContacts = s => getJson('/api/v1/quotes/rfq-contacts', s);
+// Tarjeta 6 · tipo de cambio registrado y políticas de aprobación vigentes (solo lectura).
+export const getCustomerQuoteSetup = s => getJson('/api/v1/quotes/customer-quote-setup', s);

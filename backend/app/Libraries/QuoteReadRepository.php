@@ -205,6 +205,8 @@ final class QuoteReadRepository
         if ($f['buyer'] !== 'all') { $where .= ' AND V.buyer_key=?'; $binds[] = $f['buyer']; }
         // Tarjeta 4 (registro de cotización) only lists validated requisitions that already have an RFQ.
         if (($f['rfq'] ?? 'any') === 'with') { $where .= ' AND EXISTS (SELECT 1 FROM rfqs fx WHERE fx.organization_id=r.organization_id AND fx.requisition_id=r.id)'; }
+        // Tarjeta 6 (cotización al cliente) lists validated requisitions that already have supplier quotes.
+        if (($f['rfq'] ?? 'any') === 'quoted') { $where .= ' AND EXISTS (SELECT 1 FROM supplier_quotes qx WHERE qx.organization_id=r.organization_id AND qx.requisition_id=r.id)'; }
         [$sq, $sb] = self::search($f['q'], ['r.folio', 'c.legal_name', 'r.internal_reference', 'r.description', 'V.review_folio']);
         $res = $this->page(self::RFQ_REQ_FIELDS, $from, $where . $sq, [...$binds, ...$sb], 'has_po,r.request_date DESC,r.id DESC', $f);
         $res['items'] = array_map(self::rfqReqRow(...), $res['items']);
@@ -238,6 +240,19 @@ final class QuoteReadRepository
         foreach ($rfqs as &$x) { $x['item_count'] = (int) $x['item_count']; }
         unset($x);
         return ['item' => $req, 'items' => $items, 'rfqs' => $rfqs];
+    }
+
+    /** Tarjeta 6: last exchange rates recorded on a client quote and the enabled approval policies (read-only). */
+    public function customerQuoteSetup(int $org): array
+    {
+        $fx = $this->rows('SELECT v.usd_mxn_rate,v.eur_mxn_rate,v.exchange_rate_date,v.exchange_rate_source,v.folio FROM customer_quote_versions v
+            WHERE v.organization_id=? AND (v.usd_mxn_rate IS NOT NULL OR v.eur_mxn_rate IS NOT NULL) ORDER BY v.exchange_rate_date DESC,v.id DESC LIMIT 1', [$org]);
+        $policies = $this->rows('SELECT id,applies_to,version_number,currency_code AS currency,unit_price_limit,document_limit,total_basis,comparison_operator,rules_json,effective_from,effective_until
+            FROM approval_policy_versions WHERE organization_id=? AND enabled=1 AND (effective_from IS NULL OR effective_from<=CURDATE()) AND (effective_until IS NULL OR effective_until>=CURDATE())
+            ORDER BY applies_to,version_number DESC,id DESC', [$org]);
+        foreach ($policies as &$p) { $p['version_number'] = (int) $p['version_number']; $p['rules'] = $p['rules_json'] === null ? null : json_decode((string) $p['rules_json'], true); unset($p['rules_json'], $p['id']); }
+        unset($p);
+        return ['fx' => $fx ? ['usd_mxn' => $fx[0]['usd_mxn_rate'], 'eur_mxn' => $fx[0]['eur_mxn_rate'], 'date' => $fx[0]['exchange_rate_date'], 'source' => $fx[0]['exchange_rate_source'], 'folio' => $fx[0]['folio']] : null, 'policies' => $policies];
     }
 
     private function facet(string $sql, int $org): array
@@ -297,7 +312,7 @@ final class QuoteReadRepository
                  JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id WHERE q.organization_id=? GROUP BY re.public_id,r.folio,c.legal_name ORDER BY r.folio LIMIT 1000', [$org]))];
         }
         $req = $this->rows('SELECT r.id,r.folio,c.legal_name AS client_name,re.public_id AS public_id,r.internal_reference,r.project_reference_snapshot AS project,r.contract_reference_snapshot AS contract,
-            r.budget_amount,r.currency_code AS currency,r.need_date,
+            r.budget_amount,r.currency_code AS currency,r.need_date,r.delivery_place,c.tax_identifier AS client_tax_id,c.code AS client_code,
             (SELECT rv.min_quotes FROM requisition_reviews rv WHERE rv.organization_id=r.organization_id AND rv.requisition_id=r.id ORDER BY rv.id DESC LIMIT 1) AS min_quotes,
             (SELECT rv.folio FROM requisition_reviews rv WHERE rv.organization_id=r.organization_id AND rv.requisition_id=r.id ORDER BY rv.id DESC LIMIT 1) AS review_folio
             FROM requisitions r JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id WHERE r.organization_id=? AND re.public_id=? LIMIT 1', [$org, $requisition]);
@@ -343,9 +358,15 @@ final class QuoteReadRepository
         unset($o);
         $h = $req[0];
         $requisitionInfo = ['id' => $h['public_id'], 'folio' => $h['folio'], 'client_name' => $h['client_name'], 'internal_reference' => $h['internal_reference'], 'project' => $h['project'], 'contract' => $h['contract'],
-            'budget_amount' => $h['budget_amount'], 'currency' => $h['currency'], 'need_date' => $h['need_date'], 'min_quotes' => $h['min_quotes'] === null ? null : (int) $h['min_quotes'], 'review_folio' => $h['review_folio'],
+            'budget_amount' => $h['budget_amount'], 'currency' => $h['currency'], 'need_date' => $h['need_date'], 'delivery_place' => $h['delivery_place'], 'client_tax_id' => $h['client_tax_id'], 'client_code' => $h['client_code'], 'min_quotes' => $h['min_quotes'] === null ? null : (int) $h['min_quotes'], 'review_folio' => $h['review_folio'],
             'item_count' => count(array_filter($map, static fn ($l) => $l['line_status'] === 'active'))];
-        return ['requisition' => $requisitionInfo, 'lines' => array_values($map), 'quotes' => $quotes, 'orders' => $orders];
+        // Latest client quote of the requisition (tarjeta 6 proposes the next revision). Read-only.
+        $cqv = $this->rows("SELECT ve.public_id AS id,v.folio,v.version_number,COALESCE(v.legacy_revision_number,v.version_number-1) AS revision,v.document_status,v.client_decision_status,v.legacy_status,v.currency_code AS currency,v.total_amount,
+              (SELECT COUNT(*) FROM customer_quote_versions x WHERE x.organization_id=v.organization_id AND x.customer_quote_id=v.customer_quote_id) AS versions
+            FROM customer_quote_versions v JOIN business_entities ve ON ve.id=v.id AND ve.organization_id=v.organization_id
+            WHERE v.organization_id=? AND v.requisition_id=? ORDER BY v.version_number DESC,v.id DESC LIMIT 1", [$org, $rid]);
+        $customerQuote = $cqv ? ['revision' => (int) $cqv[0]['revision'], 'version_number' => (int) $cqv[0]['version_number'], 'versions' => (int) $cqv[0]['versions']] + $cqv[0] : null;
+        return ['requisition' => $requisitionInfo, 'lines' => array_values($map), 'quotes' => $quotes, 'orders' => $orders, 'customer_quote' => $customerQuote];
     }
 
     /** @param array{page:int,page_size:int,q:string,decision:string,client:string,scope:string} $f */

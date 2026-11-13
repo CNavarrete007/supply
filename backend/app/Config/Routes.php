@@ -44,6 +44,7 @@ $routes->get('api/v1/reception/receipts/(:segment)', 'ReceptionController::recei
 $routes->get('api/v1/reception/deliveries/(:segment)', 'ReceptionController::delivery/$1');
 $routes->get('api/v1/reception/closure', 'ReceptionController::closure');
 $routes->get('api/v1/quotes/rfq-contacts', 'QuoteController::rfqContacts');
+$routes->get('api/v1/quotes/customer-quote-setup', 'QuoteController::customerQuoteSetup');
 $routes->get('api/v1/quotes/rfq-setup', 'QuoteController::rfqSetup');
 $routes->get('api/v1/quotes/rfq-requisitions', 'QuoteController::rfqRequisitions');
 $routes->get('api/v1/quotes/rfq-requisitions/(:segment)', 'QuoteController::rfqRequisition/$1');

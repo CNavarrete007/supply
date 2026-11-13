@@ -24,7 +24,7 @@ def logout(op):
     try:
         tok = json.loads(op.open(API + '/api/v1/auth/csrf').read())['csrf_token']; op.open(urllib.request.Request(API + '/api/v1/auth/logout', b'{}', {'Content-Type': 'application/json', 'X-SF-CSRF': tok}))
     except Exception: pass
-LISTS = ['/rfqs', '/supplier-quotes', '/comparison', '/customer-quotes', '/awards', '/revisions', '/rfq-setup', '/rfq-requisitions', '/rfq-contacts']
+LISTS = ['/rfqs', '/supplier-quotes', '/comparison', '/customer-quotes', '/awards', '/revisions', '/rfq-setup', '/rfq-requisitions', '/rfq-contacts', '/customer-quote-setup']
 EPS = [R + p for p in LISTS]
 anon = session(); check('sin sesión: 401', all(status(anon, p) == 401 for p in EPS + [f'{R}/rfqs/{ZERO}']))
 if NONADMIN:
@@ -36,7 +36,7 @@ try:
     for bad in ['/rfqs?x=1', '/rfqs?page_size=51', '/rfqs?supplier=abc', '/supplier-quotes?status=%27or', '/comparison?requisition=abc', '/comparison?page=1',
                 '/customer-quotes?scope=x', '/customer-quotes?client=1', '/awards?status=%27x', f'/rfqs/{ZERO}?a=1',
                 '/revisions?status=superseded', '/revisions?client=1', '/revisions?page_size=51', '/revisions?q=%01',
-                '/rfq-setup?x=1', '/rfq-setup?page=1', '/rfq-requisitions?buyer=abc', '/rfq-requisitions?buyer=legacy-xyz', '/rfq-requisitions?supplier=all', f'/rfq-requisitions/{ZERO}?a=1', '/rfq-contacts?page=1', '/rfq-contacts?x=1', '/rfqs?contact=abc', '/rfqs?contact=legacy-12', '/rfq-requisitions?rfq=all', '/rfq-requisitions?rfq=']:
+                '/rfq-setup?x=1', '/rfq-setup?page=1', '/rfq-requisitions?buyer=abc', '/rfq-requisitions?buyer=legacy-xyz', '/rfq-requisitions?supplier=all', f'/rfq-requisitions/{ZERO}?a=1', '/rfq-contacts?page=1', '/rfq-contacts?x=1', '/rfqs?contact=abc', '/rfqs?contact=legacy-12', '/rfq-requisitions?rfq=all', '/rfq-requisitions?rfq=', '/customer-quote-setup?page=1', '/customer-quote-setup?x=1']:
         check(f'422 con parámetro inválido ({bad})', status(adm, R + bad) == 422)
     check('detalle con UUID inexistente: 404', all(status(adm, f'{R}{p}/{ZERO}') == 404 for p in ['/rfqs', '/supplier-quotes', '/customer-quotes', '/rfq-requisitions']))
     check('detalle con identificador no UUID: 404', status(adm, R + '/rfqs/abc') == 404)
@@ -119,6 +119,16 @@ try:
         sent = {x['rfq'] for it in d['items'] for x in it['sent_to']}
         check(f"RFQ {i['folio']}: partidas vigentes, RFQ y envíos coherentes", len(d['items']) == i['item_count'] and len(d['rfqs']) == i['rfq_count'] and sent <= {x['folio'] for x in d['rfqs']} and d['item']['folio'] == i['folio'])
         check(f"RFQ {i['folio']}: sin precios ni importes", not re.search(r'price|amount|cost|subtotal', json.dumps(d), re.I))
+    # Tarjeta 6 · Cotización al cliente: requisiciones con ofertas, tipo de cambio registrado y política de aprobación.
+    quoted = get(f'{R}/rfq-requisitions?page_size=50&rfq=quoted')
+    check('Cotización al cliente: rfq=quoted solo con cotizaciones de proveedor', all(i['quote_count'] > 0 for i in quoted['items']) and quoted['total'] <= allreq['total'])
+    cs = get(f'{R}/customer-quote-setup')
+    check('Cotización al cliente: tipo de cambio registrado (o nulo) y políticas vigentes', (cs['fx'] is None or (float(cs['fx']['usd_mxn'] or 1) > 0 and cs['fx']['folio'])) and all(p['comparison_operator'] in ('>', '>=') and p['currency'] for p in cs['policies']))
+    for i in quoted['items'][:3]:
+        d = get(f"{R}/comparison?requisition={i['id']}")
+        cqx = d['customer_quote']
+        check(f"Cotización al cliente {i['folio']}: contexto y cotización vigente", {'delivery_place', 'client_tax_id', 'client_code'} <= set(d['requisition']) and (cqx is None or (cqx['revision'] >= 0 and cqx['versions'] >= 1 and cqx['version_number'] >= 1)))
+
     # Tarjeta 4 · Registro de cotización: solo requisiciones validadas con RFQ; RFQ con proveedor, moneda y cotizaciones.
     withr = get(f'{R}/rfq-requisitions?page_size=50&rfq=with')
     check('Registro: rfq=with ⊆ validadas y todas con RFQ', withr['total'] <= allreq['total'] and all(i['rfq_count'] > 0 for i in withr['items']) and withr['total'] == sum(1 for i in allreq['items'] if i['rfq_count'] > 0) if allreq['total'] <= 50 else all(i['rfq_count'] > 0 for i in withr['items']))

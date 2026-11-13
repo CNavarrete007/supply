@@ -47,7 +47,7 @@ export function seriesGroups(items = []) {
 export const rfqState = (r, today = new Date().toISOString().slice(0, 10)) => (r.responded ? 'answered' : r.deadline && String(r.deadline).slice(0, 10) < today ? 'overdue' : 'open');
 
 /** Client-facing quotation (no internal costs). Every value is escaped. */
-export function customerQuoteHtml(d, en = false) {
+export function customerQuoteHtml(d, en = false, { preview = false } = {}) {
   const v = d?.item || {};
   const L = (es, e) => (en ? e : es);
   const rows = (d?.items || []).map(i => `<tr><td>${escapeHtml(i.line_number)}</td><td>${escapeHtml(i.description)}${i.brand_model ? `<br><small>${escapeHtml(i.brand_model)}</small>` : ''}</td><td style="text-align:right">${escapeHtml(Number(i.quantity))}</td><td>${escapeHtml(i.unit_label)}</td><td style="text-align:right">${escapeHtml(money(i.unit_price, v.currency, en))}</td><td style="text-align:right">${escapeHtml(money(i.line_subtotal, v.currency, en))}</td></tr>`).join('');
@@ -65,8 +65,10 @@ export function customerQuoteHtml(d, en = false) {
 <table><thead><tr><th>#</th><th>${L('Descripción', 'Description')}</th><th>${L('Cantidad', 'Qty')}</th><th>${L('Unidad', 'Unit')}</th><th>${L('Precio unitario', 'Unit price')}</th><th>${L('Importe', 'Amount')}</th></tr></thead><tbody>${rows || `<tr><td colspan="6">${L('Sin partidas registradas.', 'No line items recorded.')}</td></tr>`}</tbody></table>
 <div class="tot"><div><span>Subtotal</span><span>${escapeHtml(money(v.subtotal_amount, v.currency, en))}</span></div>${num(v.discount_amount) ? `<div><span>${L('Descuento', 'Discount')}</span><span>-${escapeHtml(money(v.discount_amount, v.currency, en))}</span></div>` : ''}<div><span>${L('Impuestos', 'Taxes')}</span><span>${escapeHtml(money(v.tax_amount, v.currency, en))}</span></div>${v.service_fee_enabled ? `<div><span>Service Fee</span><span>${escapeHtml(money(v.service_fee_total_amount, v.currency, en))}</span></div>` : ''}<div class="g"><span>Total</span><span>${escapeHtml(money(v.total_amount, v.currency, en))}</span></div></div>
 ${cond ? `<div class="box">${cond}</div>` : ''}
+${v.notes ? `<div class="box"><strong>${L('Comentarios', 'Comments')}:</strong> ${escapeHtml(v.notes)}</div>` : ''}
 <div class="sigs"><div class="sig">${escapeHtml(v.prepared_by || '—')}<br><small>${L('Elaboró', 'Prepared')}</small></div><div class="sig">${escapeHtml(v.reviewed_by || '—')}<br><small>${L('Revisó', 'Reviewed')}</small></div><div class="sig">${escapeHtml(v.approved_by || '—')}<br><small>${L('Autorizó', 'Authorized')}</small></div></div>
-<p class="note">${L('Vista generada desde MariaDB (solo lectura). No incluye costos internos del proveedor.', 'View generated from MariaDB (read-only). Internal supplier costs are not included.')}</p>
+<p class="note">${preview ? L('Vista previa NO REGISTRADA generada con datos de MariaDB: el folio se asigna al guardar. No incluye costos internos, gastos ni margen.', 'NOT REGISTERED preview built from MariaDB data: the folio is assigned on save. Internal costs, expenses and margin are not included.') : L('Vista generada desde MariaDB (solo lectura). No incluye costos internos del proveedor.', 'View generated from MariaDB (read-only). Internal supplier costs are not included.')}</p>
+${preview ? `<div style="position:fixed;top:42%;left:0;right:0;text-align:center;font-size:44px;font-weight:900;color:rgba(37,99,235,.08);transform:rotate(-18deg);pointer-events:none">${L('VISTA PREVIA · NO REGISTRADA', 'PREVIEW · NOT REGISTERED')}</div>` : ''}
 </body></html>`;
 }
 

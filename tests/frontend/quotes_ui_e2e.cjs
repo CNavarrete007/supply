@@ -260,6 +260,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).first().click();
     await page.getByTestId('comparison-card').waitFor();
     await page.getByRole('combobox', { name: 'Requisición' }).selectOption('');
+    await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Requisición"] option').length === n + 1, comp.requisitions.length, { timeout: 10000 }).catch(() => {});
     check('comparativo: estado inicial sin requisición', await page.getByTestId('cmp-empty').isVisible() && await page.locator('select[aria-label="Requisición"] option').count() === comp.requisitions.length + 1);
     const req = comp.requisitions.find(r => r.quotes > 1) || comp.requisitions[0];
     const cmpResp = page.waitForResponse(r => new RegExp(`/quotes/comparison\\?requisition=${req.id}`).test(r.url()));
@@ -321,20 +322,66 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.locator('nav button').filter({ hasText: /Cotizaciones y Comparativo$/ }).click();
     await page.getByTestId('rfq-matrix-card').waitFor();
 
-    // 6 · Cotización al cliente (sin costos internos)
+    // 6 · Cotización formal al cliente: costos reales → precio de venta, IVA, Service Fee, nivel de aprobación; guardar bloqueado
+    const cqModel = await import(require('url').pathToFileURL(require('path').join(__dirname, '../../src/views/quotes/customerQuoteBuilder.mjs')).href);
     const cur = cqCur.items[0];
     await page.getByRole('button', { name: /^6.*Cotización al cliente/ }).click();
+    await page.getByTestId('cq-card').waitFor();
+    check('cotización al cliente: estado inicial', flat(await page.getByTestId('cq-status').innerText()).startsWith('Selecciona una requisición para cargar cliente') && await page.getByRole('button', { name: 'Vista previa' }).isDisabled());
+    const cqSetup = await api('/api/v1/quotes/customer-quote-setup'); const st6 = await api('/api/v1/quotes/rfq-setup');
+    let buyer6 = null; let reqs6 = null;
+    for (const b of st6.buyers) { const l = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&rfq=quoted&buyer=${b.key}`); if (l.total) { buyer6 = b; reqs6 = l; break; } }
+    check('cotización al cliente: requisiciones del comprador con cotizaciones de proveedor', reqs6 && reqs6.items.every(r => r.quote_count > 0));
+    await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer6.key);
+    await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Requisición del cliente"] option').length === n + 1, reqs6.items.length);
+    const req6 = reqs6.items[0];
+    const cmp6 = await api(`/api/v1/quotes/comparison?requisition=${req6.id}`);
+    await page.getByRole('combobox', { name: 'Requisición del cliente' }).selectOption(req6.id);
+    await page.getByTestId('cq-line').first().waitFor();
+    const lines6 = cqModel.linesFromComparison(cmp6.lines);
+    check('partidas vigentes con costo de adjudicación o mejor oferta', await page.getByTestId('cq-line').count() === lines6.length && flat(await page.getByTestId('cq-line-count').innerText()).startsWith(`${lines6.length} partida(s)`));
+    check('moneda, lugar de entrega y revisión propuestos desde MariaDB', (await page.getByRole('combobox', { name: 'Moneda de cotización / cliente' }).inputValue()) === (['MXN', 'USD', 'EUR'].includes(cmp6.requisition.currency) ? cmp6.requisition.currency : 'MXN')
+      && (await page.getByRole('textbox', { name: 'Lugar de entrega' }).inputValue()) === (cmp6.requisition.delivery_place || '') && (await page.getByRole('textbox', { name: 'Revisión' }).inputValue()) === String(cmp6.customer_quote ? cmp6.customer_quote.revision + 1 : 0));
+    if (cmp6.customer_quote) check('aviso de la cotización vigente de la requisición', flat(await page.getByTestId('cq-status').innerText()).includes(`Ya existe ${cmp6.customer_quote.folio}`));
+    await page.getByRole('button', { name: /Actualizar tipo de cambio/ }).click();
+    check('Actualizar tipo de cambio usa el último registrado en MariaDB', !cqSetup.fx || (await page.getByRole('textbox', { name: '1 USD = MXN' }).inputValue()) === String(Number(cqSetup.fx.usd_mxn)));
+    await page.getByRole('button', { name: /Guardar cotización al cliente/ }).click();
+    check('Guardar incompleto: marca lo pendiente (margen) sin enviar nada', flat(await page.getByTestId('cq-status').innerText()).startsWith('No se puede guardar. Pendiente:') && writes.length === 0);
+    for (const l of lines6) { await page.getByLabel(`% margen partida ${l.line_number}`).fill('20'); await page.getByLabel(`Entrega / manipulación partida ${l.line_number}`).fill('150'); }
+    await page.getByRole('combobox', { name: 'Comprador', exact: true }).selectOption({ index: 1 });
+    await page.getByLabel('Service Fee %').fill('5');
+    const f6 = { ...cqModel.emptyCq('2026-01-01'), currency: await page.getByRole('combobox', { name: 'Moneda de cotización / cliente' }).inputValue(), usd_mxn: await page.getByRole('textbox', { name: '1 USD = MXN' }).inputValue(), eur_mxn: await page.getByRole('textbox', { name: '1 EUR = MXN' }).inputValue(), sf_pct: '5' };
+    const priced6 = lines6.map(l => ({ ...l, margin: '20', handling: '150' }));
+    const t6 = cqModel.cqTotals(priced6, f6);
+    const fmt6 = n => n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    check('precio de venta por partida calculado', flat(await page.getByTestId('cq-line').first().innerText()).includes(usd(cqModel.priceLine(priced6[0], f6).unit).replace('USD', f6.currency)), flat(await page.getByTestId('cq-line').first().innerText()));
+    check('subtotal de terceros, Service Fee y total general', (await page.getByRole('textbox', { name: 'Subtotal de pago de terceros' }).inputValue()) === fmt6(t6.third) && (await page.getByRole('textbox', { name: 'Total Service Fee', exact: true }).inputValue()) === fmt6(t6.sfTotal) && (await page.getByRole('textbox', { name: 'Total general', exact: true }).inputValue()) === fmt6(t6.total), `${t6.third} ${t6.sfTotal} ${t6.total}`);
+    const pol6 = (cqSetup.policies || []).find(p => /customer|client|cotiz/i.test(p.applies_to));
+    const lv6 = cqModel.approvalLevel(pol6, priced6, f6, t6); const lvText = flat(await page.getByTestId('cq-level').innerText());
+    check('nivel de aprobación según la política vigente', lv6.status === 'within' ? lvText.startsWith('Nivel 1 · Solo Comprador') : lv6.status === 'exceeds' ? lvText.startsWith('Requiere autorización interna adicional') : lvText.includes('Sin política de aprobación vigente'), lvText);
+    await page.getByRole('button', { name: /Guardar cotización al cliente/ }).click();
+    const st6msg = flat(await page.getByTestId('cq-status').innerText());
+    check('Guardar completo: valida y avisa que NO se guardó', st6msg.startsWith('Cotización validada') && st6msg.includes('No se guardó') && writes.length === 0, st6msg);
+    await page.getByRole('button', { name: 'Vista previa' }).click();
+    const pv6 = flat(await page.getByTestId('cq-preview').frameLocator('iframe').locator('body').innerText());
+    check('vista previa para el cliente: precio de venta y total, sin costos ni margen', pv6.includes(cmp6.requisition.client_name) && pv6.includes('VISTA PREVIA') && pv6.includes(usd(t6.total).replace('USD', f6.currency)) && !pv6.includes(usd(priced6[0].cost_unit).replace(' USD', '')) && !/margen de ganancia|manipulación|costo del producto/i.test(pv6), pv6.slice(0, 300));
+    check('vista previa aislada en iframe sandbox', (await page.getByTestId('cq-preview').locator('iframe').getAttribute('sandbox')) === '');
+    await page.getByTestId('cq-preview').getByRole('button', { name: 'Cerrar' }).click();
+    await shot(page, 'cot_6_cotizacion_cliente');
+    await page.getByRole('button', { name: 'Limpiar' }).click();
+    check('Limpiar deja la cotización como nueva', (await page.getByRole('combobox', { name: 'Comprador responsable' }).inputValue()) === '' && await page.getByTestId('cq-line').count() === 0);
+    await page.getByRole('button', { name: 'Ver matriz' }).click();
+    check('"Ver matriz" abre la matriz de cotizaciones al cliente', (await page.getByRole('button', { name: /Matriz de cotizaciones al cliente/ }).getAttribute('aria-pressed')) === 'true');
+
+    // 7 · Formato para el cliente (cotizaciones registradas, sin costos internos)
+    await page.getByRole('button', { name: /Formato para el cliente/ }).click();
     const cqDet = page.waitForResponse(r => /\/quotes\/customer-quotes\/[0-9a-f-]{36}$/.test(r.url()));
     await page.getByRole('combobox', { name: 'Cotización al cliente' }).selectOption(cur.id);
     const cqJson = await (await cqDet).json();
     const cq = flat(await page.getByTestId('client-quote').innerText());
-    check('cotización al cliente: cliente, total y decisión', [cur.client_name, usd(cur.total_amount), 'Aprobada'].every(x => cq.includes(x)), cq.slice(0, 300));
+    check('cotización registrada: cliente, total y decisión', [cur.client_name, usd(cur.total_amount), 'Aprobada'].every(x => cq.includes(x)), cq.slice(0, 300));
     check('la API del cliente no expone costos', !JSON.stringify(cqJson).match(/cost|margin|supplier_unit/i));
     check('"Emitir cotización" bloqueado', await page.getByRole('button', { name: /Emitir cotización/ }).isDisabled());
-
-    // 7 · Formato para el cliente
-    await page.getByRole('button', { name: /Formato para el cliente/ }).click();
-    await page.getByRole('combobox', { name: 'Cotización al cliente' }).selectOption(cur.id);
     const frame = page.frameLocator('iframe[title="Formato para el cliente"]');
     await frame.getByText(`Cotización ${cur.folio}`).first().waitFor();
     const ft = flat(await frame.locator('body').innerText());
@@ -420,11 +467,11 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
       await page.getByRole('button', { name: 'Entendido' }).click();
     }
     await shot(page, 'cot_1_revisiones');
-    // ABRIR REV. VIGENTE → tarjeta 6 con la versión vigente seleccionada
+    // ABRIR REV. VIGENTE → tarjeta 7 (formato) con la versión vigente seleccionada
     await famCard.getByRole('button', { name: 'ABRIR REV. VIGENTE' }).click();
     await page.getByText(f0.requisition).first().waitFor();
     check('ABRIR REV. VIGENTE muestra la versión vigente', flat(await page.locator('main').innerText()).includes(usd(f0.current_total)));
-    check('ABRIR REV. VIGENTE abre la tarjeta 6 con la versión seleccionada', (await page.getByRole('button', { name: /Cotización al cliente/ }).first().getAttribute('aria-pressed')) === 'true' && (await page.getByRole('combobox', { name: 'Cotización al cliente' }).inputValue()) === f0.current_id);
+    check('ABRIR REV. VIGENTE abre el formato (tarjeta 7) con la versión seleccionada', (await page.getByRole('button', { name: /Formato para el cliente/ }).first().getAttribute('aria-pressed')) === 'true' && (await page.getByRole('combobox', { name: 'Cotización al cliente' }).inputValue()) === f0.current_id);
 
     // 9 · Decisión del cliente
     await page.getByRole('button', { name: /Decisión del cliente/ }).click();

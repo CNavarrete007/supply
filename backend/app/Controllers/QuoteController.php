@@ -53,13 +53,15 @@ final class QuoteController extends ReadOnlyModuleController
 
     public function rfqs(): ResponseInterface { return $this->run(self::BASIC + ['contact' => [self::PERSON_KEY, 'all']], fn ($r, $o, $f) => $r->rfqs($o, $f)); }
     /** Tarjeta 3: resumen de RFQ por contacto de compras (solo lectura). */
+    /** Tarjeta 6: tipo de cambio registrado y políticas de aprobación vigentes (solo lectura). */
+    public function customerQuoteSetup(): ResponseInterface { return $this->run([], fn ($r, $o, $f) => $r->customerQuoteSetup($o), false); }
     public function rfqContacts(): ResponseInterface { return $this->run([], fn ($r, $o, $f) => $r->rfqContacts($o), false); }
     public function rfq(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->rfq($o, $i)); }
     /** Tarjeta 2 (RFQ): catálogos para preparar la solicitud. Solo lectura: guardar/enviar una RFQ sigue bloqueado. */
     public function rfqSetup(): ResponseInterface { return $this->run([], fn ($r, $o, $f) => $r->rfqSetup($o), false); }
     public function rfqRequisitions(): ResponseInterface
     {
-        return $this->run(['q' => [self::TEXT, ''], 'buyer' => [self::PERSON_KEY, 'all'], 'rfq' => ['/^(any|with)$/D', 'any']], fn ($r, $o, $f) => $r->rfqRequisitions($o, $f));
+        return $this->run(['q' => [self::TEXT, ''], 'buyer' => [self::PERSON_KEY, 'all'], 'rfq' => ['/^(any|with|quoted)$/D', 'any']], fn ($r, $o, $f) => $r->rfqRequisitions($o, $f));
     }
     public function rfqRequisition(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->rfqRequisition($o, $i)); }
     public function supplierQuotes(): ResponseInterface { return $this->run(self::BASIC, fn ($r, $o, $f) => $r->supplierQuotes($o, $f)); }
