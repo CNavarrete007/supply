@@ -397,16 +397,108 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('Descargar PDF: archivo PDF real con folio y revisión en el nombre', file7.suggestedFilename() === `${D7.folio}_Rev${D7.revision}.pdf` && bytes7.slice(0, 5).toString() === '%PDF-' && bytes7.length > 10000, `${file7.suggestedFilename()} ${bytes7.length}`);
     await shot(page, 'cot_7_formato');
 
-    // 8 · Matriz de cotizaciones al cliente (versión vigente)
+    // 8 · Matriz de cotizaciones al cliente (tarjetas por cliente → matriz con todas las revisiones)
+    const rowOf = f => page.locator(`[data-testid="cqm-row"][data-folio="${f}"]`);
+    const m8 = await api('/api/v1/quotes/customer-quotes?page=1&page_size=50&scope=all');
+    const cards8 = m8.summary.client_cards; const sum8 = k => cards8.reduce((n, c) => n + c[k], 0);
+    const first8 = page.waitForResponse(r => /\/quotes\/customer-quotes\?.*scope=all/.test(r.url()));
     await page.getByRole('button', { name: /Matriz de cotizaciones al cliente/ }).click();
-    await page.getByRole('row').filter({ hasText: cur.folio }).waitFor();
-    const r8 = flat(await page.getByRole('row').filter({ hasText: cur.folio }).innerText());
-    check('matriz cliente: versión vigente vN / total', r8.includes(`v${cur.version_number} / ${cur.versions}`) && r8.includes(cur.series), r8);
+    check('matriz cliente: consulta todas las revisiones en MariaDB (200)', (await first8).status() === 200);
+    await page.getByTestId('cqm-client-card').first().waitFor();
+    check('matriz cliente: encabezado, buscador, 9 estatus y regla de cambio posterior', await page.getByText('Consulta revisiones, vigencia, total, estado de aprobación y PDF formal.').count() === 1
+      && await page.getByPlaceholder('Buscar por folio, cliente, requisición o estatus...').count() === 1
+      && await page.locator('select[aria-label="Estatus"] option').count() === 10
+      && /Cambio posterior a aprobación: no elimines ni sobrescribas la cotización\. Usa MODIFICAR DESDE REQUISICIÓN para generar Rev\. N con trazabilidad\./.test(flat(await page.getByTestId('cqm-rule').innerText())));
+    check('matriz cliente: una tarjeta por cliente + "Todas las cotizaciones"', await page.getByTestId('cqm-client-card').count() === cards8.length + 1
+      && flat(await page.getByTestId('cqm-badge').innerText()) === `${cards8.length} cliente(s) · ${sum8('total')} cotización(es)`);
+    const all8 = flat(await page.getByTestId('cqm-client-card').first().innerText()).toUpperCase();
+    check('tarjeta "Todas": cotizaciones, aprobadas y pendientes (suma del servidor)', all8.includes('TODAS LAS COTIZACIONES') && all8.includes(`${sum8('total')} COTIZACIONES ${sum8('approved')} APROBADAS ${sum8('pending')} PENDIENTES`), all8);
+    const c8 = cards8.find(c => c.id === cur.client_id) || cards8[0];
+    const cc8 = flat(await page.getByTestId('cqm-client-card').filter({ hasText: c8.name }).innerText()).toUpperCase();
+    check('tarjeta por cliente: iniciales, nombre y conteos', cc8.includes(c8.name.toUpperCase()) && cc8.includes(`${c8.total} COTIZACIONES ${c8.approved} APROBADAS ${c8.pending} PENDIENTES`), cc8);
+    check('la matriz no se despliega hasta elegir una tarjeta', await page.getByTestId('cqm-matrix').count() === 0);
+    await page.getByRole('button', { name: /Abrir todas/ }).click();
+    await page.getByTestId('cqm-row').first().waitFor();
+    check('"Abrir todas": todas las revisiones (página 1) y leyenda', await page.getByTestId('cqm-row').count() === Math.min(m8.total, 25) && flat(await page.getByTestId('cqm-matrix').innerText()).includes(`Mostrando ${m8.total} cotización(es) registradas`));
+    const heads8 = (await page.getByTestId('cqm-matrix').locator('thead th').allInnerTexts()).map(x => flat(x).toUpperCase());
+    check('matriz: 15 columnas del diseño', JSON.stringify(heads8) === JSON.stringify(['COTIZACIÓN', 'REV.', 'CLIENTE', 'REQUISICIÓN', 'REFERENCIA INTERNA', 'EMISIÓN', 'VIGENCIA', 'TOTAL', 'ESTATUS', 'COMPRADOR', 'REVISÓ', 'AUTORIZÓ', 'DECISIÓN DEL CLIENTE', 'PDF', 'ACCIONES']), heads8.join('|'));
+    const row8 = rowOf(cur.folio);
+    const r8 = flat(await row8.innerText());
+    check('fila vigente: folio, Rev., cliente, requisición, fechas, total, estatus y decisión', [cur.folio, `Rev. ${cur.revision}`, `v${cur.version_number} / ${cur.versions}`, cur.client_name, cur.requisition, cur.quote_date, cur.valid_until, usd(cur.total_amount), 'Aprobada', (cur.prepared_by || '—').toUpperCase(), String(cur.last_decision_at || '').slice(0, 16)].every(x => r8.includes(x)), r8);
     const old = cqAll.items.find(v => v.series === cur.series && v.id !== cur.id);
-    check('versión sustituida no aparece en la matriz vigente', !old || await page.getByRole('row').filter({ hasText: new RegExp(`^\\s*${old.folio}\\s`) }).count() === 0);
-    const byDec = page.waitForResponse(r => /\/customer-quotes\?.*decision=approved/.test(r.url()));
-    await page.getByRole('combobox', { name: 'Decisión' }).selectOption('approved');
-    check('filtro por decisión en el servidor (200)', (await byDec).status() === 200);
+    if (old) check('la revisión sustituida aparece como "Sustituida"', flat(await rowOf(old.folio).innerText()).includes('Sustituida'));
+    const bySt = page.waitForResponse(r => /\/customer-quotes\?.*status=superseded/.test(r.url()));
+    await page.getByRole('combobox', { name: 'Estatus' }).selectOption('superseded');
+    const st8 = await (await bySt).json();
+    await page.waitForTimeout(300);
+    check('filtro de estatus en el servidor (Sustituida)', st8.items.every(x => x.status_key === 'superseded') && await page.getByTestId('cqm-row').count() === st8.items.length
+      && (await page.getByTestId('cqm-row').allInnerTexts()).every(t => t.includes('Sustituida')));
+    await page.getByRole('combobox', { name: 'Estatus' }).selectOption('all');
+    const byQ8 = page.waitForResponse(r => /\/customer-quotes\?.*q=aprobada/i.test(r.url()));
+    await page.getByRole('searchbox', { name: 'Buscar cotización al cliente' }).fill('aprobada');
+    const q8 = await (await byQ8).json(); await page.waitForTimeout(300);
+    check('búsqueda por estatus en el servidor ("aprobada")', q8.items.some(x => x.id === cur.id) && await page.getByTestId('cqm-row').count() === q8.items.length);
+    await page.getByRole('searchbox', { name: 'Buscar cotización al cliente' }).fill('');
+    await page.waitForTimeout(500);
+    const byCl = page.waitForResponse(r => r.url().includes(`client=${c8.id}`));
+    await page.getByRole('button', { name: `Abrir cliente: ${c8.name}` }).click();
+    const cl8 = await (await byCl).json(); await page.waitForTimeout(300);
+    check('"Abrir cliente": solo sus cotizaciones (filtro en el servidor)', cl8.total === c8.total && cl8.items.every(x => x.client_id === c8.id) && flat(await page.getByTestId('cqm-matrix').innerText()).includes(`Mostrando detalle de cotizaciones para ${c8.name}`));
+    await page.getByRole('button', { name: /Abrir todas/ }).click();
+    await row8.waitFor();
+    // VER PDF → visor formal (iframe aislado)
+    const pdf8 = page.waitForResponse(r => r.url().endsWith(`/quotes/customer-quotes/${cur.id}`));
+    await row8.getByRole('button', { name: 'VER PDF' }).click();
+    check('VER PDF consulta la revisión (200)', (await pdf8).status() === 200);
+    check('VER PDF: folio y total en el documento', flat(await page.getByTestId('rev-pdf').frameLocator('iframe').locator('body').innerText()).includes(cur.folio));
+    await page.getByTestId('rev-pdf').getByRole('button', { name: 'Cerrar' }).click();
+    // MODIFICAR DESDE REQ. → revisión sustituida: motivo; vigente: formulario R3A real o motivo
+    if (old) {
+      await rowOf(old.folio).getByRole('button', { name: /MODIFICAR DESDE REQ\./ }).click();
+      await page.getByTestId('rev-blocked').waitFor();
+      check('MODIFICAR DESDE REQ. en revisión sustituida remite a la vigente', flat(await page.getByTestId('rev-blocked').innerText()).includes(`sustituida por ${cur.folio}`));
+      await page.getByRole('button', { name: 'Entendido' }).click();
+    }
+    await row8.getByRole('button', { name: /MODIFICAR DESDE REQ\./ }).click();
+    const curRow = m8.items.find(x => x.id === cur.id);
+    if (curRow.can_request_change) {
+      const modal8 = page.getByTestId('change-modal'); await modal8.getByTestId('change-line').first().waitFor();
+      check('MODIFICAR DESDE REQ. abre la modificación controlada R3A de la requisición', flat(await modal8.innerText()).includes(cur.requisition) && flat(await modal8.innerText()).includes(cur.folio));
+      await modal8.getByRole('button', { name: 'X Cerrar' }).click();
+    } else {
+      await page.getByTestId('rev-blocked').waitFor();
+      check('MODIFICAR DESDE REQ. bloqueado con motivo', /importado|RF1|Solo quien capturó|pendiente de revisión/.test(await page.getByTestId('rev-blocked').innerText()));
+      await page.getByRole('button', { name: 'Entendido' }).click();
+    }
+    // ELIMINAR una cotización aprobada → se conserva (regla de trazabilidad)
+    await row8.getByRole('button', { name: 'ELIMINAR' }).click();
+    await page.getByTestId('cqm-delete').waitFor();
+    check('ELIMINAR en cotización aprobada: no se elimina, usar Rev. N', /no se elimina ni se sobrescribe.*MODIFICAR DESDE REQ\./.test(flat(await page.getByTestId('cqm-delete').innerText())) && await page.getByTestId('cqm-delete').getByRole('button', { name: 'Sí, eliminar' }).count() === 0);
+    await page.getByTestId('cqm-delete').getByRole('button', { name: 'Entendido' }).click();
+    check('VALIDAR COMPRADOR solo en borradores/revisión interna', await row8.getByRole('button', { name: /VALIDAR COMPRADOR/ }).count() === 0);
+    const draft8 = m8.items.find(x => x.status_key === 'draft' && x.versions === 1);
+    if (draft8) {
+      const dRow = rowOf(draft8.folio);
+      check('borrador: estatus "Borrador" y aprobación interna pendiente', flat(await dRow.innerText()).includes('Borrador') && flat(await dRow.innerText()).includes('Aprob. interna: Pendiente'));
+      await dRow.getByRole('button', { name: /VALIDAR COMPRADOR/ }).click();
+      check('VALIDAR COMPRADOR: escritura bloqueada, no se registró nada', /No se registró nada/.test(await page.getByTestId('cqm-notice').innerText()) && writes.length === 0);
+      await dRow.getByRole('button', { name: 'ELIMINAR' }).click();
+      const dlg = page.getByTestId('cqm-delete'); await dlg.waitFor();
+      check('ELIMINAR borrador: "Sí, eliminar" deshabilitado hasta escribir el folio exacto', await dlg.getByRole('button', { name: 'Sí, eliminar' }).isDisabled());
+      await dlg.getByRole('textbox', { name: 'Folio a confirmar' }).fill(draft8.folio.toLowerCase());
+      check('ELIMINAR borrador: el folio debe coincidir exactamente', await dlg.getByRole('button', { name: 'Sí, eliminar' }).isDisabled());
+      await dlg.getByRole('textbox', { name: 'Folio a confirmar' }).fill(draft8.folio);
+      await dlg.getByRole('button', { name: 'Sí, eliminar' }).click();
+      check('ELIMINAR borrador: escritura bloqueada, no se eliminó nada', (await dlg.getByRole('alert').innerText()).includes(`No se eliminó ${draft8.folio}`) && writes.length === 0);
+      await dlg.getByRole('button', { name: 'Cancelar' }).click();
+    }
+    const exp8 = m8.items.find(x => x.status_key === 'expired');
+    if (exp8) check('vigencia vencida sin decisión del cliente: "Vencida"', flat(await rowOf(exp8.folio).innerText()).includes('Vencida'));
+    await shot(page, 'cot_8_matriz_cliente');
+    await page.getByRole('button', { name: 'Cerrar matriz' }).click();
+    check('✕ cierra la matriz', await page.getByTestId('cqm-matrix').count() === 0);
+    await page.getByRole('button', { name: /Nueva cotización al cliente/ }).click();
+    check('"+ Nueva cotización al cliente" abre la tarjeta 6', (await page.getByRole('button', { name: /Cotización al cliente/ }).first().getAttribute('aria-pressed')) === 'true');
 
     // 1 · Revisiones / modificaciones (familias Rev. 0 → Rev. N)
     const fam = await api('/api/v1/quotes/revisions?page=1&page_size=50');

@@ -9,6 +9,7 @@ import { SupplierQuoteCard } from './SupplierQuoteCard';
 import { ComparisonCard } from './ComparisonCard';
 import { CustomerQuoteCard } from './CustomerQuoteCard';
 import { ClientFormatCard } from './ClientFormatCard';
+import { CustomerQuoteMatrixCard } from './CustomerQuoteMatrixCard';
 import { docModel, quoteDocHtml } from './quoteDocument.mjs';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
@@ -65,7 +66,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setClient('all'); setDecision('all'); setRevStatus('all'); };
 
   const sqs = useLoad(s => listSupplierQuotes({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 11);
-  const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: 'current' }, s), [tab, page, q, client, decision, rev], [8, 9].includes(tab));
+  const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: 'current' }, s), [tab, page, q, client, decision, rev], tab === 9);
   const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
   const pdf = useLoad(s => getCustomerQuote(pdfId, s), [pdfId], !!pdfId);
   const awards = useLoad(s => listAwards({ page, q, status: 'current' }, s), [tab, page, q, rev], tab === 10);
@@ -187,13 +188,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
 
     {tab === 7 && <ClientFormatCard en={en} notify={notify} selectedId={cqId} onSelect={setCqId} refresh={rev} />}
 
-    {tab === 8 && <div className={box}>{head(tx('Matriz de cotizaciones al cliente', 'Client quotes matrix'), tx('Versión vigente de cada cotización: montos, vigencia, aprobación interna y decisión del cliente.', 'Current version of each quote: amounts, validity, internal approval and client decision.'), lockBtn(tx('Nueva cotización', 'New quote')))}
-      <div className="flex flex-wrap gap-3">{searchBox(tx('Buscar folio, serie, requisición o cliente...', 'Search folio, series, requisition or client...'))}<select aria-label={tx('Decisión', 'Decision')} value={decision} onChange={e => { setDecision(e.target.value); setPage(1); }} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"><option value="all">{tx('Todas las decisiones', 'All decisions')}</option>{(cqs.data?.summary?.decisions || []).map(x => <option key={x.code} value={x.code}>{label(x.code, en)} ({x.count})</option>)}</select></div>
-      <Wait s={cqs} /><Err s={cqs} />
-      <p className="text-[11px] text-slate-500">{(cqs.data?.summary?.money || []).map(m => `${money(m.amount, m.currency, en)} · ${m.quotes} ${tx('cotización(es)', 'quote(s)')}`).join('  |  ')}</p>
-      {table([tx('Folio', 'Folio'), tx('Versión', 'Version'), tx('Cliente', 'Client'), tx('Requisición', 'Requisition'), tx('Fecha', 'Date'), tx('Vigencia', 'Valid until'), tx('Total', 'Total'), tx('Aprobación interna', 'Internal approval'), tx('Decisión del cliente', 'Client decision'), tx('Elaboró / autorizó', 'Prepared / approved')], (cqs.data?.items || []).map(v => <tr key={v.id} className="align-top"><td className="py-2.5 px-3 font-black">{v.folio}<div className="text-[10px] text-slate-400">{v.series}</div></td><td className="py-2.5 px-3">v{v.version_number} / {v.versions}</td><td className="py-2.5 px-3">{v.client_name}</td><td className="py-2.5 px-3">{v.requisition}</td><td className="py-2.5 px-3">{ymd(v.quote_date)}</td><td className={`py-2.5 px-3 ${v.valid_until && String(v.valid_until).slice(0, 10) < day ? 'text-rose-600 font-bold' : ''}`}>{ymd(v.valid_until)}</td><td className="py-2.5 px-3 font-bold whitespace-nowrap">{money(v.total_amount, v.currency, en)}</td><td className="py-2.5 px-3">{pill(v.internal_approval_status)}</td><td className="py-2.5 px-3">{pill(v.client_decision_status)}</td><td className="py-2.5 px-3">{show(v.prepared_by)} / {show(v.approved_by)}</td></tr>), tx('No hay cotizaciones al cliente.', 'No client quotes.'))}
-      {pager(cqs)}
-    </div>}
+    {tab === 8 && <CustomerQuoteMatrixCard en={en} notify={notify} lockText={LOCK} refresh={rev} onNew={() => go(6)} onOpenPdf={setPdfId} onRequestChange={setChangeFor} onBlocked={setBlocked} />}
 
     {tab === 9 && <div className={box}>{head(tx('Decisión del cliente', 'Client decision'), tx('Envío, aceptación, rechazo o solicitud de modificación registrados por versión.', 'Delivery, acceptance, rejection or change request recorded per version.'), lockBtn(tx('Registrar decisión', 'Record decision')))}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">{[{ id: 'all', name: tx('Todos los clientes', 'All clients'), total: (cqs.data?.summary?.clients || []).reduce((n, x) => n + x.total, 0), pending: (cqs.data?.summary?.clients || []).reduce((n, x) => n + x.pending, 0) }, ...(cqs.data?.summary?.clients || [])].map(c => <button key={c.id} type="button" aria-pressed={client === c.id} onClick={() => { setClient(c.id); setPage(1); }} className={`text-left p-3 rounded-2xl border bg-white ${client === c.id ? 'border-purple-500 ring-2 ring-purple-500/10' : 'border-slate-200 hover:border-purple-300'}`}><div className="text-[11px] font-extrabold text-slate-800 truncate">{c.name}</div><div className="text-[10px] text-slate-500 mt-1">{c.total} {tx('cotización(es)', 'quote(s)')} · <strong className="text-amber-700">{c.pending} {tx('por decidir', 'pending')}</strong></div></button>)}</div>

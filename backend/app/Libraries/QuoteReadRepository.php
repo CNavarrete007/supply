@@ -371,26 +371,42 @@ final class QuoteReadRepository
     }
 
     /** @param array{page:int,page_size:int,q:string,decision:string,client:string,scope:string} $f */
-    public function customerQuotes(int $org, array $f): array
+    public function customerQuotes(int $org, array $f, int $actor = 0): array
     {
         $from = 'FROM customer_quote_versions v JOIN business_entities e ON e.id=v.id AND e.organization_id=v.organization_id JOIN customer_quotes cq ON cq.id=v.customer_quote_id AND cq.organization_id=v.organization_id'
-            . sprintf(self::REQ, 'v') . ' JOIN business_entities ce ON ce.id=c.id AND ce.organization_id=c.organization_id';
+            . sprintf(self::REQ, 'v') . ' JOIN business_entities ce ON ce.id=c.id AND ce.organization_id=c.organization_id JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id';
         $latest = 'NOT EXISTS (SELECT 1 FROM customer_quote_versions nx WHERE nx.organization_id=v.organization_id AND nx.customer_quote_id=v.customer_quote_id AND nx.version_number>v.version_number)';
-        $where = 'v.organization_id=?' . ($f['scope'] === 'current' ? ' AND ' . $latest : '');
+        $scope = $f['scope'] === 'current' ? ' AND ' . $latest : '';
+        $where = 'v.organization_id=?' . $scope;
         $binds = [$org];
+        $key = self::STATUS_KEY;
         if ($f['decision'] !== 'all') { $where .= ' AND v.client_decision_status=?'; $binds[] = $f['decision']; }
         if ($f['client'] !== 'all') { $where .= ' AND ce.public_id=?'; $binds[] = $f['client']; }
-        [$sq, $sb] = self::search($f['q'], ['v.folio', 'cq.series_reference', 'r.folio', 'c.legal_name', 'v.legacy_status']);
+        if (($f['status'] ?? 'all') !== 'all') { $where .= " AND ({$key})=?"; $binds[] = $f['status']; }
+        [$sq, $sb] = self::search($f['q'], ['v.folio', 'cq.series_reference', 'r.folio', 'c.legal_name', 'v.legacy_status', 'r.internal_reference', 'r.client_reference', self::statusKeyLabel()]);
+        // Tarjeta 8: eligibility of MODIFICAR DESDE REQ. (R3A) for the current revision; superseded revisions point to the current one.
+        $block = "CASE WHEN NOT {$latest} THEN 'superseded' ELSE " . self::changeBlock((string) $actor) . ' END';
         $person = static fn (string $col): string => "(SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id={$col} AND u.organization_id=v.organization_id)";
         $res = $this->page("e.public_id AS id,v.folio,cq.series_reference AS series,v.version_number,COALESCE(v.legacy_revision_number,v.version_number-1) AS revision,r.client_reference,v.quote_date,v.valid_until,v.currency_code AS currency,v.subtotal_amount,v.tax_amount,v.total_amount,
             v.document_status,v.internal_approval_status,v.client_decision_status,v.legacy_status,v.legacy_client_decision,v.service_fee_enabled,
             r.folio AS requisition,ce.public_id AS client_id,c.legal_name AS client_name,{$person('v.prepared_by')} AS prepared_by,{$person('v.approved_by')} AS approved_by,
+            {$person('v.reviewed_by')} AS reviewed_by,(SELECT p.position_title FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.prepared_by AND u.organization_id=v.organization_id) AS prepared_by_position,
+            r.internal_reference,re.public_id AS requisition_id,({$key}) AS status_key,JSON_VALUE(v.approval_evaluation_snapshot,'$.level') AS approval_level,IF({$latest},1,0) AS is_current,
+            {$block} AS change_block,(SELECT k.folio FROM requisition_change_requests k WHERE k.organization_id=r.organization_id AND k.requisition_id=r.id AND k.status_code='pending_review' ORDER BY k.id DESC LIMIT 1) AS pending_change,
+            (SELECT x.folio FROM customer_quote_versions x WHERE x.organization_id=v.organization_id AND x.customer_quote_id=v.customer_quote_id ORDER BY x.version_number DESC,x.id DESC LIMIT 1) AS current_folio,
             (SELECT COUNT(*) FROM customer_quote_versions x WHERE x.organization_id=v.organization_id AND x.customer_quote_id=v.customer_quote_id) AS versions,
             (SELECT d.decision_code FROM customer_quote_decisions d WHERE d.organization_id=v.organization_id AND d.customer_quote_version_id=v.id ORDER BY d.decision_at DESC,d.id DESC LIMIT 1) AS last_decision,
             (SELECT d.decision_at FROM customer_quote_decisions d WHERE d.organization_id=v.organization_id AND d.customer_quote_version_id=v.id ORDER BY d.decision_at DESC,d.id DESC LIMIT 1) AS last_decision_at",
             $from, $where . $sq, [...$binds, ...$sb], 'COALESCE(v.quote_date,DATE(e.created_at)) DESC,v.id DESC', $f);
-        foreach ($res['items'] as &$i) { $i['version_number'] = (int) $i['version_number']; $i['revision'] = (int) $i['revision']; $i['versions'] = (int) $i['versions']; $i['service_fee_enabled'] = (bool) $i['service_fee_enabled']; }
+        foreach ($res['items'] as &$i) {
+            $i['version_number'] = (int) $i['version_number']; $i['revision'] = (int) $i['revision']; $i['versions'] = (int) $i['versions']; $i['service_fee_enabled'] = (bool) $i['service_fee_enabled'];
+            $i['is_current'] = (bool) $i['is_current']; $i['approval_level'] = $i['approval_level'] !== null && ctype_digit((string) $i['approval_level']) ? (int) $i['approval_level'] : null;
+            $i['can_request_change'] = $i['change_block'] === null;
+        }
         unset($i);
+        $pendingKeys = "'draft','review','authorized','sent','change_requested'";
+        $cardFrom = "FROM customer_quote_versions v JOIN requisitions r ON r.id=v.requisition_id AND r.organization_id=v.organization_id JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+                 JOIN business_entities ce ON ce.id=c.id AND ce.organization_id=c.organization_id WHERE v.organization_id=?{$scope}";
         $res['summary'] = [
             'decisions' => $this->facet("SELECT v.client_decision_status AS code,COUNT(*) AS count FROM customer_quote_versions v WHERE v.organization_id=? AND {$latest} GROUP BY v.client_decision_status ORDER BY count DESC", $org),
             'clients' => array_map(static fn ($r) => ['id' => $r['id'], 'name' => $r['name'], 'total' => (int) $r['total'], 'pending' => (int) $r['pending']], $this->rows(
@@ -398,6 +414,11 @@ final class QuoteReadRepository
                  FROM customer_quote_versions v JOIN requisitions r ON r.id=v.requisition_id AND r.organization_id=v.organization_id JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
                  JOIN business_entities ce ON ce.id=c.id AND ce.organization_id=c.organization_id WHERE v.organization_id=? AND {$latest} GROUP BY ce.public_id,c.legal_name ORDER BY total DESC,c.legal_name", [$org])),
             'money' => array_map(static fn ($r) => ['currency' => $r['currency'], 'amount' => $r['amount'], 'quotes' => (int) $r['quotes']], $this->rows("SELECT v.currency_code AS currency,SUM(v.total_amount) AS amount,COUNT(*) AS quotes FROM customer_quote_versions v WHERE v.organization_id=? AND {$latest} GROUP BY v.currency_code ORDER BY v.currency_code", [$org])),
+            // Tarjeta 8 (same scope as the request, filters not applied): status facet and client cards.
+            'statuses' => $this->facet("SELECT ({$key}) AS code,COUNT(*) AS count FROM customer_quote_versions v WHERE v.organization_id=?{$scope} GROUP BY code ORDER BY count DESC", $org),
+            'client_cards' => array_map(static fn ($r) => ['id' => $r['id'], 'name' => $r['name'], 'total' => (int) $r['total'], 'approved' => (int) $r['approved'], 'pending' => (int) $r['pending']], $this->rows(
+                "SELECT ce.public_id AS id,c.legal_name AS name,COUNT(*) AS total,COALESCE(SUM(({$key})='approved'),0) AS approved,COALESCE(SUM(({$key}) IN ({$pendingKeys})),0) AS pending
+                 {$cardFrom} GROUP BY ce.public_id,c.legal_name ORDER BY c.legal_name", [$org])),
         ];
         return $res;
     }
@@ -444,6 +465,47 @@ final class QuoteReadRepository
         WHEN v.client_decision_status='change_requested' THEN 'Cambios solicitados'
         WHEN v.document_status='draft' AND v.internal_approval_status='approved' THEN 'Autorizada internamente' WHEN v.document_status='draft' THEN 'Borrador'
         WHEN v.document_status IN ('issued','sent') THEN 'Enviada al cliente' WHEN v.internal_approval_status='approved' THEN 'Autorizada internamente' ELSE v.document_status END)";
+    /**
+     * Tarjeta 8: one of the nine statuses of the original matrix filter (draft, review, authorized, sent, approved, rejected,
+     * change_requested, superseded, expired) or 'other'. A superseded/cancelled version always reads as superseded; otherwise the
+     * imported (legacy) label wins and, without one, the status codes decide. "expired" without a legacy label means a quote sent to
+     * the client whose validity date already passed and has no client decision; it is derived for display only (nothing is stored).
+     */
+    private const STATUS_KEY = "CASE WHEN v.document_status IN ('superseded','cancelled') THEN 'superseded'
+        WHEN NULLIF(TRIM(v.legacy_status),'') IS NOT NULL THEN CASE WHEN v.legacy_status LIKE '%borrador%' THEN 'draft'
+          WHEN v.legacy_status LIKE '%revisi_n interna%' OR v.legacy_status LIKE 'en revisi_n%' THEN 'review' WHEN v.legacy_status LIKE '%autorizada%' THEN 'authorized'
+          WHEN v.legacy_status LIKE '%enviada%' THEN 'sent' WHEN v.legacy_status LIKE '%modificaci_n%' OR v.legacy_status LIKE '%cambios%' THEN 'change_requested'
+          WHEN v.legacy_status LIKE '%rechazada%' THEN 'rejected' WHEN v.legacy_status LIKE '%aprobada%' THEN 'approved'
+          WHEN v.legacy_status LIKE '%sustituida%' OR v.legacy_status LIKE '%reemplazada%' THEN 'superseded' WHEN v.legacy_status LIKE '%vencida%' THEN 'expired' ELSE 'other' END
+        WHEN v.client_decision_status='approved' THEN 'approved' WHEN v.client_decision_status='rejected' THEN 'rejected'
+        WHEN v.client_decision_status='change_requested' THEN 'change_requested' WHEN v.document_status='expired' THEN 'expired'
+        WHEN v.document_status IN ('issued','sent') AND v.valid_until IS NOT NULL AND v.valid_until<CURDATE() THEN 'expired'
+        WHEN v.document_status IN ('issued','sent') THEN 'sent' WHEN v.internal_approval_status='approved' THEN 'authorized'
+        WHEN v.document_status IN ('in_review','under_review','pending_approval','submitted') OR v.internal_approval_status IN ('in_review','under_review','pending_review','submitted') THEN 'review'
+        WHEN v.document_status='draft' THEN 'draft' ELSE 'other' END";
+    private const STATUS_KEY_ES = ['draft' => 'Borrador', 'review' => 'En revisión interna', 'authorized' => 'Autorizada internamente', 'sent' => 'Enviada al cliente', 'approved' => 'Aprobada',
+        'rejected' => 'Rechazada', 'change_requested' => 'Solicitud de modificación', 'superseded' => 'Sustituida', 'expired' => 'Vencida'];
+
+    /** Spanish label of STATUS_KEY, so the matrix search finds "aprobada", "vencida"… */
+    private static function statusKeyLabel(): string
+    {
+        $when = implode(' ', array_map(static fn ($k, $v) => "WHEN '{$k}' THEN '{$v}'", array_keys(self::STATUS_KEY_ES), self::STATUS_KEY_ES));
+        return '(CASE (' . self::STATUS_KEY . ") {$when} ELSE COALESCE(NULLIF(TRIM(v.legacy_status),''),v.document_status) END)";
+    }
+
+    /**
+     * Why the signed-in Master Admin may not file a controlled modification (R3A) on requisition r/re (NULL = allowed).
+     * Mirrors RequisitionChangeRepository::create, which stays the only authority. $actor is '?' (bound) or a literal int.
+     */
+    private static function changeBlock(string $actor): string
+    {
+        $pending = "(SELECT k.folio FROM requisition_change_requests k WHERE k.organization_id=r.organization_id AND k.requisition_id=r.id AND k.status_code='pending_review' ORDER BY k.id DESC LIMIT 1)";
+        $rf1 = "EXISTS(SELECT 1 FROM requisition_revision_snapshots rs WHERE rs.organization_id=r.organization_id AND rs.requisition_id=r.id AND rs.provenance='system' AND rs.snapshot_schema_version=2
+            AND JSON_UNQUOTE(JSON_EXTRACT(rs.snapshot_json,'$.origin'))='supplyflow_recovery_rf1')";
+        return "CASE WHEN re.archived_at IS NOT NULL OR re.imported_at IS NOT NULL THEN 'imported' WHEN NOT {$rf1} THEN 'not_rf1' WHEN re.created_by<>{$actor} THEN 'not_owner'
+            WHEN {$pending} IS NOT NULL THEN 'pending_change' ELSE NULL END";
+    }
+
     /** pending | approved | closed (superseded, cancelled or rejected) — filter groups of the original design. */
     private const STATUS_GROUP = "CASE WHEN v.document_status IN ('superseded','cancelled') OR v.client_decision_status IN ('rejected','cancelled') THEN 'closed'
         WHEN v.client_decision_status='approved' THEN 'approved' ELSE 'pending' END";
@@ -479,10 +541,7 @@ final class QuoteReadRepository
         if ($f['status'] !== 'all') { $where .= " AND ({$group})=?"; $binds[] = $f['status']; }
         [$sq, $sb] = self::search($f['q'], ['v.folio', 'cq.series_reference', 'r.folio', 'c.legal_name', 'cr.folio', $label]);
         $pending = "(SELECT k.folio FROM requisition_change_requests k WHERE k.organization_id=r.organization_id AND k.requisition_id=r.id AND k.status_code='pending_review' ORDER BY k.id DESC LIMIT 1)";
-        $rf1 = "EXISTS(SELECT 1 FROM requisition_revision_snapshots rs WHERE rs.organization_id=r.organization_id AND rs.requisition_id=r.id AND rs.provenance='system' AND rs.snapshot_schema_version=2
-            AND JSON_UNQUOTE(JSON_EXTRACT(rs.snapshot_json,'$.origin'))='supplyflow_recovery_rf1')";
-        $block = "CASE WHEN re.archived_at IS NOT NULL OR re.imported_at IS NOT NULL THEN 'imported' WHEN NOT {$rf1} THEN 'not_rf1' WHEN re.created_by<>? THEN 'not_owner'
-            WHEN {$pending} IS NOT NULL THEN 'pending_change' ELSE NULL END";
+        $block = self::changeBlock('?');
         $total = (int) ($this->rows("SELECT COUNT(*) AS n {$from} WHERE {$where}{$sq}", [...$binds, ...$sb])[0]['n'] ?? 0);
         $items = $this->rows("SELECT qe.public_id AS id,cq.series_reference AS series,ve.public_id AS current_id,v.folio AS current_folio,COALESCE(v.legacy_revision_number,v.version_number-1) AS current_rev,
             v.version_number AS current_version,v.quote_date AS current_quote_date,v.valid_until,v.currency_code AS currency,v.total_amount AS current_total,v.document_status,v.internal_approval_status,

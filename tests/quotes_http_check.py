@@ -34,7 +34,7 @@ try:
     get = lambda p: json.loads(adm.open(API + p).read())
     check('Master Admin: 200', all(status(adm, p) == 200 for p in EPS))
     for bad in ['/rfqs?x=1', '/rfqs?page_size=51', '/rfqs?supplier=abc', '/supplier-quotes?status=%27or', '/comparison?requisition=abc', '/comparison?page=1',
-                '/customer-quotes?scope=x', '/customer-quotes?client=1', '/awards?status=%27x', f'/rfqs/{ZERO}?a=1',
+                '/customer-quotes?scope=x', '/customer-quotes?client=1', '/customer-quotes?status=bogus', '/customer-quotes?status=%27x', '/awards?status=%27x', f'/rfqs/{ZERO}?a=1',
                 '/revisions?status=superseded', '/revisions?client=1', '/revisions?page_size=51', '/revisions?q=%01',
                 '/rfq-setup?x=1', '/rfq-setup?page=1', '/rfq-requisitions?buyer=abc', '/rfq-requisitions?buyer=legacy-xyz', '/rfq-requisitions?supplier=all', f'/rfq-requisitions/{ZERO}?a=1', '/rfq-contacts?page=1', '/rfq-contacts?x=1', '/rfqs?contact=abc', '/rfqs?contact=legacy-12', '/rfq-requisitions?rfq=all', '/rfq-requisitions?rfq=', '/customer-quote-setup?page=1', '/customer-quote-setup?x=1']:
         check(f'422 con parámetro inválido ({bad})', status(adm, R + bad) == 422)
@@ -126,6 +126,25 @@ try:
         d = get(f"{R}/customer-quotes/{x['id']}"); it = d['item']
         check(f"Formato {x['folio']}: campos del documento externo", it['revision'] == x['revision'] and {'client_contact', 'client_email', 'client_phone', 'project', 'contract', 'client_reference', 'prepared_by_position', 'third_party_taxable_amount', 'service_fee_subtotal_amount'} <= set(it)
               and d['issuer'] is not None and d['issuer'].get('legal_name') and not re.search(r'cost_amount|charge_pct|extra_amount|margin', json.dumps(d), re.I))
+
+    # Tarjeta 8 · Matriz de cotizaciones al cliente: estatus normalizado, filtros en el servidor y tarjetas por cliente.
+    KEYS = {'draft', 'review', 'authorized', 'sent', 'approved', 'rejected', 'change_requested', 'superseded', 'expired', 'other'}
+    m8 = get(f'{R}/customer-quotes?page_size=50&scope=all'); s8 = m8['summary']
+    check('Matriz cliente: cada revisión trae estatus normalizado y datos de la fila', all(x['status_key'] in KEYS and {'reviewed_by', 'prepared_by_position', 'internal_reference', 'requisition_id', 'is_current', 'change_block', 'can_request_change', 'current_folio', 'approval_level'} <= set(x) for x in m8['items']))
+    check('Matriz cliente: facet de estatus suma todas las revisiones', sum(x['count'] for x in s8['statuses']) == m8['total'] and all(x['code'] in KEYS for x in s8['statuses']))
+    check('Matriz cliente: tarjetas por cliente (total ≥ aprobadas + pendientes) suman las revisiones', sum(c['total'] for c in s8['client_cards']) == m8['total'] and all(c['total'] >= c['approved'] + c['pending'] for c in s8['client_cards']))
+    for code in {x['code'] for x in s8['statuses']}:
+        r8 = get(f'{R}/customer-quotes?page_size=50&scope=all&status={code}')
+        check(f'Matriz cliente: filtro de estatus {code} en el servidor', r8['total'] == next(x['count'] for x in s8['statuses'] if x['code'] == code) and all(x['status_key'] == code for x in r8['items']))
+    for c in s8['client_cards'][:3]:
+        r8 = get(f"{R}/customer-quotes?page_size=50&scope=all&client={c['id']}")
+        check(f"Matriz cliente: filtro por cliente {c['name']}", r8['total'] == c['total'] and all(x['client_id'] == c['id'] for x in r8['items'])
+              and sum(x['status_key'] == 'approved' for x in r8['items']) == c['approved'] and sum(x['status_key'] in ('draft', 'review', 'authorized', 'sent', 'change_requested') for x in r8['items']) == c['pending'])
+    check('Matriz cliente: solo la revisión vigente puede pedir modificación; las sustituidas remiten a la vigente',
+          all((not x['is_current']) == (x['change_block'] == 'superseded') and x['can_request_change'] == (x['change_block'] is None) for x in m8['items'])
+          and all(x['current_folio'] != x['folio'] for x in m8['items'] if not x['is_current']))
+    if any(x['status_key'] == 'superseded' for x in m8['items']):
+        check('Matriz cliente: búsqueda por etiqueta de estatus ("sustituida")', get(f'{R}/customer-quotes?page_size=50&scope=all&q=sustituida')['total'] >= next(x['count'] for x in s8['statuses'] if x['code'] == 'superseded'))
 
     # Tarjeta 6 · Cotización al cliente: requisiciones con ofertas, tipo de cambio registrado y política de aprobación.
     quoted = get(f'{R}/rfq-requisitions?page_size=50&rfq=quoted')

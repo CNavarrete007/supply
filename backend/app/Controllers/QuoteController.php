@@ -69,7 +69,8 @@ final class QuoteController extends ReadOnlyModuleController
     public function comparison(): ResponseInterface { return $this->run(['requisition' => [self::UUID_OR_ALL, 'all']], fn ($r, $o, $f) => $r->comparison($o, $f['requisition']), false); }
     public function customerQuotes(): ResponseInterface
     {
-        return $this->run(['q' => [self::TEXT, ''], 'decision' => [self::CODE_OR_ALL, 'all'], 'client' => [self::UUID_OR_ALL, 'all'], 'scope' => ['/^(current|all)$/D', 'current']], fn ($r, $o, $f) => $r->customerQuotes($o, $f));
+        return $this->run(['q' => [self::TEXT, ''], 'decision' => [self::CODE_OR_ALL, 'all'], 'client' => [self::UUID_OR_ALL, 'all'], 'scope' => ['/^(current|all)$/D', 'current'],
+            'status' => ['/^(all|draft|review|authorized|sent|approved|rejected|change_requested|superseded|expired|other)$/D', 'all']], fn ($r, $o, $f) => $r->customerQuotes($o, $f, (int) $this->actor['id']));
     }
     public function customerQuote(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->customerQuote($o, $i)); }
     /** Revisiones/modificaciones: client-quote families (Rev. 0 → Rev. N). Read-only; R3A eligibility is informative only. */
