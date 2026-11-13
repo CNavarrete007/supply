@@ -68,3 +68,14 @@ test('RFQ registrada: formato sin marca de vista previa y estatus traducido', ()
   assert.equal(registeredDoc({ item: { status: 'legacy_x', legacy_status: 'Cotizando' }, items: [] }).status, 'Cotizando');
   assert.equal(statusLabel('expired', true), 'Expired');
 });
+
+test('matriz por contacto: iniciales, % de respuesta, búsqueda y referencia', async () => {
+  const m = await import('../../src/views/quotes/rfq.mjs');
+  assert.equal(m.initials('KARLA BARBOSA CASTELLANOS'), 'KB'); assert.equal(m.initials('aime vega ibañez'), 'AV'); assert.equal(m.initials('Miguel'), 'M'); assert.equal(m.initials(null), 'SC');
+  assert.equal(m.responseRate({ rfqs: 56, responded: 35 }), 63); assert.equal(m.responseRate({ rfqs: 9, responded: 8 }), 89); assert.equal(m.responseRate({ rfqs: 0, responded: 0 }), 0);
+  const list = [{ name: 'Aimé Vega Ibáñez', email: 'aime.vega@x.invalid', phone: '8332140041' }, { name: 'Juan Vicente', email: 'vicente.ruiz@x.invalid', phone: '8331658967' }, { name: null, email: null, phone: null }];
+  assert.equal(m.filterContacts(list, 'AIME').length, 1); assert.equal(m.filterContacts(list, 'vicente.ruiz').length, 1); assert.equal(m.filterContacts(list, '8331658').length, 1);
+  assert.equal(m.filterContacts(list, '').length, 3); assert.equal(m.filterContacts(list, 'zzz').length, 0);
+  assert.equal(m.rfqReference({ internal_reference: 'OCE0001-26', project: 'TRION', requisition: 'REQ-1' }), 'OCE0001-26 · TRION');
+  assert.equal(m.rfqReference({ internal_reference: null, project: null, requisition: 'REQ-1' }), 'REQ-1');
+});

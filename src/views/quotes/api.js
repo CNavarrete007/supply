@@ -24,3 +24,5 @@ export const listRevisionFamilies = (o = {}, s) => getJson(`/api/v1/quotes/revis
 export const getRfqSetup = s => getJson('/api/v1/quotes/rfq-setup', s);
 export const listRfqRequisitions = (o = {}, s) => getJson(`/api/v1/quotes/rfq-requisitions?${qs({ page: 1, page_size: 50, ...o })}`, s);
 export const getRfqRequisition = (id, s) => one('/api/v1/quotes/rfq-requisitions', id, s);
+// Tarjeta 3 · Matriz de RFQ por contacto de compras (solo lectura).
+export const getRfqContacts = s => getJson('/api/v1/quotes/rfq-contacts', s);

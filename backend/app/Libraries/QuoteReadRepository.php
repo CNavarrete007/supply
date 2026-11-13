@@ -56,21 +56,56 @@ final class QuoteReadRepository
     private const REQ = ' JOIN requisitions r ON r.id=%1$s.requisition_id AND r.organization_id=%1$s.organization_id JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id';
     private const SUP = ' JOIN suppliers s ON s.id=%1$s.supplier_id AND s.organization_id=%1$s.organization_id JOIN business_entities se ON se.id=s.id AND se.organization_id=s.organization_id';
 
-    /** @param array{page:int,page_size:int,q:string,status:string,supplier:string} $f */
+    /** "Contacto de compras" of an RFQ: user (public id), historical name (legacy-<sha16>) or 'unassigned'. */
+    private static function rfqContact(string $a = 'f'): array
+    {
+        $snap = self::snapName("{$a}.contact_snapshot");
+        $person = static fn (string $col): string => "(SELECT p.{$col} FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id={$a}.internal_contact_user_id AND u.organization_id={$a}.organization_id)";
+        return [
+            'key' => "CASE WHEN {$a}.internal_contact_user_id IS NOT NULL THEN CONVERT((SELECT u.public_id FROM users u WHERE u.id={$a}.internal_contact_user_id AND u.organization_id={$a}.organization_id) USING utf8mb4)
+                WHEN NULLIF(TRIM({$snap}),'') IS NOT NULL THEN CONCAT('legacy-',LEFT(SHA2(TRIM({$snap}),256),16)) ELSE 'unassigned' END",
+            'name' => "COALESCE({$person('display_name')},NULLIF(TRIM({$snap}),''))",
+            'email' => "COALESCE({$person('email')},JSON_UNQUOTE(JSON_EXTRACT({$a}.contact_snapshot,'$.email')))",
+            'phone' => "COALESCE({$person('phone')},JSON_UNQUOTE(JSON_EXTRACT({$a}.contact_snapshot,'$.phone')))",
+        ];
+    }
+
+    /** Tarjeta 3: RFQ grouped by purchasing contact (cards) plus the "Todas las RFQ" totals. Read-only. */
+    public function rfqContacts(int $org): array
+    {
+        $c = self::rfqContact('f');
+        $responded = 'EXISTS (SELECT 1 FROM supplier_quotes q WHERE q.organization_id=f.organization_id AND q.rfq_id=f.id)';
+        $base = "SELECT {$c['key']} AS ck,{$c['name']} AS cname,{$c['email']} AS cemail,{$c['phone']} AS cphone,{$responded} AS answered,
+            (f.deadline<CURDATE() AND NOT {$responded}) AS late,f.supplier_id,f.requisition_id FROM rfqs f WHERE f.organization_id=?";
+        $rows = $this->rows("SELECT C.ck AS `key`,MAX(C.cname) AS name,MAX(C.cemail) AS email,MAX(C.cphone) AS phone,COUNT(*) AS rfqs,COALESCE(SUM(C.answered),0) AS responded,
+            COALESCE(SUM(C.late),0) AS overdue,COUNT(DISTINCT C.supplier_id) AS suppliers,COUNT(DISTINCT C.requisition_id) AS requisitions
+            FROM ({$base}) C GROUP BY C.ck ORDER BY rfqs DESC,C.ck='unassigned',name", [$org]);
+        foreach ($rows as &$r) { foreach (['rfqs', 'responded', 'overdue', 'suppliers', 'requisitions'] as $k) { $r[$k] = (int) $r[$k]; } }
+        unset($r);
+        $all = $this->rows("SELECT COUNT(*) AS rfqs,COALESCE(SUM(C.answered),0) AS responded,COALESCE(SUM(C.late),0) AS overdue,COUNT(DISTINCT C.supplier_id) AS suppliers,
+            COUNT(DISTINCT C.requisition_id) AS requisitions FROM ({$base}) C", [$org])[0] ?? [];
+        return ['contacts' => $rows, 'all' => array_map('intval', $all) + ['contacts' => count($rows)]];
+    }
+
+    /** @param array{page:int,page_size:int,q:string,status:string,supplier:string,contact?:string} $f */
     public function rfqs(int $org, array $f): array
     {
+        $ct = self::rfqContact('f');
         $from = 'FROM rfqs f JOIN business_entities e ON e.id=f.id AND e.organization_id=f.organization_id' . sprintf(self::REQ, 'f') . sprintf(self::SUP, 'f');
         $where = 'f.organization_id=?';
         $binds = [$org];
         if ($f['status'] !== 'all') { $where .= ' AND f.status_code=?'; $binds[] = $f['status']; }
         if ($f['supplier'] !== 'all') { $where .= ' AND se.public_id=?'; $binds[] = $f['supplier']; }
-        [$sq, $sb] = self::search($f['q'], ['f.folio', 'r.folio', 's.legal_name', 'c.legal_name', 'f.legacy_status']);
+        if (($f['contact'] ?? 'all') !== 'all') { $where .= " AND ({$ct['key']})=?"; $binds[] = $f['contact']; }
+        [$sq, $sb] = self::search($f['q'], ['f.folio', 'r.folio', 's.legal_name', 'c.legal_name', 'f.legacy_status', 'r.internal_reference']);
+        $buyer = "(SELECT COALESCE((SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=rv.buyer_user_id AND u.organization_id=rv.organization_id)," . self::snapName('rv.buyer_snapshot') . ")
+            FROM requisition_reviews rv WHERE rv.organization_id=f.organization_id AND rv.requisition_id=f.requisition_id ORDER BY rv.id DESC LIMIT 1)";
         $responded = 'EXISTS (SELECT 1 FROM supplier_quotes q WHERE q.organization_id=f.organization_id AND q.rfq_id=f.id)';
         $res = $this->page("e.public_id AS id,f.folio,f.request_date,f.deadline,f.required_date,f.currency_code AS currency,f.status_code AS status,f.legacy_status,
             r.folio AS requisition,c.legal_name AS client_name,se.public_id AS supplier_id,s.legal_name AS supplier_name,
             (SELECT COUNT(*) FROM rfq_items it WHERE it.organization_id=f.organization_id AND it.rfq_id=f.id) AS item_count,
             {$responded} AS responded,(SELECT q.folio FROM supplier_quotes q WHERE q.organization_id=f.organization_id AND q.rfq_id=f.id ORDER BY q.id LIMIT 1) AS quote_folio,
-            (SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=f.internal_contact_user_id AND u.organization_id=f.organization_id) AS contact_name",
+            {$ct['name']} AS contact_name,{$ct['key']} AS contact_key,r.internal_reference,r.project_reference_snapshot AS project,{$buyer} AS buyer_name",
             $from, $where . $sq, [...$binds, ...$sb], 'COALESCE(f.request_date,DATE(e.created_at)) DESC,f.id DESC', $f);
         foreach ($res['items'] as &$i) { $i['item_count'] = (int) $i['item_count']; $i['responded'] = (bool) $i['responded']; }
         unset($i);

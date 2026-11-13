@@ -119,3 +119,20 @@ ${doc.preview ? `<div class="wm">${L('VISTA PREVIA · NO REGISTRADA', 'PREVIEW �
 <div class="foot">${L('Favor de referenciar', 'Please reference')} <strong>${e(doc.folio || '—')}</strong> ${L('en su propuesta · Esta solicitud no incluye precios: el proveedor los indica en su cotización.', 'in your proposal · This request has no prices: the supplier states them in its quote.')}</div>
 </body></html>`;
 }
+
+// ---- Tarjeta 3 · Matriz de RFQ por contacto de compras ----
+/** Avatar initials: first letter of the first two words ("KARLA BARBOSA CASTELLANOS" → "KB"). */
+export function initials(name) {
+  const w = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return w.length ? (w[0][0] + (w[1]?.[0] || '')).toUpperCase() : 'SC';
+}
+/** Response rate (%) = answered RFQs / RFQs, rounded. */
+export const responseRate = c => (c && c.rfqs ? Math.round((Number(c.responded) / Number(c.rfqs)) * 100) : 0);
+/** Client-side filter of the contact cards by name, e-mail or phone (accent/case-insensitive). */
+export function filterContacts(list = [], q = '') {
+  const f = v => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const n = f(q).trim();
+  return n ? list.filter(c => [c.name, c.email, c.phone].some(v => f(v).includes(n))) : list;
+}
+/** Reference column: internal reference (or requisition folio) · project. */
+export const rfqReference = r => [r.internal_reference || r.requisition, r.project].filter(Boolean).join(' · ');

@@ -21,8 +21,9 @@ function useLoad(fn, deps, enabled = true) {
 }
 const qty = v => (Number.isFinite(Number(v)) ? Number(v).toLocaleString('es-MX', { maximumFractionDigits: 6 }) : String(v ?? '—'));
 
-export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, refresh = 0 }) {
+export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, refresh = 0, docLang }) {
   const tx = (es, e) => (en ? e : es);
+  const docEn = docLang ? docLang === 'en' : en; // "Idioma de RFQ" (tarjeta 3) rige el formato
   const [form, setForm] = useState(() => emptyRfq(localToday(), en));
   const [errors, setErrors] = useState({});
   const [generated, setGenerated] = useState(false);
@@ -65,8 +66,8 @@ export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, ref
     setGenerated(true);
     notify?.(tx('Partidas habilitadas', 'Items enabled'), tx(`Se habilitaron las partidas para ${supplierOpt?.name || ''}.`, `Items enabled for ${supplierOpt?.name || ''}.`), 'success');
   };
-  const doc = useMemo(() => previewDoc({ form, folio, req: R, items, selected, supplier: sup.data?.item ? { ...sup.data.item, name: sup.data.item.name || supplierOpt?.name } : supplierOpt, contact }, en), [form, folio, R, items, selected, sup.data, supplierOpt, contact, en]);
-  const html = useMemo(() => rfqDocHtml(doc, en), [doc, en]);
+  const doc = useMemo(() => previewDoc({ form, folio, req: R, items, selected, supplier: sup.data?.item ? { ...sup.data.item, name: sup.data.item.name || supplierOpt?.name } : supplierOpt, contact }, docEn), [form, folio, R, items, selected, sup.data, supplierOpt, contact, docEn]);
+  const html = useMemo(() => rfqDocHtml(doc, docEn), [doc, docEn]);
   const print = () => {
     const w = window.open('', '_blank', 'width=900,height=1000');
     if (!w) { notify?.(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; }

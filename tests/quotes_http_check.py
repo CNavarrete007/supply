@@ -24,7 +24,7 @@ def logout(op):
     try:
         tok = json.loads(op.open(API + '/api/v1/auth/csrf').read())['csrf_token']; op.open(urllib.request.Request(API + '/api/v1/auth/logout', b'{}', {'Content-Type': 'application/json', 'X-SF-CSRF': tok}))
     except Exception: pass
-LISTS = ['/rfqs', '/supplier-quotes', '/comparison', '/customer-quotes', '/awards', '/revisions', '/rfq-setup', '/rfq-requisitions']
+LISTS = ['/rfqs', '/supplier-quotes', '/comparison', '/customer-quotes', '/awards', '/revisions', '/rfq-setup', '/rfq-requisitions', '/rfq-contacts']
 EPS = [R + p for p in LISTS]
 anon = session(); check('sin sesión: 401', all(status(anon, p) == 401 for p in EPS + [f'{R}/rfqs/{ZERO}']))
 if NONADMIN:
@@ -36,7 +36,7 @@ try:
     for bad in ['/rfqs?x=1', '/rfqs?page_size=51', '/rfqs?supplier=abc', '/supplier-quotes?status=%27or', '/comparison?requisition=abc', '/comparison?page=1',
                 '/customer-quotes?scope=x', '/customer-quotes?client=1', '/awards?status=%27x', f'/rfqs/{ZERO}?a=1',
                 '/revisions?status=superseded', '/revisions?client=1', '/revisions?page_size=51', '/revisions?q=%01',
-                '/rfq-setup?x=1', '/rfq-setup?page=1', '/rfq-requisitions?buyer=abc', '/rfq-requisitions?buyer=legacy-xyz', '/rfq-requisitions?supplier=all', f'/rfq-requisitions/{ZERO}?a=1']:
+                '/rfq-setup?x=1', '/rfq-setup?page=1', '/rfq-requisitions?buyer=abc', '/rfq-requisitions?buyer=legacy-xyz', '/rfq-requisitions?supplier=all', f'/rfq-requisitions/{ZERO}?a=1', '/rfq-contacts?page=1', '/rfq-contacts?x=1', '/rfqs?contact=abc', '/rfqs?contact=legacy-12']:
         check(f'422 con parámetro inválido ({bad})', status(adm, R + bad) == 422)
     check('detalle con UUID inexistente: 404', all(status(adm, f'{R}{p}/{ZERO}') == 404 for p in ['/rfqs', '/supplier-quotes', '/customer-quotes', '/rfq-requisitions']))
     check('detalle con identificador no UUID: 404', status(adm, R + '/rfqs/abc') == 404)
@@ -88,6 +88,16 @@ try:
             check('revisiones: otro Master Admin no puede solicitar sobre requisiciones ajenas', all(other[i['id']]['change_block'] == 'not_owner' for i in mine), [i['series'] for i in mine])
         finally:
             logout(o2)
+    # Tarjeta 3 · RFQ por contacto de compras: tarjetas = matriz filtrada por contacto.
+    rc = get(f'{R}/rfq-contacts'); A = rc['all']
+    check('RFQ por contacto: Todas = resumen de la matriz', A['rfqs'] == rf['summary']['total'] and A['responded'] == rf['summary']['responded'] and A['overdue'] == rf['summary']['overdue'] and A['contacts'] == len(rc['contacts']))
+    check('RFQ por contacto: suma de contactos = total y claves únicas', sum(c['rfqs'] for c in rc['contacts']) == A['rfqs'] and len({c['key'] for c in rc['contacts']}) == len(rc['contacts']))
+    check('RFQ por contacto: métricas coherentes', all(0 <= c['responded'] <= c['rfqs'] and 0 <= c['overdue'] <= c['rfqs'] - c['responded'] and 1 <= c['suppliers'] <= c['rfqs'] and 1 <= c['requisitions'] <= c['rfqs'] for c in rc['contacts']))
+    for c in rc['contacts'][:6]:
+        lst = get(f"{R}/rfqs?page_size=50&contact={c['key']}")
+        check(f"RFQ del contacto {c['name'] or c['key']}: filtro en servidor", lst['total'] == c['rfqs'] and all(i['contact_key'] == c['key'] for i in lst['items']) and sum(i['responded'] for i in lst['items']) == c['responded'] if c['rfqs'] <= 50 else lst['total'] == c['rfqs'])
+    check('RFQ: columnas de la matriz (referencia, comprador, contacto)', all({'internal_reference', 'project', 'buyer_name', 'contact_name', 'contact_key'} <= set(i) for i in rf['items']))
+
     # Tarjeta 2 · RFQ: compradores de la validación, requisiciones validadas por comprador y su detalle (solo lectura).
     st = get(f'{R}/rfq-setup'); allreq = get(f'{R}/rfq-requisitions?page_size=50')
     check('RFQ setup: compradores cubren todas las requisiciones validadas', sum(b['requisitions'] for b in st['buyers']) == allreq['total'] and len({b['key'] for b in st['buyers']}) == len(st['buyers']))

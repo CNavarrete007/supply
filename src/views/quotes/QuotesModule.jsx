@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
-import { listRfqs, getRfq, listSupplierQuotes, getSupplierQuote, getComparison, listCustomerQuotes, getCustomerQuote, listAwards, listRevisionFamilies } from './api';
-import { money, label, tone, comparisonView, rfqState, customerQuoteHtml, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
+import { listSupplierQuotes, getSupplierQuote, getComparison, listCustomerQuotes, getCustomerQuote, listAwards, listRevisionFamilies } from './api';
+import { money, label, tone, comparisonView, customerQuoteHtml, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
 import { ChangeRequestModal } from '../recovery/ChangeRequestModal';
 import { RfqRequestCard } from './RfqRequestCard';
-import { registeredDoc, rfqDocHtml } from './rfq.mjs';
+import { RfqMatrixCard } from './RfqMatrixCard';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
 // Cotizaciones y Comparativo · diseño Grupo Gerez (11 tarjetas) conectado a MariaDB en modo consulta.
@@ -57,9 +57,8 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
   const [changeFor, setChangeFor] = useState(null);
   const [blocked, setBlocked] = useState(null);
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
-  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setClient('all'); setDecision('all'); setRevStatus('all'); setRfqId(''); };
+  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setClient('all'); setDecision('all'); setRevStatus('all'); };
 
-  const rfqs = useLoad(s => listRfqs({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 3);
   const sqs = useLoad(s => listSupplierQuotes({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 4 || tab === 11);
   const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: 'current' }, s), [tab, page, q, client, decision, rev], [6, 7, 8, 9].includes(tab));
   const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
@@ -68,7 +67,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
   const compList = useLoad(s => getComparison('all', s), [tab, rev], tab === 5);
   const [compReq, setCompReq] = useState('');
   const comp = useLoad(s => getComparison(compReq, s), [compReq, rev], tab === 5 && !!compReq);
-  const [rfqId, setRfqId] = useState(''); const rfq = useLoad(s => getRfq(rfqId, s), [rfqId, rev], tab === 3 && !!rfqId);
+  const [rfqLang, setRfqLang] = useState(en ? 'en' : 'es');
   const [cqId, setCqId] = useState(''); const cq = useLoad(s => getCustomerQuote(cqId, s), [cqId, rev], [6, 7, 9].includes(tab) && !!cqId);
   const [sqId, setSqId] = useState(''); const sq = useLoad(s => getSupplierQuote(sqId, s), [sqId, rev], tab === 11 && !!sqId);
   const cmp = useMemo(() => comparisonView(comp.data?.lines || []), [comp.data]);
@@ -164,23 +163,9 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify }) {
     {changeFor && <ChangeRequestModal requisitionId={changeFor.requisition_id} en={en} context={{ requisition: changeFor.requisition, client: changeFor.client_name, quoteFolio: changeFor.current_folio, currentRev: changeFor.current_rev }}
       onClose={() => setChangeFor(null)} onCreated={() => setRev(n => n + 1)} onNotify={notify} />}
 
-    {tab === 2 && <RfqRequestCard en={en} notify={notify} onOpenMatrix={() => go(3)} lockText={LOCK} refresh={rev} />}
+    {tab === 2 && <RfqRequestCard en={en} notify={notify} onOpenMatrix={() => go(3)} lockText={LOCK} refresh={rev} docLang={rfqLang} />}
 
-    {tab === 3 && <div className={box}>{head(tx('Matriz de RFQ', 'RFQ matrix'), tx('Solicitudes enviadas, fechas límite y respuestas recibidas.', 'Sent requests, deadlines and responses received.'), <span className="text-xs font-bold"><button type="button" onClick={() => go(2)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex items-center gap-1.5">{tx('Nueva RFQ', 'New RFQ')}</button></span>)}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">{[[rfqs.data?.summary?.total, tx('RFQ registradas', 'RFQs recorded'), 'border-l-blue-600'], [rfqs.data?.summary?.responded, tx('Con respuesta del proveedor', 'With supplier response'), 'border-l-emerald-500'], [rfqs.data?.summary?.overdue, tx('Vencidas sin respuesta', 'Overdue without response'), 'border-l-rose-500']].map(([n, l, c]) => <div key={l} className={`p-4 rounded-xl border border-slate-100 border-l-4 ${c} bg-slate-50/40`}><div className="text-2xl font-black text-slate-900 tabular-nums">{n ?? '…'}</div><div className="text-xs text-slate-600 font-medium">{l}</div></div>)}</div>
-      <div className="flex flex-wrap gap-3">{searchBox(tx('Buscar RFQ, requisición, proveedor o cliente...', 'Search RFQ, requisition, supplier or client...'))}</div>
-      <Wait s={rfqs} /><Err s={rfqs} />
-      {table(['RFQ', tx('Requisición', 'Requisition'), tx('Proveedor', 'Supplier'), tx('Solicitud', 'Request'), tx('Fecha límite', 'Deadline'), tx('Partidas', 'Items'), tx('Estatus', 'Status'), tx('Respuesta', 'Response'), tx('Contacto', 'Contact'), tx('Formato', 'Format')], (rfqs.data?.items || []).map(r => { const st = rfqState(r, day); return <tr key={r.id} className="align-top"><td className="py-2.5 px-3 font-black">{r.folio}</td><td className="py-2.5 px-3">{r.requisition}<div className="text-[10px] text-slate-400">{r.client_name}</div></td><td className="py-2.5 px-3">{r.supplier_name}</td><td className="py-2.5 px-3">{ymd(r.request_date)}</td><td className="py-2.5 px-3">{ymd(r.deadline)}</td><td className="py-2.5 px-3 text-center">{r.item_count}</td><td className="py-2.5 px-3">{pill(r.status)}</td><td className="py-2.5 px-3">{pill(st === 'answered' ? 'approved' : st === 'overdue' ? 'expired' : 'pending', st === 'answered' ? `${tx('Respondida', 'Answered')} · ${r.quote_folio}` : st === 'overdue' ? tx('Vencida', 'Overdue') : tx('En espera', 'Waiting'))}</td><td className="py-2.5 px-3">{show(r.contact_name)}</td><td className="py-2.5 px-3 text-[11px] font-bold"><button type="button" onClick={() => setRfqId(r.id)} aria-label={`${tx('Ver formato', 'View format')} ${r.folio}`} className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">{tx('Ver', 'View')}</button></td></tr>; }), tx('No hay RFQ registradas.', 'No RFQs recorded.'))}
-      {pager(rfqs)}
-    </div>}
-
-    {tab === 3 && rfqId && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onMouseDown={e => { if (e.target === e.currentTarget) setRfqId(''); }}>
-      <div role="dialog" aria-modal="true" aria-label={tx('Formato de RFQ', 'RFQ format')} data-testid="rfq-doc" className="bg-white w-full max-w-5xl h-[92vh] rounded-xl shadow-2xl flex flex-col overflow-hidden">
-        <div className="bg-[#1e4a7a] px-5 py-3 flex justify-between items-center shrink-0 gap-3"><h2 className="text-white font-bold text-sm truncate">{tx('Solicitud de cotización', 'Request for quotation')} · {rfq.data?.item?.folio || '…'}</h2>
-          <div className="flex gap-2 text-xs font-bold"><button type="button" disabled={!rfq.data} onClick={() => { const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(rfqDocHtml(registeredDoc(rfq.data, en), en)); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); }} className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-1.5 rounded flex items-center gap-1.5 disabled:opacity-50"><Printer className="w-3.5 h-3.5" />{tx('Imprimir PDF', 'Print PDF')}</button><button type="button" onClick={() => setRfqId('')} className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-1.5 rounded flex items-center gap-1.5"><X className="w-3.5 h-3.5" />{tx('Cerrar', 'Close')}</button></div></div>
-        <div className="flex-1 overflow-hidden bg-slate-200/50 p-3 sm:p-6"><Wait s={rfq} /><Err s={rfq} />{rfq.data && <iframe title={tx('Formato de RFQ', 'RFQ format')} srcDoc={rfqDocHtml(registeredDoc(rfq.data, en), en)} sandbox="" className="w-full h-full rounded-lg border border-slate-200 bg-white" />}</div>
-      </div>
-    </div>}
+    {tab === 3 && <RfqMatrixCard en={en} notify={notify} onNewRfq={() => go(2)} docLang={rfqLang} onDocLang={setRfqLang} refresh={rev} />}
 
     {(tab === 4 || tab === 11) && <div className={box}>{head(tab === 4 ? tx('Cotizaciones recibidas', 'Received quotes') : tx('Matriz interna de proveedores', 'Internal suppliers matrix'), tab === 4 ? tx('Ofertas devueltas por los proveedores, con su RFQ de origen.', 'Offers returned by suppliers, with their source RFQ.') : tx('Ofertas originales con costos y partidas (uso interno; no se muestran al cliente).', 'Original offers with costs and items (internal use; never shown to the client).'), tab === 4 ? lockBtn(tx('Capturar cotización', 'Capture quote')) : null)}
       {tab === 4 && <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">{[{ id: 'all', name: tx('Todas las cotizaciones', 'All quotes'), total: (sqs.data?.summary?.suppliers || []).reduce((n, x) => n + x.total, 0), awarded: (sqs.data?.summary?.suppliers || []).reduce((n, x) => n + x.awarded, 0), active: (sqs.data?.summary?.suppliers || []).reduce((n, x) => n + x.active, 0) }, ...(sqs.data?.summary?.suppliers || [])].map(c => <button key={c.id} type="button" aria-pressed={supplier === c.id} onClick={() => { setSupplier(c.id); setPage(1); }} className={`text-left p-3 rounded-2xl border bg-white ${supplier === c.id ? 'border-purple-500 ring-2 ring-purple-500/10' : 'border-slate-200 hover:border-purple-300'}`}><div className="text-[11px] font-extrabold text-slate-800 truncate" title={c.name}>{c.name}</div><div className="grid grid-cols-3 gap-1 mt-2 text-center">{[[c.total, tx('Total', 'Total')], [c.awarded, tx('Adjudicadas', 'Awarded')], [c.active, tx('Activas', 'Active')]].map(([n, l]) => <div key={l}><span className="block text-sm font-black tabular-nums">{n}</span><span className="block text-[9px] text-slate-400">{l}</span></div>)}</div></button>)}</div>}

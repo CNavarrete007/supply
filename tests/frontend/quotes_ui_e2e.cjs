@@ -41,36 +41,79 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const aw = await api('/api/v1/quotes/awards?page=1&page_size=50');
     const comp = await api('/api/v1/quotes/comparison?requisition=all');
 
-    // 3 · Matriz de RFQ (tarjeta por defecto)
-    const first = page.waitForResponse(r => /\/api\/v1\/quotes\/rfqs\?page=1/.test(r.url()));
+    // 3 · Matriz de RFQ por contacto de compras (tarjeta por defecto)
+    const first = page.waitForResponse(r => /\/api\/v1\/quotes\/rfq-contacts$/.test(r.url()));
     await page.locator('nav button').filter({ hasText: /Cotizaciones y Comparativo$/ }).click();
-    check('matriz de RFQ consulta MariaDB (200)', (await first).status() === 200);
+    check('contactos de RFQ consultan MariaDB (200)', (await first).status() === 200);
     check('sin aviso de "pendiente de integración"', await page.getByText('Módulo pendiente de integración').count() === 0);
     for (const t of ['Revisiones/modificaciones', 'Solicitud a proveedores (RFQ)', 'Matriz de RFQ', 'Cotizaciones recibidas', 'Comparativo y selección preliminar', 'Cotización al cliente', 'Formato para el cliente', 'Matriz de cotizaciones al cliente', 'Decisión del cliente', 'Adjudicación definitiva', 'Matriz interna de proveedores'])
       check(`tarjeta "${t}" visible`, await page.getByRole('button', { name: new RegExp(t.replace(/[()]/g, '\\$&')) }).first().isVisible());
     check('aviso de modo consulta visible', await page.getByText(/Modo consulta MariaDB: enviar RFQ/).isVisible());
+    const rc = await api('/api/v1/quotes/rfq-contacts');
+    await page.getByTestId('rfq-contact').first().waitFor();
+    check('una tarjeta por contacto de compras más "Todas las RFQ"', await page.getByTestId('rfq-contact').count() === rc.contacts.length && await page.getByTestId('rfq-contact-all').isVisible());
+    check('"Todas las RFQ" cuadra con el resumen de la matriz', rc.all.rfqs === rfqs.summary.total && rc.all.responded === rfqs.summary.responded && rc.all.overdue === rfqs.summary.overdue && rc.contacts.reduce((n, c) => n + c.rfqs, 0) === rc.all.rfqs);
+    const pctOf = c => (c.rfqs ? Math.round(c.responded / c.rfqs * 100) : 0);
+    const allText = flat(await page.getByTestId('rfq-contact-all').innerText());
+    check('tarjeta Todas: RFQ, respondidas, vencidas, proveedores y % de respuesta', [`${rc.all.contacts} contactos de compras`, `${rc.all.rfqs} RFQ`, `${rc.all.responded} Respondidas`, `${rc.all.overdue} Vencidas`, `${rc.all.suppliers} proveedores`, `Respuesta ${pctOf(rc.all)}%`].every(x => allText.includes(x)), allText);
+    const c0 = rc.contacts.find(c => c.name && c.email) || rc.contacts[0];
+    const c0Card = page.getByTestId('rfq-contact').filter({ hasText: c0.email || c0.name.toUpperCase() });
+    const c0Text = flat(await c0Card.innerText());
+    check('tarjeta de contacto: nombre, correo, métricas, proveedores y requisiciones', [c0.name.toUpperCase(), `${c0.rfqs} RFQ`, `${c0.responded} Respondidas`, `${c0.overdue} Vencidas`, `${c0.suppliers} proveedores · ${c0.requisitions} requisiciones`, `Respuesta ${pctOf(c0)}%`].every(x => c0Text.includes(x)) && (!c0.email || c0Text.includes(c0.email)), c0Text);
+    if (rc.contacts.some(c => c.key === 'unassigned')) check('RFQ sin contacto agrupadas en "Sin contacto asignado"', await page.getByTestId('rfq-contact').filter({ hasText: 'SIN CONTACTO ASIGNADO' }).count() === 1);
+    await page.getByRole('searchbox', { name: 'Buscar contacto de compras' }).fill(c0.name.slice(0, 6).toLowerCase());
+    const expectedMatch = rc.contacts.filter(c => [c.name, c.email, c.phone].some(v => String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().includes(c0.name.slice(0, 6).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()))).length;
+    check('búsqueda de contactos por nombre/correo/teléfono', (await page.getByTestId('rfq-contact-count').innerText()).startsWith(`${expectedMatch} de ${rc.contacts.length} contactos`) && await page.getByTestId('rfq-contact').count() === expectedMatch);
+    await page.getByRole('searchbox', { name: 'Buscar contacto de compras' }).fill('zzz-sin-contacto');
+    check('búsqueda de contactos sin resultados', await page.getByText('Ningún contacto coincide con la búsqueda.').isVisible());
+    await page.getByRole('searchbox', { name: 'Buscar contacto de compras' }).fill('');
+    await shot(page, 'cot_3_contactos_rfq');
+    const byContact = page.waitForResponse(r => /\/quotes\/rfqs\?.*contact=/.test(r.url()) && r.url().includes(`contact=${c0.key}`));
+    await c0Card.click();
+    const bc = await byContact;
+    check('abrir contacto filtra la matriz en el servidor (200)', bc.status() === 200);
+    const bcJson = await bc.json();
+    await page.getByTestId('rfq-matrix').waitFor();
+    check('matriz del contacto: solo sus RFQ', bcJson.total === c0.rfqs && bcJson.items.every(r => r.contact_key === c0.key) && await page.getByTestId('rfq-row').count() === Math.min(c0.rfqs, 25));
+    check('matriz: total de solicitudes del contacto', flat(await page.getByTestId('rfq-matrix').innerText()).includes(`Total de solicitudes: ${c0.rfqs}`));
+    const allResp = page.waitForResponse(r => /\/quotes\/rfqs\?.*contact=all/.test(r.url()));
+    await page.getByTestId('rfq-contact-all').click();
+    check('"Abrir todas" consulta toda la matriz (200)', (await allResp).status() === 200);
     await page.getByRole('row').filter({ hasText: rfqs.items[0].folio }).waitFor();
-    const counters = flat(await page.locator('text=RFQ registradas').locator('..').innerText());
-    check('contador de RFQ registradas desde el servidor', counters.includes(String(rfqs.summary.total)), counters);
     const overdue = rfqs.items.find(r => !r.responded && r.deadline < new Date().toISOString().slice(0, 10));
     const answered = rfqs.items.find(r => r.responded);
     check('RFQ vencida sin respuesta marcada', overdue && flat(await page.getByRole('row').filter({ hasText: overdue.folio }).innerText()).includes('Vencida'));
     check('RFQ respondida muestra la cotización', answered && flat(await page.getByRole('row').filter({ hasText: answered.folio }).innerText()).includes(`Respondida · ${answered.quote_folio}`));
+    const rowA = rfqs.items[0];
+    const rowText = flat(await page.getByRole('row').filter({ hasText: rowA.folio }).innerText());
+    check('fila: requisición, referencia, comprador, proveedor, fechas y moneda', [rowA.requisition, rowA.supplier_name, rowA.request_date, rowA.deadline, rowA.currency, rowA.buyer_name || '—'].every(x => rowText.includes(String(x).slice(0, 10))), rowText);
     const searched = page.waitForResponse(r => /\/quotes\/rfqs\?.*q=RFQ-QA-0004/.test(r.url()));
-    await page.getByRole('searchbox', { name: 'Buscar' }).fill('RFQ-QA-0004');
+    await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill('RFQ-QA-0004');
     check('búsqueda en el servidor (200)', (await searched).status() === 200);
     await page.getByText('1 registros').waitFor();
     await shot(page, 'cot_3_matriz_rfq');
 
-    // 3 · "Ver" abre el formato de una RFQ registrada (sin precios)
+    // 3 · "Ver" abre el formato de una RFQ registrada (sin precios) en el idioma de RFQ elegido
     const rfqDoc = page.waitForResponse(r => /\/quotes\/rfqs\/[0-9a-f-]{36}$/.test(r.url()));
     await page.getByRole('button', { name: 'Ver formato RFQ-QA-0004' }).click();
     check('detalle de RFQ (200)', (await rfqDoc).status() === 200);
     const rq4 = rfqs.items.find(r => r.folio === 'RFQ-QA-0004');
     const docText = flat(await page.getByTestId('rfq-doc').frameLocator('iframe').locator('body').innerText());
-    check('RFQ registrada: folio, proveedor, requisición, partida y sin precios', ['RFQ-QA-0004', rq4.supplier_name, rq4.requisition, 'Material sintético', 'no incluye precios'].every(x => docText.includes(x)) && !/\$\d|precio unitario/i.test(docText) && !docText.includes('NO REGISTRADA'), docText.slice(0, 300));
+    check('RFQ registrada: folio, proveedor, requisición, partida y sin precios', ['RFQ-QA-0004', rq4.supplier_name, rq4.requisition, 'Material sintético', 'no incluye precios', 'SOLICITUD DE COTIZACIÓN'].every(x => docText.includes(x)) && !/\$\d|precio unitario/i.test(docText) && !docText.includes('NO REGISTRADA'), docText.slice(0, 300));
     check('RFQ registrada aislada en iframe sandbox', (await page.getByTestId('rfq-doc').locator('iframe').getAttribute('sandbox')) === '');
     await page.getByTestId('rfq-doc').getByRole('button', { name: 'Cerrar' }).click();
+    await page.getByRole('combobox', { name: 'Idioma de RFQ / RFQ language' }).selectOption('en');
+    check('indicador del idioma del PDF', await page.getByText('PDF: 100% in the selected language').isVisible());
+    await page.getByRole('button', { name: 'Ver formato RFQ-QA-0004' }).click();
+    const docEn = flat(await page.getByTestId('rfq-doc').frameLocator('iframe').locator('body').innerText());
+    check('formato en inglés al elegir English', docEn.includes('REQUEST FOR QUOTATION') && docEn.includes('Reply before') && !docEn.includes('SOLICITUD DE COTIZACIÓN'), docEn.slice(0, 200));
+    await page.getByTestId('rfq-doc').getByRole('button', { name: 'Cerrar' }).click();
+    await page.getByRole('combobox', { name: 'Idioma de RFQ / RFQ language' }).selectOption('es');
+    await page.getByRole('button', { name: 'Cerrar matriz' }).click();
+    check('✕ cierra la matriz y deja las tarjetas', await page.getByTestId('rfq-matrix').count() === 0 && await page.getByTestId('rfq-contact-all').isVisible());
+    await c0Card.click(); await page.getByTestId('rfq-matrix').waitFor();
+    await page.getByRole('button', { name: /Volver a contactos/ }).click();
+    check('"Volver a contactos" cierra la matriz', await page.getByTestId('rfq-matrix').count() === 0);
 
     // 2 · Solicitud a proveedores (RFQ): formulario con datos reales → partidas y vista previa; guardar sigue bloqueado
     const setup = await api('/api/v1/quotes/rfq-setup');
