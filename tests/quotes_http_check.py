@@ -36,7 +36,7 @@ try:
     for bad in ['/rfqs?x=1', '/rfqs?page_size=51', '/rfqs?supplier=abc', '/supplier-quotes?status=%27or', '/comparison?requisition=abc', '/comparison?page=1',
                 '/customer-quotes?scope=x', '/customer-quotes?client=1', '/awards?status=%27x', f'/rfqs/{ZERO}?a=1',
                 '/revisions?status=superseded', '/revisions?client=1', '/revisions?page_size=51', '/revisions?q=%01',
-                '/rfq-setup?x=1', '/rfq-setup?page=1', '/rfq-requisitions?buyer=abc', '/rfq-requisitions?buyer=legacy-xyz', '/rfq-requisitions?supplier=all', f'/rfq-requisitions/{ZERO}?a=1', '/rfq-contacts?page=1', '/rfq-contacts?x=1', '/rfqs?contact=abc', '/rfqs?contact=legacy-12']:
+                '/rfq-setup?x=1', '/rfq-setup?page=1', '/rfq-requisitions?buyer=abc', '/rfq-requisitions?buyer=legacy-xyz', '/rfq-requisitions?supplier=all', f'/rfq-requisitions/{ZERO}?a=1', '/rfq-contacts?page=1', '/rfq-contacts?x=1', '/rfqs?contact=abc', '/rfqs?contact=legacy-12', '/rfq-requisitions?rfq=all', '/rfq-requisitions?rfq=']:
         check(f'422 con parámetro inválido ({bad})', status(adm, R + bad) == 422)
     check('detalle con UUID inexistente: 404', all(status(adm, f'{R}{p}/{ZERO}') == 404 for p in ['/rfqs', '/supplier-quotes', '/customer-quotes', '/rfq-requisitions']))
     check('detalle con identificador no UUID: 404', status(adm, R + '/rfqs/abc') == 404)
@@ -111,6 +111,14 @@ try:
         sent = {x['rfq'] for it in d['items'] for x in it['sent_to']}
         check(f"RFQ {i['folio']}: partidas vigentes, RFQ y envíos coherentes", len(d['items']) == i['item_count'] and len(d['rfqs']) == i['rfq_count'] and sent <= {x['folio'] for x in d['rfqs']} and d['item']['folio'] == i['folio'])
         check(f"RFQ {i['folio']}: sin precios ni importes", not re.search(r'price|amount|cost|subtotal', json.dumps(d), re.I))
+    # Tarjeta 4 · Registro de cotización: solo requisiciones validadas con RFQ; RFQ con proveedor, moneda y cotizaciones.
+    withr = get(f'{R}/rfq-requisitions?page_size=50&rfq=with')
+    check('Registro: rfq=with ⊆ validadas y todas con RFQ', withr['total'] <= allreq['total'] and all(i['rfq_count'] > 0 for i in withr['items']) and withr['total'] == sum(1 for i in allreq['items'] if i['rfq_count'] > 0) if allreq['total'] <= 50 else all(i['rfq_count'] > 0 for i in withr['items']))
+    for i in withr['items'][:5]:
+        d = get(f"{R}/rfq-requisitions/{i['id']}")
+        rq = {x['folio']: x for x in rf['items']} if rf['total'] <= 50 else {}
+        check(f"Registro {i['folio']}: RFQ con proveedor, moneda y cotizaciones", d['rfqs'] and all(x['supplier_code'] and x['currency'] in ('MXN', 'USD', 'EUR') for x in d['rfqs'])
+              and all((x['quote_folios'] is not None) == rq[x['folio']]['responded'] for x in d['rfqs'] if x['folio'] in rq))
     if rf['items']:
         d = get(f"{R}/rfqs/{rf['items'][0]['id']}")
         check('RFQ registrada: contacto y referencias para el formato', {'contact_name', 'contact_email', 'contact_phone', 'internal_reference', 'project', 'contract'} <= set(d['item']))

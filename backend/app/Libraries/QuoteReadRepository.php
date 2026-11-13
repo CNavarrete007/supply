@@ -199,6 +199,8 @@ final class QuoteReadRepository
         $where = 're.archived_at IS NULL';
         $binds = [$org];
         if ($f['buyer'] !== 'all') { $where .= ' AND V.buyer_key=?'; $binds[] = $f['buyer']; }
+        // Tarjeta 4 (registro de cotización) only lists validated requisitions that already have an RFQ.
+        if (($f['rfq'] ?? 'any') === 'with') { $where .= ' AND EXISTS (SELECT 1 FROM rfqs fx WHERE fx.organization_id=r.organization_id AND fx.requisition_id=r.id)'; }
         [$sq, $sb] = self::search($f['q'], ['r.folio', 'c.legal_name', 'r.internal_reference', 'r.description', 'V.review_folio']);
         $res = $this->page(self::RFQ_REQ_FIELDS, $from, $where . $sq, [...$binds, ...$sb], 'has_po,r.request_date DESC,r.id DESC', $f);
         $res['items'] = array_map(self::rfqReqRow(...), $res['items']);
@@ -224,8 +226,9 @@ final class QuoteReadRepository
         }
         foreach ($items as &$i) { $i['sent_to'] = $sent[(int) $i['db_id']] ?? []; $i['line_number'] = (int) $i['line_number']; unset($i['db_id']); }
         unset($i);
-        $rfqs = $this->rows('SELECT e.public_id AS id,f.folio,s.legal_name AS supplier_name,f.status_code AS status,f.request_date,f.deadline,
-            (SELECT COUNT(*) FROM rfq_items it WHERE it.organization_id=f.organization_id AND it.rfq_id=f.id) AS item_count
+        $rfqs = $this->rows('SELECT e.public_id AS id,f.folio,s.legal_name AS supplier_name,s.code AS supplier_code,f.status_code AS status,f.request_date,f.deadline,f.currency_code AS currency,
+            (SELECT COUNT(*) FROM rfq_items it WHERE it.organization_id=f.organization_id AND it.rfq_id=f.id) AS item_count,
+            (SELECT GROUP_CONCAT(q.folio ORDER BY q.id SEPARATOR \', \') FROM supplier_quotes q WHERE q.organization_id=f.organization_id AND q.rfq_id=f.id) AS quote_folios
             FROM rfqs f JOIN business_entities e ON e.id=f.id AND e.organization_id=f.organization_id JOIN suppliers s ON s.id=f.supplier_id AND s.organization_id=f.organization_id
             WHERE f.organization_id=? AND f.requisition_id=? ORDER BY f.folio', [$org, $rid]);
         foreach ($rfqs as &$x) { $x['item_count'] = (int) $x['item_count']; }
