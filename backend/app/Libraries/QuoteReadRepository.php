@@ -383,6 +383,7 @@ final class QuoteReadRepository
         if ($f['decision'] !== 'all') { $where .= ' AND v.client_decision_status=?'; $binds[] = $f['decision']; }
         if ($f['client'] !== 'all') { $where .= ' AND ce.public_id=?'; $binds[] = $f['client']; }
         if (($f['status'] ?? 'all') !== 'all') { $where .= " AND ({$key})=?"; $binds[] = $f['status']; }
+        if (($f['group'] ?? 'all') !== 'all') { $where .= " AND ({$key}) IN (" . self::groupKeys($f['group']) . ')'; }
         [$sq, $sb] = self::search($f['q'], ['v.folio', 'cq.series_reference', 'r.folio', 'c.legal_name', 'v.legacy_status', 'r.internal_reference', 'r.client_reference', self::statusKeyLabel()]);
         // Tarjeta 8: eligibility of MODIFICAR DESDE REQ. (R3A) for the current revision; superseded revisions point to the current one.
         $block = "CASE WHEN NOT {$latest} THEN 'superseded' ELSE " . self::changeBlock((string) $actor) . ' END';
@@ -416,9 +417,14 @@ final class QuoteReadRepository
             'money' => array_map(static fn ($r) => ['currency' => $r['currency'], 'amount' => $r['amount'], 'quotes' => (int) $r['quotes']], $this->rows("SELECT v.currency_code AS currency,SUM(v.total_amount) AS amount,COUNT(*) AS quotes FROM customer_quote_versions v WHERE v.organization_id=? AND {$latest} GROUP BY v.currency_code ORDER BY v.currency_code", [$org])),
             // Tarjeta 8 (same scope as the request, filters not applied): status facet and client cards.
             'statuses' => $this->facet("SELECT ({$key}) AS code,COUNT(*) AS count FROM customer_quote_versions v WHERE v.organization_id=?{$scope} GROUP BY code ORDER BY count DESC", $org),
-            'client_cards' => array_map(static fn ($r) => ['id' => $r['id'], 'name' => $r['name'], 'total' => (int) $r['total'], 'approved' => (int) $r['approved'], 'pending' => (int) $r['pending']], $this->rows(
-                "SELECT ce.public_id AS id,c.legal_name AS name,COUNT(*) AS total,COALESCE(SUM(({$key})='approved'),0) AS approved,COALESCE(SUM(({$key}) IN ({$pendingKeys})),0) AS pending
-                 {$cardFrom} GROUP BY ce.public_id,c.legal_name ORDER BY c.legal_name", [$org])),
+            // Tarjeta 9 adds: attention (por atender), no_response (enviadas sin respuesta), change, requisitions and the primary contact.
+            'client_cards' => array_map(static fn ($r) => ['id' => $r['id'], 'name' => $r['name'], 'total' => (int) $r['total'], 'approved' => (int) $r['approved'], 'pending' => (int) $r['pending'],
+                'attention' => (int) $r['attention'], 'no_response' => (int) $r['no_response'], 'change' => (int) $r['change_requested'], 'requisitions' => (int) $r['requisitions'], 'contact' => $r['contact']], $this->rows(
+                "SELECT ce.public_id AS id,c.legal_name AS name,COUNT(*) AS total,COALESCE(SUM(({$key})='approved'),0) AS approved,COALESCE(SUM(({$key}) IN ({$pendingKeys})),0) AS pending,
+                 COALESCE(SUM(({$key}) IN (" . self::groupKeys('attention') . ")),0) AS attention,COALESCE(SUM(({$key}) IN (" . self::groupKeys('client') . ")),0) AS no_response,
+                 COALESCE(SUM(({$key})='change_requested'),0) AS change_requested,COUNT(DISTINCT v.requisition_id) AS requisitions,
+                 (SELECT pc.display_name FROM party_contacts pc WHERE pc.organization_id=c.organization_id AND pc.owner_entity_id=c.id ORDER BY pc.is_primary DESC,pc.source_ordinal,pc.id LIMIT 1) AS contact
+                 {$cardFrom} GROUP BY ce.public_id,c.legal_name,c.id,c.organization_id ORDER BY c.legal_name", [$org])),
         ];
         return $res;
     }
@@ -485,6 +491,19 @@ final class QuoteReadRepository
         WHEN v.document_status='draft' THEN 'draft' ELSE 'other' END";
     private const STATUS_KEY_ES = ['draft' => 'Borrador', 'review' => 'En revisión interna', 'authorized' => 'Autorizada internamente', 'sent' => 'Enviada al cliente', 'approved' => 'Aprobada',
         'rejected' => 'Rechazada', 'change_requested' => 'Solicitud de modificación', 'superseded' => 'Sustituida', 'expired' => 'Vencida'];
+
+    /**
+     * Tarjeta 9 (decisión del cliente): groups of STATUS_KEY. prep = preparación interna; client = enviadas sin respuesta
+     * (incluye vencidas sin decisión); change = requieren nueva revisión; attention = prep + client + change (por atender).
+     */
+    private const GROUPS = ['prep' => ['draft', 'review', 'authorized'], 'client' => ['sent', 'expired'], 'approved' => ['approved'], 'change' => ['change_requested'],
+        'rejected' => ['rejected'], 'attention' => ['draft', 'review', 'authorized', 'sent', 'expired', 'change_requested']];
+
+    /** Quoted literal list of a group (constant values only, never user input). */
+    private static function groupKeys(string $group): string
+    {
+        return implode(',', array_map(static fn ($k) => "'{$k}'", self::GROUPS[$group]));
+    }
 
     /** Spanish label of STATUS_KEY, so the matrix search finds "aprobada", "vencida"… */
     private static function statusKeyLabel(): string

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
-import { listSupplierQuotes, getSupplierQuote, listCustomerQuotes, getCustomerQuote, listAwards, listRevisionFamilies } from './api';
+import { listSupplierQuotes, getSupplierQuote, getCustomerQuote, listAwards, listRevisionFamilies } from './api';
 import { money, label, tone, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
 import { ChangeRequestModal } from '../recovery/ChangeRequestModal';
 import { RfqRequestCard } from './RfqRequestCard';
@@ -10,6 +10,7 @@ import { ComparisonCard } from './ComparisonCard';
 import { CustomerQuoteCard } from './CustomerQuoteCard';
 import { ClientFormatCard } from './ClientFormatCard';
 import { CustomerQuoteMatrixCard } from './CustomerQuoteMatrixCard';
+import { ClientDecisionCard } from './ClientDecisionCard';
 import { docModel, quoteDocHtml } from './quoteDocument.mjs';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
@@ -56,23 +57,20 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const [q, setQ] = useState(''); const [input, setInput] = useState('');
   const [page, setPage] = useState(1);
   const [supplier, setSupplier] = useState('all');
-  const [client, setClient] = useState('all');
-  const [decision, setDecision] = useState('all');
   const [revStatus, setRevStatus] = useState('all');
   const [pdfId, setPdfId] = useState('');
   const [changeFor, setChangeFor] = useState(null);
   const [blocked, setBlocked] = useState(null);
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
-  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setClient('all'); setDecision('all'); setRevStatus('all'); };
+  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setRevStatus('all'); };
 
   const sqs = useLoad(s => listSupplierQuotes({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 11);
-  const cqs = useLoad(s => listCustomerQuotes({ page, q, client, decision, scope: 'current' }, s), [tab, page, q, client, decision, rev], tab === 9);
   const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
   const pdf = useLoad(s => getCustomerQuote(pdfId, s), [pdfId], !!pdfId);
   const awards = useLoad(s => listAwards({ page, q, status: 'current' }, s), [tab, page, q, rev], tab === 10);
   const [compReq, setCompReq] = useState('');
   const [rfqLang, setRfqLang] = useState(en ? 'en' : 'es');
-  const [cqId, setCqId] = useState(''); const cq = useLoad(s => getCustomerQuote(cqId, s), [cqId, rev, tab === 9], tab === 9 && !!cqId);
+  const [cqId, setCqId] = useState('');
   const [sqId, setSqId] = useState(''); const sq = useLoad(s => getSupplierQuote(sqId, s), [sqId, rev], tab === 11 && !!sqId);
   const day = today();
 
@@ -85,8 +83,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const searchBox = ph => <div className="relative flex-1 min-w-[240px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input type="search" aria-label={tx('Buscar', 'Search')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={ph} className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" /></div>;
   const pager = st => { const last = Math.max(1, Math.ceil((st.data?.total || 0) / (st.data?.page_size || 25))); return <div className="flex justify-between items-center text-xs text-slate-600"><span>{st.data?.total ?? 0} {tx('registros', 'records')} · {tx('Página', 'Page')} {page} / {last}</span><div className="flex gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => n - 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= last} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div></div>; };
   const table = (headers, rows, empty) => <div className="overflow-x-auto rounded-2xl border border-slate-200/80"><table className="w-full text-left border-collapse min-w-[900px]"><thead><tr className="bg-slate-50 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-200">{headers.map(h => <th key={h} className="py-3 px-3">{h}</th>)}</tr></thead><tbody className="divide-y divide-slate-100 text-[11px] text-slate-700">{rows}{!rows.length && <tr><td colSpan={headers.length} className="py-10 text-center text-xs text-slate-400 font-semibold">{empty}</td></tr>}</tbody></table></div>;
-  const printCq = (d = cq.data) => { if (!d) return; const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(quoteDocHtml(docModel(d, en), en, { logoUrl: `${window.location.origin}/image_923273.svg` }).html); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); };
-  const cqSelect = <select aria-label={tx('Cotización al cliente', 'Client quote')} value={cqId} onChange={e => setCqId(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl min-w-[280px]"><option value="">{tx('Seleccionar cotización…', 'Select quote…')}</option>{cqId && cq.data && !(cqs.data?.items || []).some(v => v.id === cqId) && <option value={cqId}>{cq.data.item.folio} · {cq.data.item.client_name} · {label(cq.data.item.client_decision_status, en)}</option>}{(cqs.data?.items || []).map(v => <option key={v.id} value={v.id}>{v.folio} · {v.client_name} · {label(v.client_decision_status, en)}</option>)}</select>;
+  const printCq = d => { if (!d) return; const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(quoteDocHtml(docModel(d, en), en, { logoUrl: `${window.location.origin}/image_923273.svg` }).html); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); };
 
   return <div className="space-y-6">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -190,14 +187,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
 
     {tab === 8 && <CustomerQuoteMatrixCard en={en} notify={notify} lockText={LOCK} refresh={rev} onNew={() => go(6)} onOpenPdf={setPdfId} onRequestChange={setChangeFor} onBlocked={setBlocked} />}
 
-    {tab === 9 && <div className={box}>{head(tx('Decisión del cliente', 'Client decision'), tx('Envío, aceptación, rechazo o solicitud de modificación registrados por versión.', 'Delivery, acceptance, rejection or change request recorded per version.'), lockBtn(tx('Registrar decisión', 'Record decision')))}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">{[{ id: 'all', name: tx('Todos los clientes', 'All clients'), total: (cqs.data?.summary?.clients || []).reduce((n, x) => n + x.total, 0), pending: (cqs.data?.summary?.clients || []).reduce((n, x) => n + x.pending, 0) }, ...(cqs.data?.summary?.clients || [])].map(c => <button key={c.id} type="button" aria-pressed={client === c.id} onClick={() => { setClient(c.id); setPage(1); }} className={`text-left p-3 rounded-2xl border bg-white ${client === c.id ? 'border-purple-500 ring-2 ring-purple-500/10' : 'border-slate-200 hover:border-purple-300'}`}><div className="text-[11px] font-extrabold text-slate-800 truncate">{c.name}</div><div className="text-[10px] text-slate-500 mt-1">{c.total} {tx('cotización(es)', 'quote(s)')} · <strong className="text-amber-700">{c.pending} {tx('por decidir', 'pending')}</strong></div></button>)}</div>
-      <Wait s={cqs} /><Err s={cqs} />
-      <div className="flex flex-wrap gap-2 items-center">{cqSelect}<span className="text-[11px] text-slate-400">{tx('Selecciona una cotización para ver su historial de decisiones.', 'Select a quote to see its decision history.')}</span></div>
-      {cq.data && <div data-testid="decisions" className="space-y-2">{cq.data.versions.map(v => <div key={v.id} className={`p-3 rounded-xl border text-xs flex flex-wrap justify-between gap-2 ${v.id === cqId ? 'border-purple-300 bg-purple-50/30' : 'border-slate-200'}`}><span className="font-bold">{v.folio} · v{v.version_number}</span><span>{money(v.total_amount, v.currency, en)}</span>{pill(v.client_decision_status)}</div>)}
-        {cq.data.decisions.map((x, i) => <div key={i} className="p-3 rounded-xl border-l-4 border-l-emerald-500 border border-slate-100 text-xs"><div className="flex flex-wrap justify-between gap-2"><strong>{label(x.decision_code, en)}</strong><span className="text-slate-500">{String(x.decision_at || '').slice(0, 16)} · {show(x.decision_channel)} · {show(x.actor)}</span></div>{x.note && <p className="text-[11px] text-slate-600 mt-1">{x.note}</p>}</div>)}
-        {!cq.data.decisions.length && <p className="text-[11px] text-slate-400">{tx('Sin decisiones registradas para esta versión.', 'No decisions recorded for this version.')}</p>}</div>}
-    </div>}
+    {tab === 9 && <ClientDecisionCard en={en} notify={notify} lockText={LOCK} refresh={rev} onEdit={() => go(6)} onOpenPdf={setPdfId} onRequestChange={setChangeFor} onBlocked={setBlocked} />}
 
     {tab === 10 && <div className={box}>{head(tx('Adjudicación definitiva', 'Definitive awarding'), tx('Proveedor ganador por partida (adjudicaciones vigentes) y OC generadas.', 'Winning supplier per item (current awards) and generated POs.'), lockBtn(tx('Confirmar adjudicación', 'Confirm award')))}
       <div className="flex flex-wrap gap-3">{searchBox(tx('Buscar requisición, proveedor, cotización o partida...', 'Search requisition, supplier, quote or item...'))}</div>

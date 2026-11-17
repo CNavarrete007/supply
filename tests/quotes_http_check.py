@@ -34,7 +34,7 @@ try:
     get = lambda p: json.loads(adm.open(API + p).read())
     check('Master Admin: 200', all(status(adm, p) == 200 for p in EPS))
     for bad in ['/rfqs?x=1', '/rfqs?page_size=51', '/rfqs?supplier=abc', '/supplier-quotes?status=%27or', '/comparison?requisition=abc', '/comparison?page=1',
-                '/customer-quotes?scope=x', '/customer-quotes?client=1', '/customer-quotes?status=bogus', '/customer-quotes?status=%27x', '/awards?status=%27x', f'/rfqs/{ZERO}?a=1',
+                '/customer-quotes?scope=x', '/customer-quotes?client=1', '/customer-quotes?status=bogus', '/customer-quotes?status=%27x', '/customer-quotes?group=pending', '/customer-quotes?group=%27x', '/awards?status=%27x', f'/rfqs/{ZERO}?a=1',
                 '/revisions?status=superseded', '/revisions?client=1', '/revisions?page_size=51', '/revisions?q=%01',
                 '/rfq-setup?x=1', '/rfq-setup?page=1', '/rfq-requisitions?buyer=abc', '/rfq-requisitions?buyer=legacy-xyz', '/rfq-requisitions?supplier=all', f'/rfq-requisitions/{ZERO}?a=1', '/rfq-contacts?page=1', '/rfq-contacts?x=1', '/rfqs?contact=abc', '/rfqs?contact=legacy-12', '/rfq-requisitions?rfq=all', '/rfq-requisitions?rfq=', '/customer-quote-setup?page=1', '/customer-quote-setup?x=1']:
         check(f'422 con parámetro inválido ({bad})', status(adm, R + bad) == 422)
@@ -145,6 +145,21 @@ try:
           and all(x['current_folio'] != x['folio'] for x in m8['items'] if not x['is_current']))
     if any(x['status_key'] == 'superseded' for x in m8['items']):
         check('Matriz cliente: búsqueda por etiqueta de estatus ("sustituida")', get(f'{R}/customer-quotes?page_size=50&scope=all&q=sustituida')['total'] >= next(x['count'] for x in s8['statuses'] if x['code'] == 'superseded'))
+
+    # Tarjeta 9 · Decisión del cliente: grupos de etapa sobre la revisión vigente y tarjetas por cliente.
+    G = {'prep': {'draft', 'review', 'authorized'}, 'client': {'sent', 'expired'}, 'approved': {'approved'}, 'change': {'change_requested'}, 'rejected': {'rejected'}}
+    G['attention'] = G['prep'] | G['client'] | G['change']
+    d9 = get(f'{R}/customer-quotes?page_size=50&scope=current'); st9 = {x['code']: x['count'] for x in d9['summary']['statuses']}
+    for g, keys in G.items():
+        r9 = get(f'{R}/customer-quotes?page_size=50&scope=current&group={g}')
+        check(f'Decisión: grupo {g} en el servidor', r9['total'] == sum(st9.get(k, 0) for k in keys) and all(x['status_key'] in keys and x['is_current'] for x in r9['items']))
+    cc9 = d9['summary']['client_cards']
+    check('Decisión: tarjetas con pendientes, sin respuesta, modificar, requisiciones y contacto', all({'attention', 'no_response', 'change', 'requisitions', 'contact'} <= set(c) and c['attention'] >= c['no_response'] + c['change'] and 1 <= c['requisitions'] <= c['total'] for c in cc9)
+          and sum(c['attention'] for c in cc9) == sum(st9.get(k, 0) for k in G['attention']))
+    for c in cc9[:3]:
+        r9 = get(f"{R}/customer-quotes?page_size=50&scope=current&group=attention&client={c['id']}")
+        check(f"Decisión: por atender de {c['name']}", r9['total'] == c['attention'] and sum(x['status_key'] in G['client'] for x in r9['items']) == c['no_response'] and len({x['requisition'] for x in get(f"{R}/customer-quotes?page_size=50&scope=current&client={c['id']}")['items']}) == c['requisitions'])
+    check('Decisión: el resumen anterior (decisions/clients/money) se conserva', {'decisions', 'clients', 'money'} <= set(d9['summary']) and all({'id', 'name', 'total', 'pending'} <= set(c) for c in d9['summary']['clients']))
 
     # Tarjeta 6 · Cotización al cliente: requisiciones con ofertas, tipo de cambio registrado y política de aprobación.
     quoted = get(f'{R}/rfq-requisitions?page_size=50&rfq=quoted')

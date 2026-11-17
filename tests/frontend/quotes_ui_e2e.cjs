@@ -568,16 +568,102 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('ABRIR REV. VIGENTE muestra la versión vigente', flat(await page.getByTestId('format-doc').contentFrame().locator('body').innerText()).includes(`${f0.currency} ${Number(f0.current_total).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
     check('ABRIR REV. VIGENTE abre el formato (tarjeta 7) con la versión seleccionada', (await page.getByRole('button', { name: /Formato para el cliente/ }).first().getAttribute('aria-pressed')) === 'true' && (await page.getByRole('combobox', { name: 'Cotización al cliente' }).inputValue()) === f0.current_id);
 
-    // 9 · Decisión del cliente
-    await page.getByRole('button', { name: /Decisión del cliente/ }).click();
-    const client = cqCur.summary.clients[0];
-    const cc = flat(await page.getByRole('button', { name: new RegExp(client.name) }).first().innerText());
-    check('tarjeta por cliente: cotizaciones y pendientes', cc.includes(`${client.total} cotización(es)`) && cc.includes(`${client.pending} por decidir`), cc);
-    await page.getByRole('combobox', { name: 'Cotización al cliente' }).selectOption(cur.id);
-    await page.getByTestId('decisions').waitFor();
-    const dt = flat(await page.getByTestId('decisions').innerText());
+    // 9 · Decisión del cliente (control de aprobación: KPIs, tarjetas por cliente y cotizaciones por atender)
+    const d9 = await api('/api/v1/quotes/customer-quotes?page=1&page_size=50&scope=current');
+    const G9 = { prep: ['draft', 'review', 'authorized'], client: ['sent', 'expired'], approved: ['approved'], change: ['change_requested'], rejected: ['rejected'] };
+    G9.attention = [...G9.prep, ...G9.client, ...G9.change];
+    const n9 = g => d9.summary.statuses.filter(x => G9[g].includes(x.code)).reduce((a, x) => a + x.count, 0);
+    const c9 = d9.summary.client_cards; const s9 = k => c9.reduce((a, c) => a + c[k], 0);
+    const att9 = page.waitForResponse(r => /\/customer-quotes\?.*scope=current.*group=attention/.test(r.url()));
+    await page.getByRole('button', { name: /Decisión del cliente/ }).first().click();
+    check('decisión: consulta la revisión vigente por atender en MariaDB (200)', (await att9).status() === 200);
+    await page.getByTestId('cqd-client-card').first().waitFor();
+    const top9 = flat(await page.getByTestId('cqd-card').innerText());
+    check('decisión: encabezado y "Trazabilidad comercial"', top9.includes('Control de aprobación del cliente') && top9.includes('Da seguimiento a la autorización interna, envío, respuesta del cliente y revisiones.') && top9.includes('Trazabilidad comercial'));
+    const k9 = (await page.getByTestId('cqd-kpi').allInnerTexts()).map(flat);
+    check('KPIs: preparación, pendientes del cliente, aprobadas, modificación y rechazadas (servidor)', [[n9('prep'), 'Preparación interna Borrador / revisión'], [n9('client'), 'Pendientes del cliente Enviadas sin respuesta'], [n9('approved'), 'Aprobadas Habilitan la compra'], [n9('change'), 'Modificación Requieren nueva revisión'], [n9('rejected'), 'Rechazadas No autorizadas']]
+      .every(([n, t], i) => k9[i] === `${n} ${t}`), k9.join(' | '));
+    check('tarjetas: "Todos los clientes" + una por cliente', await page.getByTestId('cqd-client-card').count() === c9.length + 1 && flat(await page.getByTestId('cqd-badge').innerText()) === `${c9.length} cliente(s) · ${s9('attention')} pendiente(s)`);
+    const all9 = flat(await page.getByTestId('cqd-client-card').first().innerText());
+    check('"Todos los clientes": pendientes, sin respuesta, modificar y vista general', all9.includes(`Todos los clientes ${c9.length} clientes`) && all9.includes(`${s9('attention')} Pendientes ${s9('no_response')} Sin respuesta ${s9('change')} Modificar`) && all9.includes('Vista general'), all9);
+    const cc9 = c9.find(c => c.contact) || c9[0];
+    const ct9 = flat(await page.getByTestId('cqd-client-card').filter({ hasText: cc9.name }).innerText());
+    check('tarjeta por cliente: contacto, conteos y requisiciones', ct9.includes(cc9.contact || cc9.name) && ct9.includes(`${cc9.attention} Pendientes ${cc9.no_response} Sin respuesta ${cc9.change} Modificar`) && ct9.includes(`${cc9.requisitions} requisición(es)`), ct9);
+    check('la lista no se despliega hasta elegir una tarjeta', await page.getByTestId('cqd-list').count() === 0);
+    const attAll = await api('/api/v1/quotes/customer-quotes?page=1&page_size=50&scope=current&group=attention');
+    await page.getByTestId('cqd-client-card').first().click();
+    await page.getByTestId('cqd-list').waitFor(); await page.waitForTimeout(300);
+    check('"Todos los clientes": cotizaciones por atender (servidor)', await page.getByTestId('cqd-quote').count() === Math.min(attAll.total, 25) && attAll.items.every(x => G9.attention.includes(x.status_key))
+      && flat(await page.getByTestId('cqd-card').innerText()).includes(`${s9('attention')} cotización(es) por atender`) && await page.getByRole('button', { name: '← Volver a tarjetas' }).count() === 1);
+    const q9 = f => page.locator(`[data-testid="cqd-quote"][data-folio="${f}"]`);
+    const att0 = attAll.items[0];
+    if (att0) check('tarjeta de cotización: folio · Rev., cliente · referencia · total y estatus', flat(await q9(att0.folio).innerText()).includes(`${att0.folio} · Rev. ${att0.revision}`) && flat(await q9(att0.folio).innerText()).includes(att0.client_name));
+    const byG = page.waitForResponse(r => /\/customer-quotes\?.*group=client/.test(r.url()));
+    await page.getByRole('button', { name: 'Sin respuesta', exact: true }).click();
+    const g9 = await (await byG).json(); await page.waitForTimeout(300);
+    check('filtro "Sin respuesta" en el servidor (enviadas o vencidas)', g9.items.every(x => G9.client.includes(x.status_key)) && await page.getByTestId('cqd-quote').count() === g9.items.length);
+    await page.getByRole('button', { name: 'Por atender', exact: true }).click();
+    await page.waitForTimeout(500);
+    const auth9 = attAll.items.find(x => x.status_key === 'authorized');
+    if (auth9) {
+      await q9(auth9.folio).getByRole('button', { name: /Enviar al cliente/i }).click();
+      check('ENVIAR AL CLIENTE: escritura bloqueada, no se envió nada', (await page.getByTestId('cqd-notice').innerText()).includes('No se envió nada') && writes.length === 0);
+    }
+    const sent9 = attAll.items.find(x => G9.client.includes(x.status_key));
+    if (sent9) {
+      await q9(sent9.folio).getByRole('button', { name: 'Editar' }).click();
+      check('Editar en cotización enviada: no se edita, usar Rev. N', /ya fue enviada o decidida: no se edita/.test(await page.getByTestId('cqd-notice').innerText()));
+      const pdf9 = page.waitForResponse(r => r.url().endsWith(`/quotes/customer-quotes/${sent9.id}`));
+      await q9(sent9.folio).getByRole('button', { name: 'Ver PDF' }).click();
+      check('Ver PDF consulta la revisión (200) y muestra el folio', (await pdf9).status() === 200 && flat(await page.getByTestId('rev-pdf').frameLocator('iframe').locator('body').innerText()).includes(sent9.folio));
+      await page.getByTestId('rev-pdf').getByRole('button', { name: 'Cerrar' }).click();
+      await q9(sent9.folio).getByRole('button', { name: /Registrar decisión/i }).click();
+      const dm = page.getByTestId('cqd-decision'); await dm.waitFor();
+      await dm.getByRole('button', { name: /Registrar decisión/ }).click();
+      check('decisión: obligatorios (decisión y quién decide)', await dm.getByText('Selecciona la decisión del cliente.').count() === 1 && (sent9.client_id === cc9.id && cc9.contact ? (await dm.getByRole('textbox', { name: 'Quién decide por el cliente' }).inputValue()) === cc9.contact : true));
+      await dm.getByRole('radio', { name: 'Rechazada por el cliente' }).check();
+      await dm.getByRole('textbox', { name: 'Quién decide por el cliente' }).fill('Contacto QA');
+      await dm.getByRole('textbox', { name: 'Comentario o motivo' }).fill('caro');
+      await dm.getByRole('button', { name: /Registrar decisión/ }).click();
+      check('decisión: rechazo exige motivo (mínimo 10)', await dm.getByText(/mínimo 10 caracteres/).count() === 1 && await dm.getByTestId('cqd-result').count() === 0);
+      await dm.getByRole('textbox', { name: 'Comentario o motivo' }).fill('Precio fuera de presupuesto sintético');
+      await dm.getByRole('textbox', { name: 'Fecha de la decisión' }).fill('2099-01-01');
+      await dm.getByRole('button', { name: /Registrar decisión/ }).click();
+      check('decisión: no admite fecha futura', await dm.getByText('La decisión no puede tener fecha futura.').count() === 1);
+      await dm.getByRole('textbox', { name: 'Fecha de la decisión' }).fill(String(sent9.quote_date).slice(0, 10));
+      await dm.getByRole('button', { name: /Registrar decisión/ }).click();
+      check('decisión válida: escritura bloqueada, no se registró', (await dm.getByTestId('cqd-result').innerText()).includes('no se registró') && writes.length === 0);
+      await dm.getByRole('button', { name: 'Cancelar' }).click();
+    }
+    const chg9 = attAll.items.find(x => x.status_key === 'change_requested');
+    if (chg9) {
+      await q9(chg9.folio).getByRole('button', { name: 'Historial' }).click();
+      await q9(chg9.folio).getByTestId('cqd-history').waitFor();
+      check('Historial: decisión "Cambios solicitados" con canal y nota', /Cambios solicitados.*email/.test(flat(await q9(chg9.folio).getByTestId('cqd-history').innerText())));
+      await q9(chg9.folio).getByRole('button', { name: /Modificar desde req\./i }).click();
+      if (chg9.can_request_change) { const m9 = page.getByTestId('change-modal'); await m9.getByTestId('change-line').first().waitFor(); check('MODIFICAR DESDE REQ. abre la modificación R3A', flat(await m9.innerText()).includes(chg9.requisition)); await m9.getByRole('button', { name: 'X Cerrar' }).click(); }
+      else { await page.getByTestId('rev-blocked').waitFor(); check('MODIFICAR DESDE REQ. bloqueado con motivo', /importado|RF1|Solo quien capturó|pendiente de revisión/.test(await page.getByTestId('rev-blocked').innerText())); await page.getByRole('button', { name: 'Entendido' }).click(); }
+    }
+    // Aprobadas → historial de la revisión aprobada (canal, responsable y nota reales)
+    const apr9 = page.waitForResponse(r => /\/customer-quotes\?.*group=approved/.test(r.url()));
+    await page.getByRole('button', { name: 'Aprobadas', exact: true }).click(); await apr9;
+    await q9(cur.folio).getByRole('button', { name: 'Historial' }).click();
+    await q9(cur.folio).getByTestId('cqd-history').waitFor();
+    const dt = flat(await q9(cur.folio).getByTestId('cqd-history').innerText());
     check('historial de decisión con canal y responsable', ['Aprobada', 'email', 'QA Admin A', 'Aprobación sintética'].every(x => dt.includes(x)), dt);
-    check('"Registrar decisión" bloqueado', await page.getByRole('button', { name: /Registrar decisión/ }).isDisabled());
+    const byC9 = page.waitForResponse(r => r.url().includes(`client=${cc9.id}`));
+    await page.getByTestId('cqd-client-card').filter({ hasText: cc9.name }).click();
+    const cl9 = await (await byC9).json(); await page.waitForTimeout(300);
+    check('tarjeta de cliente: solo sus cotizaciones por atender', cl9.total === cc9.attention && cl9.items.every(x => x.client_id === cc9.id));
+    await page.getByRole('button', { name: '← Volver a tarjetas' }).click();
+    check('"Volver a tarjetas" cierra la lista', await page.getByTestId('cqd-list').count() === 0);
+    await shot(page, 'cot_9_decision');
+    const prep9 = attAll.items.find(x => G9.prep.includes(x.status_key));
+    if (prep9) {
+      await page.getByTestId('cqd-client-card').first().click();
+      await q9(prep9.folio).getByRole('button', { name: 'Editar' }).click();
+      check('Editar (preparación interna) abre la tarjeta 6', (await page.getByRole('button', { name: /Cotización al cliente/ }).first().getAttribute('aria-pressed')) === 'true');
+    }
 
     // 10 · Adjudicación definitiva
     await page.getByRole('button', { name: /Adjudicación definitiva/ }).click();
