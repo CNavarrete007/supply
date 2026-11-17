@@ -395,6 +395,11 @@ final class QuoteReadRepository
             r.internal_reference,re.public_id AS requisition_id,({$key}) AS status_key,JSON_VALUE(v.approval_evaluation_snapshot,'$.level') AS approval_level,IF({$latest},1,0) AS is_current,
             {$block} AS change_block,(SELECT k.folio FROM requisition_change_requests k WHERE k.organization_id=r.organization_id AND k.requisition_id=r.id AND k.status_code='pending_review' ORDER BY k.id DESC LIMIT 1) AS pending_change,
             (SELECT x.folio FROM customer_quote_versions x WHERE x.organization_id=v.organization_id AND x.customer_quote_id=v.customer_quote_id ORDER BY x.version_number DESC,x.id DESC LIMIT 1) AS current_folio,
+            (SELECT COUNT(*) FROM requisition_items i WHERE i.organization_id=r.organization_id AND i.requisition_id=r.id AND i.line_status='active') AS item_count,
+            (SELECT COUNT(DISTINCT aw.requisition_item_id) FROM awards aw JOIN requisition_items li ON li.id=aw.requisition_item_id AND li.organization_id=aw.organization_id
+              WHERE aw.organization_id=r.organization_id AND aw.requisition_id=r.id AND li.line_status='active' AND aw.status_code='active' AND aw.superseded_at IS NULL) AS awarded_items,
+            (SELECT GROUP_CONCAT(DISTINCT po.folio ORDER BY po.folio SEPARATOR ', ') FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
+              WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id AND " . self::PO_LATEST . ' AND NOT ' . self::PO_CANCELLED . ") AS purchase_orders,
             (SELECT COUNT(*) FROM customer_quote_versions x WHERE x.organization_id=v.organization_id AND x.customer_quote_id=v.customer_quote_id) AS versions,
             (SELECT d.decision_code FROM customer_quote_decisions d WHERE d.organization_id=v.organization_id AND d.customer_quote_version_id=v.id ORDER BY d.decision_at DESC,d.id DESC LIMIT 1) AS last_decision,
             (SELECT d.decision_at FROM customer_quote_decisions d WHERE d.organization_id=v.organization_id AND d.customer_quote_version_id=v.id ORDER BY d.decision_at DESC,d.id DESC LIMIT 1) AS last_decision_at",
@@ -403,6 +408,7 @@ final class QuoteReadRepository
             $i['version_number'] = (int) $i['version_number']; $i['revision'] = (int) $i['revision']; $i['versions'] = (int) $i['versions']; $i['service_fee_enabled'] = (bool) $i['service_fee_enabled'];
             $i['is_current'] = (bool) $i['is_current']; $i['approval_level'] = $i['approval_level'] !== null && ctype_digit((string) $i['approval_level']) ? (int) $i['approval_level'] : null;
             $i['can_request_change'] = $i['change_block'] === null;
+            $i['item_count'] = (int) $i['item_count']; $i['awarded_items'] = (int) $i['awarded_items'];
         }
         unset($i);
         $pendingKeys = "'draft','review','authorized','sent','change_requested'";

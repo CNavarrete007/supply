@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
-import { listSupplierQuotes, getSupplierQuote, getCustomerQuote, listAwards, listRevisionFamilies } from './api';
+import { listSupplierQuotes, getSupplierQuote, getCustomerQuote, listRevisionFamilies } from './api';
 import { money, label, tone, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
 import { ChangeRequestModal } from '../recovery/ChangeRequestModal';
 import { RfqRequestCard } from './RfqRequestCard';
@@ -11,6 +11,7 @@ import { CustomerQuoteCard } from './CustomerQuoteCard';
 import { ClientFormatCard } from './ClientFormatCard';
 import { CustomerQuoteMatrixCard } from './CustomerQuoteMatrixCard';
 import { ClientDecisionCard } from './ClientDecisionCard';
+import { DefinitiveAwardCard } from './DefinitiveAwardCard';
 import { docModel, quoteDocHtml } from './quoteDocument.mjs';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
@@ -67,7 +68,6 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const sqs = useLoad(s => listSupplierQuotes({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 11);
   const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
   const pdf = useLoad(s => getCustomerQuote(pdfId, s), [pdfId], !!pdfId);
-  const awards = useLoad(s => listAwards({ page, q, status: 'current' }, s), [tab, page, q, rev], tab === 10);
   const [compReq, setCompReq] = useState('');
   const [rfqLang, setRfqLang] = useState(en ? 'en' : 'es');
   const [cqId, setCqId] = useState('');
@@ -189,11 +189,6 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
 
     {tab === 9 && <ClientDecisionCard en={en} notify={notify} lockText={LOCK} refresh={rev} onEdit={() => go(6)} onOpenPdf={setPdfId} onRequestChange={setChangeFor} onBlocked={setBlocked} />}
 
-    {tab === 10 && <div className={box}>{head(tx('Adjudicación definitiva', 'Definitive awarding'), tx('Proveedor ganador por partida (adjudicaciones vigentes) y OC generadas.', 'Winning supplier per item (current awards) and generated POs.'), lockBtn(tx('Confirmar adjudicación', 'Confirm award')))}
-      <div className="flex flex-wrap gap-3">{searchBox(tx('Buscar requisición, proveedor, cotización o partida...', 'Search requisition, supplier, quote or item...'))}</div>
-      <Wait s={awards} /><Err s={awards} />
-      {table([tx('Requisición', 'Requisition'), tx('Partida', 'Item'), tx('Proveedor ganador', 'Winning supplier'), tx('Cotización', 'Quote'), tx('Cantidad', 'Qty'), tx('Precio unitario', 'Unit price'), tx('Importe', 'Amount'), tx('Origen', 'Source'), tx('OC', 'PO')], (awards.data?.items || []).map(a => <tr key={a.id} className="align-top"><td className="py-2.5 px-3 font-bold">{a.requisition}<div className="text-[10px] text-slate-400">{a.client_name}</div></td><td className="py-2.5 px-3">{a.line_number} · {a.description}</td><td className="py-2.5 px-3 font-semibold">{a.supplier_name}</td><td className="py-2.5 px-3">{a.quote_folio}</td><td className="py-2.5 px-3">{Number(a.quantity)}</td><td className="py-2.5 px-3">{money(a.unit_price, a.currency, en)}</td><td className="py-2.5 px-3 font-bold">{money(a.subtotal_amount, a.currency, en)}</td><td className="py-2.5 px-3">{show(a.source_kind)}</td><td className="py-2.5 px-3">{a.purchase_orders ? <span className="text-emerald-700 font-bold">{a.purchase_orders}</span> : <span className="text-amber-700 font-bold">{tx('Pendiente de OC', 'PO pending')}</span>}</td></tr>), tx('No hay adjudicaciones vigentes.', 'No current awards.'))}
-      {pager(awards)}
-    </div>}
+    {tab === 10 && <DefinitiveAwardCard en={en} notify={notify} refresh={rev} onOpenComparison={reqId => { go(5); if (reqId) setCompReq(reqId); }} onOpenOrders={() => onNavigate?.('purchase_orders')} />}
   </div>;
 }

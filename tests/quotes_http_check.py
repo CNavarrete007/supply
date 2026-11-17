@@ -161,6 +161,15 @@ try:
         check(f"Decisión: por atender de {c['name']}", r9['total'] == c['attention'] and sum(x['status_key'] in G['client'] for x in r9['items']) == c['no_response'] and len({x['requisition'] for x in get(f"{R}/customer-quotes?page_size=50&scope=current&client={c['id']}")['items']}) == c['requisitions'])
     check('Decisión: el resumen anterior (decisions/clients/money) se conserva', {'decisions', 'clients', 'money'} <= set(d9['summary']) and all({'id', 'name', 'total', 'pending'} <= set(c) for c in d9['summary']['clients']))
 
+    # Tarjeta 10 · Adjudicación definitiva: elegibles = aprobadas vigentes; partidas, partidas adjudicadas y OC coinciden con el comparativo.
+    e10 = get(f'{R}/customer-quotes?page_size=50&scope=current&group=approved')
+    check('Adjudicación: elegibles solo aprobadas y vigentes, con partidas/adjudicadas/OC', all(x['status_key'] == 'approved' and x['is_current'] and isinstance(x['item_count'], int) and isinstance(x['awarded_items'], int) and 'purchase_orders' in x for x in e10['items']))
+    for x in e10['items'][:4]:
+        c10 = get(f"{R}/comparison?requisition={x['requisition_id']}")
+        act = [l for l in c10['lines'] if l['line_status'] == 'active']
+        check(f"Adjudicación {x['folio']}: conteos y OC = comparativo", x['item_count'] == len(act) and x['awarded_items'] == sum(1 for l in act if l['award'])
+              and sorted((x['purchase_orders'] or '').split(', ')) == sorted([o['folio'] for o in c10['orders']] or ['']) and (c10['customer_quote'] or {}).get('id') == x['id'])
+
     # Tarjeta 6 · Cotización al cliente: requisiciones con ofertas, tipo de cambio registrado y política de aprobación.
     quoted = get(f'{R}/rfq-requisitions?page_size=50&rfq=quoted')
     check('Cotización al cliente: rfq=quoted solo con cotizaciones de proveedor', all(i['quote_count'] > 0 for i in quoted['items']) and quoted['total'] <= allreq['total'])

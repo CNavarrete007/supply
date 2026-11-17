@@ -83,7 +83,8 @@ const today = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '
     check('filtro de etapa', await matrix.getByText('1 requisiciones visibles').isVisible() && await row1.count() === 1);
     await matrix.getByLabel('Etapa').selectOption('all');
     await matrix.getByLabel('Documentos').selectOption('supplier_quote');
-    check('filtro de documentos', await row2.count() === 1 && await row1.count() === 1 && await matrix.getByText('2 requisiciones visibles').isVisible());
+    const withSq = all.filter(r => r.client_id === qa1.id && Number(r.supplier_quote_count) > 0).length;
+    check('filtro de documentos', await row2.count() === 1 && await row1.count() === 1 && await matrix.getByText(`${withSq} requisiciones visibles`).isVisible(), String(withSq));
     await matrix.getByLabel('Documentos').selectOption('all');
     await matrix.getByLabel('Buscar en la matriz').fill('fac-qa-0001');
     check('búsqueda por folio de factura', await matrix.getByText('1 requisiciones visibles').isVisible());

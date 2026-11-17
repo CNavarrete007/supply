@@ -665,13 +665,91 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
       check('Editar (preparación interna) abre la tarjeta 6', (await page.getByRole('button', { name: /Cotización al cliente/ }).first().getAttribute('aria-pressed')) === 'true');
     }
 
-    // 10 · Adjudicación definitiva
-    await page.getByRole('button', { name: /Adjudicación definitiva/ }).click();
+    // 10 · Adjudicación definitiva (solo cotizaciones aceptadas por el cliente; confirmar sigue bloqueado)
+    const e10 = await api('/api/v1/quotes/customer-quotes?page=1&page_size=50&scope=current&group=approved');
+    const badge10 = r => (r.purchase_orders ? 'Con OC' : r.item_count && r.awarded_items >= r.item_count ? 'Adjudicada' : r.awarded_items > 0 ? 'Adjudicación parcial' : 'Elegible');
+    const el10 = page.waitForResponse(r => /\/customer-quotes\?.*scope=current.*group=approved/.test(r.url()));
+    await page.getByRole('button', { name: /Adjudicación definitiva/ }).first().click();
+    check('adjudicación: consulta las cotizaciones aprobadas vigentes (200)', (await el10).status() === 200);
+    await page.getByTestId('award-card').waitFor();
+    const t10 = flat(await page.getByTestId('award-card').innerText());
+    check('adjudicación: encabezado, "Posterior a aceptación", regla y qué se valida', ['Adjudicación definitiva', 'Confirma al proveedor ganador únicamente después de que el cliente haya aceptado la cotización comercial.', 'Posterior a aceptación',
+      'antes de la aceptación del cliente existe únicamente una selección preliminar', 'Qué se valida en esta etapa', 'Proveedor definitivo, oferta utilizada, moneda, costo, plazo y justificación'].every(x => t10.includes(x)), t10.slice(0, 300));
+    const steps10 = (await page.getByTestId('award-step').allInnerTexts()).map(x => flat(x).replace(/\s*→\s*$/, ''));
+    check('flujo 1–6 con gate obligatorio en la aceptación del cliente', JSON.stringify(steps10) === JSON.stringify(['1 Comparativo Ofertas evaluadas', '2 Selección preliminar Proveedor recomendado', '3 Cotización al cliente Precio de venta', '4 Aceptación del cliente Gate obligatorio', '5 Adjudicación definitiva Proveedor confirmado', '6 Orden de Compra Compromiso al proveedor']), steps10.join(' | '));
+    if (e10.items.length) await page.getByTestId('award-eligible').first().waitFor();
+    check('elegibles: solo aprobadas por el cliente (servidor)', await page.getByTestId('award-eligible').count() === Math.min(e10.total, 25) && e10.items.every(x => x.status_key === 'approved' && x.is_current));
+    const er10 = f => page.locator(`[data-testid="award-eligible"][data-folio="${f}"]`);
+    const okRows10 = [];
+    for (const r of e10.items.slice(0, 5)) { const t = flat(await er10(r.folio).innerText()); okRows10.push(t.includes(r.client_reference || r.requisition) && t.includes(r.client_name) && t.includes(`${r.folio} Rev. ${r.revision} · Aprobada`) && t.includes(badge10(r))); }
+    check('elegible: referencia, cliente, cotización · Rev. · Aprobada y estado de adjudicación', okRows10.every(Boolean), okRows10.join(','));
+    const po10 = e10.items.find(r => r.purchase_orders);
+    if (po10) {
+      const c10 = page.waitForResponse(r => r.url().includes(`/quotes/comparison?requisition=${po10.requisition_id}`));
+      await er10(po10.folio).click();
+      const cmp10 = await (await c10).json();
+      await page.getByTestId('award-line').first().waitFor();
+      const dt10 = flat(await page.getByTestId('award-detail').innerText());
+      check('detalle: comparativo de la requisición (200) con OC vigentes', cmp10.orders.every(o => dt10.includes(o.folio)) && dt10.includes(po10.requisition));
+      const l10 = cmp10.lines.find(l => l.award && l.line_status === 'active');
+      if (l10) {
+        const sel10 = page.getByRole('combobox', { name: `Proveedor definitivo partida ${l10.line_number}` });
+        check('proveedor definitivo parte de la adjudicación vigente', (await sel10.inputValue()) === l10.award.quote_id && flat(await page.getByTestId('award-line').first().innerText()).includes('Adjudicada vigente'));
+        await page.getByRole('button', { name: 'Confirmar adjudicación definitiva' }).click();
+        check('sin cambios: "la adjudicación vigente ya coincide"', (await page.getByTestId('award-result').innerText()).includes('ya coincide'));
+        const other = l10.offers.find(o => o.offered && o.quote_id !== l10.award.quote_id);
+        if (other) {
+          await sel10.selectOption(other.quote_id);
+          const just = page.getByRole('textbox', { name: `Justificación partida ${l10.line_number}` });
+          if (await just.count()) {
+            await page.getByRole('button', { name: 'Confirmar adjudicación definitiva' }).click();
+            check('proveedor distinto al recomendado exige justificación', await page.getByTestId('award-detail').getByText(/mínimo 15 caracteres/).count() === 1);
+            await just.fill('Cambio solicitado por el cliente sintético');
+          }
+          await page.getByRole('button', { name: 'Confirmar adjudicación definitiva' }).click();
+          check('con OC vigente, cambiar el proveedor requiere enmienda de OC (bloqueada)', await page.getByTestId('award-detail').getByText(/enmienda de la OC/).count() === 1 && await page.getByTestId('award-result').count() === 0);
+          await page.getByRole('button', { name: 'Restablecer' }).click();
+        }
+      }
+    }
+    const el0 = e10.items.find(r => !r.purchase_orders && !r.awarded_items);
+    if (el0) {
+      const c0 = page.waitForResponse(r => r.url().includes(`/quotes/comparison?requisition=${el0.requisition_id}`));
+      await er10(el0.folio).click();
+      const cmp0 = await (await c0).json();
+      const lines0 = cmp0.lines.filter(l => l.line_status === 'active');
+      if (lines0.some(l => l.offers.some(o => o.offered))) {
+        await page.getByTestId('award-line').first().waitFor();
+        const rec0 = flat(await page.getByTestId('award-line').first().innerText());
+        check('elegible sin adjudicar: recomendado marcado y "Por confirmar"', rec0.includes('Recomendado') && rec0.includes('Por confirmar'), rec0);
+        await page.getByRole('button', { name: 'Confirmar adjudicación definitiva' }).click();
+        check('adjudicación válida: compromiso por proveedor y escritura bloqueada (no se registró)', (await page.getByTestId('award-result').innerText()).includes('no se registró') && await page.getByTestId('award-orders').count() === 1 && writes.length === 0);
+        const l0 = lines0.find(l => l.offers.filter(o => o.offered).length > 1);
+        if (l0) {
+          const s0 = page.getByRole('combobox', { name: `Proveedor definitivo partida ${l0.line_number}` });
+          const recId = await s0.inputValue(); const alt = l0.offers.find(o => o.offered && o.quote_id !== recId);
+          await s0.selectOption(alt.quote_id);
+          await page.getByRole('button', { name: 'Confirmar adjudicación definitiva' }).click();
+          check('cambio al no recomendado: pide justificación antes de validar', await page.getByTestId('award-detail').getByText(/distinto al recomendado/).count() >= 1 && await page.getByTestId('award-result').count() === 0);
+          await page.getByRole('textbox', { name: `Justificación partida ${l0.line_number}` }).fill('Menor precio, plazo aceptado por el cliente');
+          await page.getByRole('button', { name: 'Confirmar adjudicación definitiva' }).click();
+          check('con justificación: validada pero no registrada', (await page.getByTestId('award-result').innerText()).includes('no se registró') && writes.length === 0);
+        }
+      } else check('elegible sin ofertas: indica registrar cotizaciones', flat(await page.getByTestId('award-detail').innerText()).includes('no tiene ofertas de proveedor'));
+    }
+    await page.getByRole('button', { name: /Adjudicaciones vigentes registradas/ }).click();
     const a0 = aw.items[0];
-    await page.getByRole('row').filter({ hasText: a0.quote_folio }).first().waitFor();
-    const r10 = flat(await page.getByRole('row').filter({ hasText: a0.quote_folio }).first().innerText());
-    check('adjudicación: proveedor, partida, importe y OC', [a0.supplier_name, a0.description, usd(a0.subtotal_amount), a0.purchase_orders ? a0.purchase_orders : 'Pendiente de OC'].every(x => r10.includes(x)), r10);
-    check('"Confirmar adjudicación" bloqueado', await page.getByRole('button', { name: /Confirmar adjudicación/ }).isDisabled());
+    if (a0) {
+      await page.getByTestId('award-current').getByRole('row').filter({ hasText: a0.quote_folio }).first().waitFor();
+      const r10 = flat(await page.getByTestId('award-current').getByRole('row').filter({ hasText: a0.quote_folio }).first().innerText());
+      check('adjudicaciones vigentes: proveedor, partida, importe y OC', [a0.supplier_name, a0.description, usd(a0.subtotal_amount), a0.purchase_orders ? a0.purchase_orders : 'Pendiente de OC'].every(x => r10.includes(x)), r10);
+    }
+    await shot(page, 'cot_10_adjudicacion');
+    const pickReq = (el0 || po10)?.requisition_id;
+    const cmpOpen = pickReq ? page.waitForResponse(r => r.url().includes(`/quotes/comparison?requisition=${pickReq}`)) : Promise.resolve();
+    await page.getByRole('button', { name: 'Abrir comparativo' }).click();
+    await cmpOpen;
+    check('"Abrir comparativo" abre la tarjeta 5 con la requisición elegida', (await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).first().getAttribute('aria-pressed')) === 'true');
 
     // 11 · Matriz interna con costos
     await page.getByRole('button', { name: /Matriz interna de proveedores/ }).click();
