@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Lock, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react';
 import { allUsers, listRoles, userFunctions, auditEvents, authMe } from './usersRoles/api';
 import { FUNCTIONS, STATUSES, PHOTO_TYPES, emptyUser, fromUser, validateUser, passwordRequired, credentialActive, changedFields } from './usersRoles/userForm.mjs';
+import { lastAccessText, matrixBadge, companyLine, accessPill, toggleAction, toggleBlock, reasonError, deleteBlock as userDeleteBlock, emailConfirmed } from './usersRoles/userMatrix.mjs';
 import {
   SECTIONS, MASTER, roleAccess, DOC_PERMISSIONS, effectivePermissions, statusKind, STATUS_LABEL, accessKind, functionsOf, accessSummary,
   filterUsers, initials, localDateTime, utcBounds, moduleLabel, actionLabel, isCritical, actorName,
@@ -92,6 +93,21 @@ export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
 
   // ---------- Tab 2: matriz ----------
   const [term, setTerm] = useState('');
+  const [act, setAct] = useState(null); // { kind: 'toggle' | 'delete', user }
+  const [actReason, setActReason] = useState(''); const [actTyped, setActTyped] = useState(''); const [actTried, setActTried] = useState(false); const [actMsg, setActMsg] = useState('');
+  const openAct = (kind, user) => { setAct({ kind, user }); setActReason(''); setActTyped(''); setActTried(false); setActMsg(''); };
+  const confirmAct = () => {
+    if (!act) return;
+    setActTried(true);
+    if (act.kind === 'toggle') {
+      if (toggleBlock(act.user, { me, activeAdmins: summary.activeAdmins }, en) || reasonError(actReason, en)) return;
+      const verb = toggleAction(act.user) === 'block' ? tx('bloqueo', 'block') : tx('activación', 'activation');
+      setActMsg(tx(`Validado, pero no se aplicó el ${verb} de ${act.user.name}: SupplyFlow aún no tiene endpoint de escritura de usuarios; habilitarlo requiere tu autorización.`, `Validated, but the ${verb} of ${act.user.name} was not applied: SupplyFlow does not yet have a user write endpoint; enabling it requires your authorization.`));
+    } else {
+      if (userDeleteBlock(act.user, fnById.get(act.user.id), { me }, en) || !emailConfirmed(act.user, actTyped)) return;
+      setActMsg(tx(`No se eliminó ${act.user.name}: eliminar usuarios es una escritura sin endpoint autorizado.`, `${act.user.name} was not deleted: deleting users is a write without an authorized endpoint.`));
+    }
+  };
   const shown = useMemo(() => filterUsers(users.items, term, fnById, en), [users.items, term, fnById, en]);
 
   // ---------- Tab 3: roles ----------
@@ -122,10 +138,10 @@ export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
   const roleByUser = useMemo(() => new Map(users.items.map(u => [u.id, (u.roles || []).join(', ')])), [users.items]);
 
   const Err = ({ e }) => (e ? <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4 shrink-0" />{e.message}</p> : null);
-  const statusPill = u => { const k = statusKind(u); return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${k === 'blocked' ? 'bg-amber-50 text-amber-700 border border-amber-200/80' : k === 'active' ? 'bg-blue-50 text-blue-700 border border-blue-200/60' : 'bg-rose-50 text-rose-700 border border-rose-200/60'}`} title={u.status}>{STATUS_LABEL[k][en ? 1 : 0]}</span>; };
+  const statusPill = u => { const k = statusKind(u); return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10.5px] font-black ${k === 'blocked' ? 'bg-rose-50 text-rose-700 border border-rose-200' : k === 'active' ? 'bg-blue-50 text-blue-800 border border-blue-200' : 'bg-slate-100 text-slate-600 border border-slate-200'}`} title={u.status}>{STATUS_LABEL[k][en ? 1 : 0]}</span>; };
   const accessText = u => ({ enabled: [tx('Acceso habilitado', 'Access enabled'), 'text-emerald-600'], pending: [tx('Acceso habilitado · credencial pendiente de activación', 'Access enabled · credential pending activation'), 'text-amber-600'], none: [tx('Sin acceso al sistema', 'No system access'), 'text-slate-400'] }[accessKind(u)]);
   const fnBadges = id => { const f = functionsOf(fnById.get(id)); const list = [f.buyer && [tx('🛒 Comprador', '🛒 Buyer'), 'bg-blue-50 text-blue-700 border-blue-200/60', f.buyerDocs], f.preparer && [tx('✍️ Preparó / Revisó', '✍️ Prepared / Reviewed'), 'bg-purple-50 text-purple-700 border-purple-200/60', f.preparerDocs], f.authorizer && [tx('✅ Autorizó', '✅ Authorized'), 'bg-emerald-50 text-emerald-700 border-emerald-200/60', f.authorizerDocs]].filter(Boolean);
-    return list.length ? list.map(([label, cls, n]) => <span key={label} title={tx(`Observado en ${n} documento(s)`, `Observed in ${n} document(s)`)} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${cls}`}>{label}</span>) : <span className="text-[10px] text-slate-400 italic">{tx('Sin funciones observadas', 'No observed functions')}</span>; };
+    return list.length ? list.map(([label, cls, n]) => <span key={label} title={tx(`Observado en ${n} documento(s)`, `Observed in ${n} document(s)`)} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black border whitespace-nowrap ${cls}`}>{label}</span>) : <span className="text-[10px] text-slate-400 italic">{tx('Sin funciones observadas', 'No observed functions')}</span>; };
 
   return <div className="space-y-6">
     {/* CABECERA */}
@@ -230,36 +246,59 @@ export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
     </div>}
 
     {/* 2. MATRIZ DE USUARIOS */}
-    {tab === 2 && <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5">
-      <div className="pb-3 border-b border-slate-100"><h3 className="text-base font-extrabold text-slate-900">{tx('Matriz de usuarios', 'Users Matrix')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Consulta las cuentas registradas y su último acceso.', 'View registered accounts and their last access.')}</p></div>
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1"><Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input type="text" aria-label={tx('Buscar usuarios', 'Search users')} placeholder={tx('Buscar por nombre, correo, puesto, función, rol o estatus...', 'Search by name, email, title, function, role or status...')} value={term} onChange={e => setTerm(e.target.value)} className="w-full pl-10 pr-9 py-2 bg-slate-50/60 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-          {term && <button type="button" aria-label={tx('Limpiar búsqueda', 'Clear search')} onClick={() => setTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold">✕</button>}</div>
-        <div className="px-3 py-2 bg-blue-50 border border-blue-100 rounded-xl text-xs font-bold text-blue-600 whitespace-nowrap">{shown.length} {tx('mostrados', 'shown')}</div>
+    {tab === 2 && <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5" data-testid="users-matrix">
+      <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-slate-100">
+        <div><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Matriz de usuarios', 'Users matrix')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Consulta las cuentas registradas y su último acceso.', 'View registered accounts and their last access.')}</p></div>
+        <span data-testid="users-badge" className="px-3 py-1 bg-purple-50 text-purple-800 font-black text-[10.5px] rounded-full border border-purple-100 shrink-0">{matrixBadge(users.items, en)}</span>
       </div>
-      <div className="overflow-x-auto rounded-2xl border border-slate-200/80 shadow-2xs"><table className="w-full text-left border-collapse min-w-[950px]">
-        <thead><tr className="bg-slate-50 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-200">
-          {[tx('Usuario', 'User'), tx('Puesto / contacto', 'Position / Contact'), tx('Funciones operativas', 'Operational Functions'), tx('Rol / acceso', 'Role / Access'), tx('Estatus', 'Status'), tx('Último acceso', 'Last Access')].map(h => <th key={h} className="py-3.5 px-4">{h}</th>)}
-          <th className="py-3.5 px-4 text-center sticky right-0 bg-slate-50 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]">{tx('Acciones', 'Actions')}</th></tr></thead>
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative flex-1 text-sm"><Search className="w-4 h-4 text-blue-500 absolute left-4 top-1/2 -translate-y-1/2" />
+          <input type="text" aria-label={tx('Buscar usuarios', 'Search users')} placeholder={tx('Buscar por nombre, correo, puesto, empresa, función o rol...', 'Search by name, email, title, company, function or role...')} value={term} onChange={e => setTerm(e.target.value)} className="w-full pl-11 pr-12 py-3 bg-white border border-slate-300 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+          {term && <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold"><button type="button" aria-label={tx('Limpiar búsqueda', 'Clear search')} onClick={() => setTerm('')} className="w-8 h-8 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700">✕</button></span>}</div>
+        <span className="px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-full text-[10.5px] font-black text-blue-900 whitespace-nowrap self-start sm:self-auto">{shown.length} {tx('mostrados', 'shown')}</span>
+      </div>
+      <div className="overflow-auto max-h-[660px] rounded-2xl border border-slate-200/80 shadow-2xs"><table className="w-full text-left border-collapse min-w-[1000px]">
+        <thead className="sticky top-0 z-10"><tr className="bg-blue-50/70 text-[10.5px] font-black text-slate-700 uppercase tracking-wider border-b border-slate-200">
+          {[tx('Usuario', 'User'), tx('Puesto / empresa', 'Title / company'), tx('Funciones operativas', 'Operational functions'), tx('Rol / acceso', 'Role / access'), tx('Estatus', 'Status'), tx('Último acceso', 'Last access'), tx('Acciones', 'Actions')].map(h => <th key={h} className="py-3.5 px-3 bg-blue-50">{h}</th>)}</tr></thead>
         <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-          {shown.map(u => { const [aText, aCls] = accessText(u); return <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
-            <td className="py-3.5 px-4"><div className="flex items-center gap-3"><div className="w-9 h-9 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-xs font-bold text-slate-600 shrink-0">{initials(u.name)}</div><div><div className="font-extrabold text-slate-900 leading-tight">{u.name}</div><div className="text-[11px] text-slate-400 mt-0.5">{u.email}</div></div></div></td>
-            <td className="py-3.5 px-4"><div className="font-bold text-slate-800 uppercase text-[11px] leading-tight">{u.position || tx('Sin puesto definido', 'No position defined')}</div><div className="text-[10px] text-slate-400 mt-0.5">{u.phone || tx('Sin teléfono', 'No phone')}</div></td>
-            <td className="py-3.5 px-4"><div className="flex flex-wrap items-center gap-1.5">{fnBadges(u.id)}</div></td>
-            <td className="py-3.5 px-4"><div className="font-extrabold text-slate-900 text-xs">{(u.roles || []).join(', ') || tx('Sin rol', 'No role')}</div><div className={`text-[10px] font-bold mt-0.5 ${aCls}`}>{aText}</div></td>
-            <td className="py-3.5 px-4">{statusPill(u)}</td>
-            <td className="py-3.5 px-4 text-[11px] text-slate-500 font-medium whitespace-nowrap">{localDateTime(u.last_login_at) || tx('Sin accesos registrados', 'No access recorded')}</td>
-            <td className="py-3.5 px-4 text-center sticky right-0 bg-white shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]"><div className="flex flex-col items-center gap-1 w-24 mx-auto">
-              <button type="button" onClick={() => openRecord(u.id)} className="w-full py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 text-[10px] font-black tracking-wider rounded-lg transition-colors uppercase cursor-pointer">{tx('Ficha', 'Record')}</button>
-              <button type="button" disabled title={LOCK} className="w-full py-1 bg-slate-200 text-slate-400 text-[10px] font-black tracking-wider rounded-lg uppercase cursor-not-allowed">{statusKind(u) === 'blocked' ? tx('Desbloquear', 'Unblock') : tx('Bloquear', 'Block')}</button>
-              <button type="button" disabled title={LOCK} className="w-full py-1 bg-slate-200 text-slate-400 text-[10px] font-black tracking-wider rounded-lg uppercase cursor-not-allowed">{tx('Eliminar', 'Delete')}</button>
+          {shown.map(u => { const ap = accessPill(u, en); const tg = toggleAction(u); return <tr key={u.id} data-testid="user-row" data-email={u.email} className="hover:bg-slate-50/80 transition-colors align-top">
+            <td className="py-4 px-3"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-full bg-blue-50 border-2 border-white ring-1 ring-slate-200 shadow-sm flex items-center justify-center text-xs font-black text-blue-900 shrink-0">{initials(u.name)}</div><div className="min-w-0"><div className="font-black text-slate-900 leading-tight uppercase">{u.name}</div><div className="text-[11px] text-slate-500 mt-0.5 truncate">{u.email}</div></div></div></td>
+            <td className="py-4 px-3 min-w-[170px]"><div className="font-black text-slate-800 uppercase text-[11px] leading-tight">{u.position || tx('Sin puesto definido', 'No title defined')}</div><div className="text-[10px] text-slate-500 mt-1 uppercase">{companyLine(u, en)}</div></td>
+            <td className="py-4 px-3"><div className="flex flex-wrap items-center gap-1.5">{fnBadges(u.id)}</div></td>
+            <td className="py-4 px-3"><div className="font-black text-slate-900 text-xs">{(u.roles || []).join(', ') || tx('Sin rol', 'No role')}</div><span className={`inline-block mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-black border whitespace-nowrap ${ap.tone}`}>{ap.text}</span></td>
+            <td className="py-4 px-3">{statusPill(u)}</td>
+            <td className="py-4 px-3 text-[11px] text-slate-700 whitespace-nowrap">{lastAccessText(u.last_login_at, en) || tx('Sin accesos registrados', 'No access recorded')}</td>
+            <td className="py-4 px-3"><div className="flex flex-col gap-1.5 w-28 text-[11px] font-black uppercase tracking-wide">
+              <button type="button" onClick={() => openRecord(u.id)} className="w-full py-2 uppercase bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm">{tx('Editar', 'Edit')}</button>
+              <button type="button" onClick={() => openAct('toggle', u)} className={`w-full py-2 uppercase text-white rounded-xl shadow-sm ${tg === 'block' ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700' : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700'}`}>{tg === 'block' ? tx('Bloquear', 'Block') : tx('Activar', 'Activate')}</button>
+              <button type="button" onClick={() => openAct('delete', u)} className="w-full py-2 uppercase bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-700 hover:to-pink-700 text-white rounded-xl shadow-sm">{tx('Eliminar', 'Delete')}</button>
             </div></td>
           </tr>; })}
           {!shown.length && <tr><td colSpan={7} className="py-12 text-center text-slate-400"><div className="flex flex-col items-center gap-2"><span className="text-2xl">📋</span><p className="text-xs font-semibold">{ready ? (term ? tx('Ningún usuario coincide con la búsqueda.', 'No user matches the search.') : tx('No hay usuarios registrados en el sistema.', 'No users registered in the system.')) : tx('Consultando usuarios…', 'Loading users…')}</p></div></td></tr>}
         </tbody></table></div>
-      <p className="text-[11px] text-slate-400">{tx('Las funciones operativas se observan en documentos (OC, revisiones y RFQ); no son una configuración. Último acceso en tu hora local.', 'Operational functions are observed in documents (POs, reviews and RFQs); they are not a setting. Last access in your local time.')}</p>
+      <p className="text-[11px] text-slate-400">{tx('Las funciones operativas se observan en documentos (OC, revisiones y RFQ). Último acceso en tu hora local. Bloquear, activar y eliminar se validan, pero aún no se aplican (sin endpoint de escritura de usuarios).', 'Operational functions are observed in documents (POs, reviews and RFQs). Last access in your local time. Block, activate and delete are validated but not applied yet (no user write endpoint).')}</p>
     </div>}
+
+    {act && (() => { const u = act.user; const isToggle = act.kind === 'toggle'; const block = isToggle ? toggleBlock(u, { me, activeAdmins: summary.activeAdmins }, en) : userDeleteBlock(u, fnById.get(u.id), { me }, en); const rErr = isToggle ? reasonError(actReason, en) : ''; const blocking = isToggle && toggleAction(u) === 'block';
+      return <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onMouseDown={e => { if (e.target === e.currentTarget) setAct(null); }}>
+        <div role="dialog" aria-modal="true" aria-labelledby="sf-user-act" data-testid="user-action" className="bg-white w-full max-w-md rounded-xl shadow-2xl overflow-hidden">
+          <div className={`px-5 py-3 ${isToggle ? 'bg-gradient-to-r from-amber-500 to-orange-600' : 'bg-rose-600'}`}><h2 id="sf-user-act" className="text-white font-black text-sm">{isToggle ? (blocking ? tx('Bloquear usuario', 'Block user') : tx('Activar usuario', 'Activate user')) : tx('Eliminar usuario', 'Delete user')}</h2></div>
+          <div className="p-5 space-y-3 text-xs text-slate-700">
+            <p className="font-bold text-slate-900">{u.name} · {u.email}</p>
+            {block ? <p className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{block}</span></p> : <>
+              <p className="text-slate-600">{isToggle ? (blocking ? tx('No podrá iniciar sesión; sus documentos y su historial se conservan.', 'They will not be able to sign in; their documents and history are kept.') : tx('Podrá volver a iniciar sesión si tiene acceso habilitado y credencial activada.', 'They will be able to sign in again if access is enabled and the credential is activated.'))
+                : tx('Solo se elimina una cuenta sin historial. Escribe el correo exacto para confirmar.', 'Only an account without history is deleted. Type the exact email to confirm.')}</p>
+              {isToggle ? <label className="block text-sm font-medium"><span className="block text-[11px] font-bold text-slate-700 mb-1">{tx('Motivo', 'Reason')} *</span><textarea aria-label={tx('Motivo', 'Reason')} rows={3} maxLength={600} value={actReason} onChange={e => { setActReason(e.target.value); setActMsg(''); }} className={`w-full px-3 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-orange-400 ${actTried && rErr ? 'border-rose-400' : 'border-slate-300'}`} />{actTried && rErr && <span role="alert" className="block text-[10.5px] text-rose-600 font-semibold mt-1">{rErr}</span>}</label>
+                : <label className="block text-sm font-medium"><span className="block text-[11px] font-bold text-slate-700 mb-1">{tx('Correo a confirmar', 'Email to confirm')}</span><input aria-label={tx('Correo a confirmar', 'Email to confirm')} value={actTyped} onChange={e => { setActTyped(e.target.value); setActMsg(''); }} autoComplete="off" placeholder={u.email} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-rose-500" /></label>}
+              {actMsg && <p role="status" data-testid="user-action-msg" className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{actMsg}</span></p>}
+            </>}
+            <div className="flex justify-end gap-2 text-xs font-bold">
+              <button type="button" onClick={() => setAct(null)} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-200">{block ? tx('Entendido', 'Got it') : tx('Cancelar', 'Cancel')}</button>
+              {!block && <button type="button" onClick={confirmAct} disabled={!isToggle && !emailConfirmed(u, actTyped)} className={`px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed ${isToggle ? 'bg-orange-600 hover:bg-orange-700' : 'bg-rose-600 hover:bg-rose-700'}`}>{isToggle ? (blocking ? tx('Sí, bloquear', 'Yes, block') : tx('Sí, activar', 'Yes, activate')) : tx('Sí, eliminar', 'Yes, delete')}</button>}
+            </div>
+          </div>
+        </div>
+      </div>; })()}
 
     {/* 3. ROLES Y PERMISOS */}
     {tab === 3 && <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

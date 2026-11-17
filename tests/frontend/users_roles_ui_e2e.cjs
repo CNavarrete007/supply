@@ -49,14 +49,36 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     let allShown = true; for (const u of users) allShown = allShown && await row(u.email).count() === 1;
     check('matriz con todos los usuarios reales, rol y acceso', allShown && rb.includes(buyer.email) && rb.includes('Comprador') && rb.includes('Acceso habilitado'), rb);
     check('funciones observadas en documentos', rb.includes('🛒 Comprador') && (await row('QA Admin A').innerText()).includes('✅ Autorizó') && (await row('QA Admin B').innerText()).includes('✍️ Preparó / Revisó'));
-    check('bloquear y eliminar deshabilitados', await row(buyer.name).getByRole('button', { name: /Bloquear/i }).isDisabled() && await row(buyer.name).getByRole('button', { name: /Eliminar/i }).isDisabled());
+    const active = users.filter(u => u.status === 'active').length;
+    check('encabezado: "N activos · M operativos" y columnas del diseño', (await page.getByTestId('users-badge').innerText()) === `${active} activos · ${users.length} operativos`
+      && JSON.stringify((await page.getByTestId('users-matrix').locator('thead th').allInnerTexts()).map(x => x.trim().toUpperCase())) === JSON.stringify(['USUARIO', 'PUESTO / EMPRESA', 'FUNCIONES OPERATIVAS', 'ROL / ACCESO', 'ESTATUS', 'ÚLTIMO ACCESO', 'ACCIONES']));
+    const la = buyer.last_login_at ? new Date(String(buyer.last_login_at).replace(' ', 'T').replace(/(\.\d{3})\d*$/, '$1') + 'Z').toLocaleString('es-MX') : 'Sin accesos registrados';
+    check('último acceso en formato local (dd/mm/aaaa, h:mm:ss)', rb.includes(la), `${la} | ${rb}`);
+    check('acciones EDITAR, BLOQUEAR y ELIMINAR habilitadas', await row(buyer.name).getByRole('button', { name: 'Editar' }).isEnabled() && await row(buyer.name).getByRole('button', { name: 'Bloquear' }).isEnabled() && await row(buyer.name).getByRole('button', { name: 'Eliminar' }).isEnabled());
+    // BLOQUEAR: motivo obligatorio; validado pero no aplicado
+    await row(buyer.name).getByRole('button', { name: 'Bloquear' }).click();
+    const dlg = page.getByTestId('user-action'); await dlg.waitFor();
+    await dlg.getByRole('button', { name: 'Sí, bloquear' }).click();
+    check('bloquear exige motivo (mínimo 10)', await dlg.getByText('Describe el motivo (mínimo 10 caracteres).').count() === 1);
+    await dlg.getByRole('textbox', { name: 'Motivo' }).fill('Baja temporal sintética de prueba');
+    await dlg.getByRole('button', { name: 'Sí, bloquear' }).click();
+    check('bloquear validado pero NO aplicado (sin endpoint)', (await dlg.getByTestId('user-action-msg').innerText()).includes('no se aplicó el bloqueo') && writes.length === 0);
+    await dlg.getByRole('button', { name: 'Cancelar' }).click();
+    // Protección: no bloquear la propia cuenta
+    await row('QA Admin A').getByRole('button', { name: 'Bloquear' }).click();
+    check('no puedes bloquear tu propia cuenta', (await page.getByTestId('user-action').innerText()).includes('No puedes bloquear tu propia cuenta.'));
+    await page.getByTestId('user-action').getByRole('button', { name: 'Entendido' }).click();
+    // ELIMINAR: con historial no se elimina
+    await row(buyer.name).getByRole('button', { name: 'Eliminar' }).click();
+    check('eliminar usuario con historial: no se elimina, usar Bloquear', /No se elimina: tiene historial .* usa BLOQUEAR/.test(await page.getByTestId('user-action').innerText()) && await page.getByTestId('user-action').getByRole('button', { name: 'Sí, eliminar' }).count() === 0);
+    await page.getByTestId('user-action').getByRole('button', { name: 'Entendido' }).click();
     await page.getByLabel('Buscar usuarios').fill('autorizo');
     check('búsqueda por función', await page.getByText('1 mostrados').isVisible() && await row('QA Admin A').count() === 1);
     await page.getByLabel('Buscar usuarios').fill('');
     await shot(page, 'usuarios_1_matriz');
 
     // Usuarios · alta y actualización (formulario del diseño; guardar valida y queda bloqueado: no hay endpoint de escritura)
-    await row(buyer.name).getByRole('button', { name: /Ficha/i }).click();
+    await row(buyer.name).getByRole('button', { name: 'Editar' }).click();
     await page.getByTestId('user-form').waitFor();
     await page.getByLabel('Nombre completo').waitFor();
     const val = async l => page.getByLabel(l, { exact: true }).inputValue();
