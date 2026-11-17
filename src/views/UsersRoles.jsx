@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Lock, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react';
-import { allUsers, listRoles, userFunctions, auditEvents } from './usersRoles/api';
+import { allUsers, listRoles, userFunctions, auditEvents, authMe } from './usersRoles/api';
+import { FUNCTIONS, STATUSES, PHOTO_TYPES, emptyUser, fromUser, validateUser, passwordRequired, credentialActive, changedFields } from './usersRoles/userForm.mjs';
 import {
   SECTIONS, MASTER, roleAccess, DOC_PERMISSIONS, effectivePermissions, statusKind, STATUS_LABEL, accessKind, functionsOf, accessSummary,
   filterUsers, initials, localDateTime, utcBounds, moduleLabel, actionLabel, isCritical, actorName,
@@ -17,9 +18,10 @@ const AUDIT_EMPTY = { from: '', to: '', actor: 'all', role: 'all', module: 'all'
 export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
   const en = Boolean(isEnglish || lang === 'en' || language === 'en');
   const tx = (es, e) => (en ? e : es);
+  const notify = (title, message, type = 'info') => { if (typeof onNotify === 'function') onNotify(title, message, type); };
   const LOCK = tx('Modo consulta MariaDB: el alta, la edición, el bloqueo y la eliminación de usuarios y roles se habilitarán cuando existan endpoints de escritura con autorización, CSRF, idempotencia y auditoría.', 'MariaDB read mode: creating, editing, blocking and deleting users and roles will be enabled once write endpoints with authorization, CSRF, idempotency and audit exist.');
   const tabs = [
-    { id: 1, emoji: '👥', title: tx('Usuarios', 'Users'), desc: tx('Ficha, funciones operativas, acceso y rol asignado.', 'Record, operational functions, access and assigned role.') },
+    { id: 1, emoji: '👥', title: tx('Usuarios', 'Users'), desc: tx('Alta y actualización: ficha, funciones operativas, acceso y rol.', 'Create and update: record, operational functions, access and role.') },
     { id: 2, emoji: '📋', title: tx('Matriz de usuarios', 'Users Matrix'), desc: tx('Consulta y busca las cuentas registradas y su último acceso.', 'View and search registered accounts and their last access.') },
     { id: 3, emoji: '🛡️', title: tx('Roles y permisos', 'Roles and Permissions'), desc: tx('Secciones con acceso efectivo y permisos registrados.', 'Sections with effective access and registered permissions.') },
     { id: 4, emoji: '🔐', title: tx('Resumen de acceso', 'Access Summary'), desc: tx('Estado de cuentas, roles y recomendaciones de seguridad.', 'Account status, roles, and security recommendations.') },
@@ -57,6 +59,36 @@ export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
   const selPerms = sel ? effectivePermissions(sel, roles.items) : [];
   const sortedUsers = useMemo(() => [...users.items].sort((a, b) => String(a.name).localeCompare(String(b.name), 'es')), [users.items]);
   const openRecord = id => { setSelectedId(id); setTab(1); };
+  const [me, setMe] = useState(null);
+  useEffect(() => { const c = new AbortController(); authMe(c.signal).then(r => { if (!c.signal.aborted) setMe(r.user || null); }).catch(() => {}); return () => c.abort(); }, []);
+  const [form, setForm] = useState(emptyUser);
+  const [original, setOriginal] = useState(null);
+  const [tried, setTried] = useState(false);
+  const [saveMsg, setSaveMsg] = useState(null);
+  const [photoUrl, setPhotoUrl] = useState('');
+  const photoRef = useRef(null);
+  useEffect(() => { // load the selected user (update mode) or a clean form (new capture)
+    const next = sel ? fromUser(sel, roles.items, fnById.get(sel.id)) : emptyUser();
+    if (!sel && !next.role) next.role = '';
+    setForm(next); setOriginal(sel ? next : null); setTried(false); setSaveMsg(null);
+    if (photoRef.current) photoRef.current.value = '';
+  }, [selectedId, sel?.id, roles.items, fnById]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!form.photo) { setPhotoUrl(''); return undefined; } const u = URL.createObjectURL(form.photo); setPhotoUrl(u); return () => URL.revokeObjectURL(u); }, [form.photo]);
+  const fv = useMemo(() => validateUser(form, { users: users.items, editing: sel, me, activeAdmins: summary.activeAdmins, roles: roles.items }, en), [form, users.items, sel, me, summary.activeAdmins, roles.items, en]);
+  const setF = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaveMsg(null); };
+  const setNested = (group, k, v) => { setForm(f => ({ ...f, [group]: { ...f[group], [k]: v } })); setSaveMsg(null); };
+  const newCapture = () => { setSelectedId(''); setForm(emptyUser()); setOriginal(null); setTried(false); setSaveMsg(null); if (photoRef.current) photoRef.current.value = ''; };
+  const pickPhoto = file => { setF('photo', file || null); };
+  const removePhoto = () => { setF('photo', null); if (photoRef.current) photoRef.current.value = ''; };
+  const saveUser = () => {
+    if (sel && !changedFields(form, original, en).length) { setTried(false); setSaveMsg({ kind: 'info', text: tx('No hay cambios que guardar.', 'There are no changes to save.') }); return; }
+    setTried(true);
+    if (!fv.ok) { setSaveMsg({ kind: 'error', text: fv.first }); notify(tx('Usuario incompleto', 'Incomplete user'), fv.first, 'warning'); return; }
+    const what = sel ? tx(`la actualización de ${form.name} (${changedFields(form, original, en).join(', ')})`, `the update of ${form.name} (${changedFields(form, original, en).join(', ')})`) : tx(`el alta de ${form.name}`, `the creation of ${form.name}`);
+    const text = tx(`Datos validados, pero no se guardó ${what}: SupplyFlow aún no tiene endpoint de escritura de usuarios (credenciales, rol, permisos y fotografía). Habilitarlo requiere tu autorización. La contraseña no se envió ni se registró.`,
+      `Data validated, but ${what} was not saved: SupplyFlow does not yet have a user write endpoint (credentials, role, permissions and photo). Enabling it requires your authorization. The password was not sent or recorded.`);
+    setSaveMsg({ kind: 'locked', text }); notify(tx('Registro no habilitado', 'Recording not enabled'), text, 'warning');
+  };
 
   // ---------- Tab 2: matriz ----------
   const [term, setTerm] = useState('');
@@ -119,55 +151,81 @@ export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
     <Err e={users.error} /><Err e={roles.error} /><Err e={fns.error} />
     {users.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx(`Consultando usuarios en MariaDB… ${users.items.length}${users.total ? ` de ${users.total}` : ''}`, `Loading users from MariaDB… ${users.items.length}${users.total ? ` of ${users.total}` : ''}`)}</p>}
 
-    {/* 1. USUARIOS (ficha en modo consulta) */}
-    {tab === 1 && <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6">
-      <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100"><div><h3 className="text-base font-extrabold text-slate-900">{tx('Ficha de usuario', 'User record')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Selecciona un usuario registrado para consultar sus datos, acceso, rol y funciones observadas.', 'Select a registered user to view their data, access, role and observed functions.')}</p></div><span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-3 py-1 rounded-full border border-purple-100 shrink-0">{tx('Modo consulta', 'Read mode')}</span></div>
-      <label className="block"><span className="block text-xs font-bold text-slate-800 mb-1.5">{tx('Usuario registrado', 'Registered user')}</span>
-        <select aria-label={tx('Seleccionar usuario', 'Select user')} value={selectedId} onChange={e => setSelectedId(e.target.value)} disabled={!ready} className={inputCls}><option value="">{ready ? tx('Selecciona un usuario', 'Select a user') : tx('Cargando…', 'Loading…')}</option>{sortedUsers.map(u => <option key={u.id} value={u.id}>{u.name} · {u.email}</option>)}</select></label>
-      <div className="p-5 border border-dashed border-slate-300 rounded-2xl bg-slate-50/30 flex items-start gap-5">
-        <div className="w-20 h-20 bg-slate-100 border border-slate-200 rounded-2xl flex items-center justify-center text-lg font-black text-slate-400 shrink-0">{sel ? initials(sel.name) : 'SF'}</div>
-        <div className="space-y-2 flex-1"><span className="block text-xs font-bold text-slate-800">{tx('Fotografía del personal', 'Staff Photo')}</span><p className="text-[11px] text-slate-400">{tx('La base de datos no almacena fotografías; se muestran las iniciales. La carga de imágenes requiere almacenamiento privado con validación en el servidor.', 'The database does not store photos; initials are shown. Image upload requires private storage with server-side validation.')}</p></div>
+    {/* 1. USUARIOS · alta y actualización (se valida; guardar requiere endpoint de escritura autorizado) */}
+    {tab === 1 && <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5" data-testid="user-form">
+      <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-slate-100">
+        <div><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Alta y actualización de usuarios', 'Create and update users')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Registra usuarios y personal operativo. La contraseña solo es obligatoria cuando se habilita el acceso al sistema.', 'Register users and operational staff. The password is only required when system access is enabled.')}</p></div>
+        <span className={`px-3 py-1 text-[10.5px] font-black rounded-full border shrink-0 ${sel ? 'bg-purple-50 text-purple-800 border-purple-200' : 'bg-blue-50 text-blue-900 border-blue-100'}`}>{sel ? tx('Actualizar usuario', 'Update user') : tx('Nuevo usuario', 'New user')}</span>
       </div>
-      <div className="space-y-4">
-        <label className="block"><span className="block text-xs font-bold text-slate-800 mb-1.5">{tx('Nombre completo', 'Full Name')}</span><input readOnly aria-label={tx('Nombre completo', 'Full Name')} value={sel?.name || ''} placeholder={DASH} className={inputCls} /></label>
-        <label className="block"><span className="block text-xs font-bold text-slate-800 mb-1.5">{tx('Usuario / correo', 'Username / Email')}</span><input readOnly aria-label={tx('Usuario / correo', 'Username / Email')} value={sel?.email || ''} placeholder={DASH} className={inputCls} /></label>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="block"><span className="block text-xs font-bold text-slate-800 mb-1.5">{tx('Puesto de trabajo', 'Job Title')}</span><input readOnly aria-label={tx('Puesto de trabajo', 'Job Title')} value={sel?.position || ''} placeholder={DASH} className={inputCls} /></label>
-          <label className="block"><span className="block text-xs font-bold text-slate-800 mb-1.5">{tx('Teléfono', 'Phone')}</span><input readOnly aria-label={tx('Teléfono', 'Phone')} value={sel?.phone || ''} placeholder={DASH} className={inputCls} /></label>
+      {sel ? <div data-testid="user-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-purple-200 bg-purple-50/60 text-xs font-black text-purple-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 shadow-inner shrink-0" />{tx(`Modo actualización: ${sel.name} (${sel.email}). Modifica la información y presiona Guardar.`, `Update mode: ${sel.name} (${sel.email}). Edit the information and press Save.`)}</div>
+        : <div data-testid="user-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-xs font-black text-emerald-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-300 to-emerald-600 shadow-inner shrink-0" />{tx('Modo nueva captura activo. Completa la información y presiona Guardar. Al terminar, el formulario se limpiará y bloqueará.', 'New capture mode active. Fill in the information and press Save. When finished, the form will be cleared and locked.')}</div>}
+      <label className="block"><span className="block text-[11px] font-bold text-slate-600 mb-1">{tx('Actualizar un usuario registrado (opcional)', 'Update a registered user (optional)')}</span>
+        <select aria-label={tx('Seleccionar usuario', 'Select user')} value={selectedId} onChange={e => setSelectedId(e.target.value)} disabled={!ready} className={inputCls}><option value="">{ready ? tx('— Nueva captura —', '— New capture —') : tx('Cargando…', 'Loading…')}</option>{sortedUsers.map(u => <option key={u.id} value={u.id}>{u.name} · {u.email}</option>)}</select></label>
+
+      <div className="p-4 sm:p-5 border border-dashed border-slate-300 rounded-2xl bg-slate-50/40 flex flex-col sm:flex-row items-start gap-4">
+        <div className="w-24 h-24 bg-white border border-slate-200 rounded-2xl flex items-center justify-center text-xs font-black text-slate-500 shrink-0 overflow-hidden shadow-2xs">{photoUrl ? <img src={photoUrl} alt={tx('Vista previa de la fotografía', 'Photo preview')} className="w-full h-full object-cover" /> : (form.name ? initials(form.name) : 'SF')}</div>
+        <div className="space-y-2 flex-1 min-w-0 w-full">
+          <span className="block text-xs font-black text-slate-900">{tx('Fotografía del personal', 'Staff photo')}</span>
+          <input ref={photoRef} type="file" aria-label={tx('Fotografía del personal', 'Staff photo')} accept={PHOTO_TYPES.join(',')} onChange={e => pickPhoto(e.target.files?.[0])} className="block w-full text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-2 py-2 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border file:border-slate-300 file:bg-slate-50 file:text-slate-700 file:font-semibold" />
+          <p className="text-[10px] text-slate-500">{tx('Se mostrará en la matriz y, para el usuario que inició sesión, debajo del logotipo y nombre del sistema. PNG, JPG o WebP, máximo 2 MB.', 'It will be shown in the matrix and, for the signed-in user, below the system logo and name. PNG, JPG or WebP, maximum 2 MB.')}</p>
+          {tried && fv.errors.photo && <p role="alert" className="text-[10.5px] text-rose-600 font-semibold">{fv.errors.photo}</p>}
+          <span className="inline-block text-xs font-black"><button type="button" onClick={removePhoto} disabled={!form.photo} className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-md shadow-rose-600/20 disabled:opacity-40 disabled:cursor-not-allowed">{tx('Eliminar fotografía', 'Remove photo')}</button></span>
         </div>
-        <label className="block"><span className="block text-xs font-bold text-slate-800 mb-1.5">{tx('Empresa / contratista', 'Company / Contractor')}</span><select disabled aria-label={tx('Empresa / contratista', 'Company / Contractor')} className={inputCls}><option>{tx('Sin empresa específica / uso general', 'No specific company / General use')}</option></select><p className="text-[11px] text-slate-400 mt-1">{tx('La base actual no asocia usuarios con contratistas; la asignación se habilitará con el módulo de Contratista.', 'The current database does not link users to contractors; assignment will be enabled with the Contractor module.')}</p></label>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="block"><span className="block text-xs font-bold text-slate-800 mb-1.5">{tx('Rol de acceso', 'Access Role')}</span><input readOnly aria-label={tx('Rol de acceso', 'Access Role')} value={sel ? (sel.roles || []).join(', ') || tx('Sin rol', 'No role') : ''} placeholder={DASH} className={inputCls} /></label>
-          <label className="block"><span className="block text-xs font-bold text-slate-800 mb-1.5">{tx('Estatus', 'Status')}</span><input readOnly aria-label={tx('Estatus', 'Status')} value={sel ? STATUS_LABEL[statusKind(sel)][en ? 1 : 0] : ''} placeholder={DASH} className={inputCls} /></label>
-        </div>
-        <div className="p-4 bg-emerald-50/60 border border-emerald-100 rounded-2xl space-y-1">
-          <label className="flex items-center gap-2"><input type="checkbox" disabled checked={!!sel?.access_enabled} aria-label={tx('Permitir acceso al sistema', 'Allow System Access')} className="w-4 h-4 text-emerald-600 rounded border-slate-300" /><span className="text-xs font-extrabold text-slate-900">{tx('Permitir acceso al sistema', 'Allow System Access')}</span></label>
-          <p className="text-[11px] text-slate-500 pl-6">{sel ? accessText(sel)[0] : tx('Indica si la persona puede iniciar sesión; las personas operativas pueden registrarse sin acceso.', 'Whether the person can sign in; operational staff can be registered without access.')}</p>
-        </div>
-        <label className="block"><span className="block text-xs font-bold text-slate-800 mb-1.5">{tx('Contraseña', 'Password')}</span><input readOnly aria-label={tx('Credencial', 'Credential')} value={sel ? (sel.credential_state === 'local_validated' ? tx('Credencial activada (la contraseña nunca se muestra)', 'Credential activated (the password is never shown)') : sel.credential_state === 'external' ? tx('Credencial externa', 'External credential') : tx('Pendiente de activación', 'Pending activation')) : ''} placeholder={DASH} className={inputCls} /></label>
-        {sel && <p className="text-[11px] text-slate-500">{tx('Último acceso', 'Last access')}: <strong>{localDateTime(sel.last_login_at) || tx('Sin accesos registrados', 'No access recorded')}</strong></p>}
       </div>
-      <div className="p-5 border border-dashed border-slate-500 rounded-2xl bg-slate-50/20 space-y-6">
-        <div className="space-y-3"><h4 className="text-xs font-extrabold text-slate-900">{tx('Funciones operativas', 'Operational Functions')} <span className="font-semibold text-slate-400">· {tx('observadas en documentos de MariaDB', 'observed in MariaDB documents')}</span></h4>
+
+      {(() => { const lbl = (t, req, k, child, help) => <label className="block"><span className="block text-xs font-black text-slate-900 mb-1.5">{t}{req ? ' *' : ''}</span>{child}{help && <span className="block text-[10px] text-slate-500 mt-1">{help}</span>}{tried && fv.errors[k] && <span role="alert" className="block text-[10.5px] text-rose-600 font-semibold mt-1">{fv.errors[k]}</span>}</label>;
+        const ctl = k => `w-full px-3.5 py-3 bg-white border rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all disabled:bg-slate-50 disabled:text-slate-400 ${tried && fv.errors[k] ? 'border-rose-400' : 'border-slate-300'}`;
+        const pwReq = passwordRequired(form, sel);
+        return <div className="space-y-4">
+          {lbl(tx('Nombre completo', 'Full name'), true, 'name', <input type="text" aria-label={tx('Nombre completo', 'Full name')} value={form.name} maxLength={255} onChange={e => setF('name', e.target.value)} autoComplete="off" className={ctl('name')} />)}
+          {lbl(tx('Usuario / correo', 'Username / email'), true, 'email', <input type="email" aria-label={tx('Usuario / correo', 'Username / email')} value={form.email} maxLength={254} onChange={e => setF('email', e.target.value)} autoComplete="off" className={ctl('email')} />)}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {lbl(tx('Puesto de trabajo', 'Job title'), true, 'position', <input type="text" aria-label={tx('Puesto de trabajo', 'Job title')} value={form.position} maxLength={255} placeholder={tx('Ej. Gerente de Compras', 'E.g. Purchasing Manager')} onChange={e => setF('position', e.target.value)} className={ctl('position')} />)}
+            {lbl(tx('Teléfono', 'Phone'), false, 'phone', <input type="tel" aria-label={tx('Teléfono', 'Phone')} value={form.phone} maxLength={80} placeholder={tx('Ej. +52 833 000 0000', 'E.g. +52 833 000 0000')} onChange={e => setF('phone', e.target.value)} className={ctl('phone')} />)}
+          </div>
+          {lbl(tx('Empresa / contratista', 'Company / contractor'), false, 'company', <select aria-label={tx('Empresa / contratista', 'Company / contractor')} value={form.company} onChange={e => setF('company', e.target.value)} className={ctl('company')}><option value="">{tx('Sin empresa específica / uso general', 'No specific company / general use')}</option></select>,
+            tx('La asignación permite filtrar compradores por el contratista activo. El catálogo de contratistas aún no existe en MariaDB, por lo que hoy solo aplica el uso general.', 'The assignment lets buyers be filtered by the active contractor. The contractor catalog does not exist in MariaDB yet, so only general use applies today.'))}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {lbl(tx('Rol de acceso', 'Access role'), true, 'role', <select aria-label={tx('Rol de acceso', 'Access role')} value={form.role} onChange={e => setF('role', e.target.value)} className={ctl('role')}><option value="">{tx('Selecciona un rol', 'Select a role')}</option>{roles.items.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}</select>)}
+            {lbl(tx('Estatus', 'Status'), false, 'status', <select aria-label={tx('Estatus', 'Status')} value={form.status} onChange={e => setF('status', e.target.value)} className={ctl('status')}>{STATUSES.map(([v, es, e2]) => <option key={v} value={v}>{en ? e2 : es}</option>)}</select>)}
+          </div>
+          <div className="p-4 bg-emerald-50/60 border border-emerald-100 rounded-2xl space-y-1">
+            <label className="flex items-center gap-2.5 text-xs font-black text-slate-900"><input type="checkbox" checked={form.access} onChange={e => setF('access', e.target.checked)} aria-label={tx('Permitir acceso al sistema', 'Allow system access')} className="w-4 h-4 rounded border-slate-300 text-blue-600" />{tx('Permitir acceso al sistema', 'Allow system access')}</label>
+            <p className="text-[10px] text-slate-500 pl-6">{tx('Desmárcalo para registrar a una persona operativa que no necesita iniciar sesión.', 'Uncheck it to register operational staff who do not need to sign in.')}{sel ? ` · ${accessText(sel)[0]}` : ''}</p>
+          </div>
+          {lbl(tx('Contraseña', 'Password'), form.access && pwReq, 'password', <input type="password" aria-label={tx('Contraseña', 'Password')} value={form.password} maxLength={128} disabled={!form.access} autoComplete="new-password"
+            placeholder={!form.access ? tx('Sin acceso al sistema: no requiere contraseña', 'No system access: no password required') : sel && credentialActive(sel) ? tx('Déjala vacía para conservar la contraseña actual', 'Leave empty to keep the current password') : tx('Mínimo 8 caracteres', 'Minimum 8 characters')} onChange={e => setF('password', e.target.value)} className={ctl('password')} />,
+            sel ? `${tx('Último acceso', 'Last access')}: ${localDateTime(sel.last_login_at) || tx('sin accesos registrados', 'no access recorded')}` : null)}
+        </div>; })()}
+
+      <div className="p-4 sm:p-5 border border-dashed border-blue-200 rounded-2xl bg-blue-50/20 space-y-4">
+        <div className="space-y-2.5"><h4 className="text-xs font-black text-slate-900">{tx('Funciones operativas', 'Operational functions')}</h4>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {[['buyer', tx('🛒 Comprador', '🛒 Buyer'), tx('Comprador de OC, revisiones o contacto de RFQ.', 'PO buyer, reviews or RFQ contact.'), selFn.buyerDocs], ['preparer', tx('✍️ Preparó / Revisó', '✍️ Prepared / Reviewed'), tx('Aparece en "Preparó" de órdenes de compra.', 'Appears as PO "Prepared by".'), selFn.preparerDocs], ['authorizer', tx('✅ Autorizó', '✅ Authorized'), tx('Aparece en "Autorizó" de órdenes de compra.', 'Appears as PO "Authorized by".'), selFn.authorizerDocs]].map(([k, label, desc, n]) =>
-              <label key={k} className="p-3 bg-white border border-slate-200/80 rounded-xl flex items-start gap-2.5"><input type="checkbox" disabled checked={!!sel && n > 0} aria-label={label} className="mt-0.5 w-4 h-4 rounded border-slate-300 text-blue-600" /><div><span className="text-xs font-bold text-slate-900">{label}</span><p className="text-[10px] text-slate-500 mt-0.5 leading-tight">{desc}</p>{sel && <p className="text-[10px] font-bold text-blue-700 mt-1">{tx(`${n} documento(s)`, `${n} document(s)`)}</p>}</div></label>)}
+            {FUNCTIONS.map(([k, es, e2, des, den]) => { const n = sel ? functionsOf(fnById.get(sel.id))[`${k}Docs`] : 0; return <label key={k} className="p-3.5 bg-white border border-slate-200/80 rounded-xl flex items-start gap-3 cursor-pointer hover:border-blue-300">
+              <input type="checkbox" checked={!!form.functions[k]} onChange={e => setNested('functions', k, e.target.checked)} aria-label={en ? e2 : es} className="mt-0.5 w-5 h-5 rounded border-slate-300 text-blue-600" />
+              <span><span className="block text-xs font-black text-slate-900">{en ? e2 : es}</span><span className="block text-[10px] text-slate-500 font-semibold mt-0.5">{en ? den : des}</span>{sel && n > 0 && <span className="block text-[10px] text-blue-700 font-bold mt-0.5">{tx(`Observado en ${n} documento(s)`, `Observed in ${n} document(s)`)}</span>}</span>
+            </label>; })}
           </div>
         </div>
-        <div className="p-5 bg-white border border-slate-200/80 rounded-2xl space-y-4">
-          <h4 className="text-xs font-extrabold text-slate-900">{tx('Permisos específicos por documento', 'Document-Specific Permissions')}</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {[['quote', tx('Cotización al cliente', 'Client Quotation')], ['po', tx('Orden de Compra', 'Purchase Order')]].map(([g, title]) => <div key={g} className="space-y-2.5"><h5 className="text-xs font-bold text-slate-800">{title}</h5><div className="space-y-2">
-              {DOC_PERMISSIONS.filter(d => d[3] === g).map(([code, es, e]) => <label key={code} className="p-2.5 border border-slate-200 rounded-xl flex items-center gap-2.5"><input type="checkbox" disabled checked={selPerms.includes(code)} aria-label={en ? e : es} className="w-4 h-4 rounded border-slate-300 text-blue-600" /><span className="text-xs font-bold text-slate-800">{en ? e : es}</span></label>)}</div></div>)}
+        <div className="p-4 sm:p-5 bg-white border border-slate-200/80 rounded-2xl space-y-3">
+          <h4 className="text-sm font-black text-slate-900">{tx('Permisos específicos por documento', 'Document-specific permissions')}</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[['quote', tx('Cotización al cliente', 'Client quotation')], ['po', tx('Orden de Compra', 'Purchase Order')]].map(([g, title]) => <div key={g} className="space-y-2"><h5 className="text-sm font-black text-slate-900">{title}</h5>
+              {DOC_PERMISSIONS.filter(d => d[3] === g).map(([code, es, e2]) => <label key={code} className="p-3 border border-slate-200 rounded-xl flex items-center gap-3 cursor-pointer hover:border-blue-300"><input type="checkbox" checked={!!form.perms[code]} onChange={e => setNested('perms', code, e.target.checked)} aria-label={en ? e2 : es} className="w-5 h-5 rounded border-slate-300 text-blue-600" /><span className="text-xs font-black text-slate-900">{en ? e2 : es}</span></label>)}
+            </div>)}
           </div>
-          <div className="p-3 bg-amber-50/70 border-l-4 border-amber-400 rounded-r-xl text-xs text-amber-900 font-medium">{tx('El revisor comercial y el revisor de la Orden de Compra son permisos independientes. Aún no hay permisos de documento registrados en MariaDB y la emisión o autorización de cotizaciones y OC sigue bloqueada.', 'Commercial reviewer and Purchase Order reviewer are independent permissions. No document permissions are registered in MariaDB yet, and issuing or authorizing quotes and POs remains blocked.')}</div>
-          {sel && <p className="text-[11px] text-slate-500">{tx('Permisos registrados para este usuario', 'Registered permissions for this user')}: {selPerms.length ? selPerms.map(p => <code key={p} className="mx-0.5 px-1.5 py-0.5 bg-slate-100 rounded text-[10px]">{p}</code>) : DASH}</p>}
+          <div className="p-3 bg-amber-50/70 border-l-4 border-amber-400 rounded-r-xl text-xs text-amber-900">{tx('El revisor comercial y el revisor de la Orden de Compra son permisos independientes.', 'The commercial reviewer and the Purchase Order reviewer are independent permissions.')}</div>
+          {sel && <p className="text-[10.5px] text-slate-500">{tx('Permisos registrados hoy para este usuario', 'Permissions recorded today for this user')}: {selPerms.length ? selPerms.map(p => <code key={p} className="mx-0.5 px-1.5 py-0.5 bg-slate-100 rounded text-[10px]">{p}</code>) : tx('ninguno', 'none')}</p>}
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-3 pt-2">
-        <button type="button" disabled title={LOCK} className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-200 text-slate-500 rounded-xl text-xs font-extrabold cursor-not-allowed"><Lock className="w-3.5 h-3.5" />{tx('Guardar usuario', 'Save user')}</button>
-        <button type="button" onClick={() => setSelectedId('')} className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-extrabold transition-colors cursor-pointer"><span>🧹</span>{tx('Limpiar', 'Clean')}</button>
-        <button type="button" onClick={() => setTab(2)} className="inline-flex items-center gap-2 px-5 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-extrabold transition-colors cursor-pointer"><span>📋</span>{tx('Ver matriz', 'View matrix')}</button>
+
+      {fv.warnings.map(w => <p key={w} className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">{w}</p>)}
+      {tried && fv.errors.self && <p role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold">{fv.errors.self}</p>}
+      {saveMsg && <p role={saveMsg.kind === 'error' ? 'alert' : 'status'} data-testid="user-save-msg" className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${saveMsg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : saveMsg.kind === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>{saveMsg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{saveMsg.text}</span></p>}
+      <div className="flex flex-wrap items-center gap-3 pt-1 text-xs font-black">
+        <button type="button" onClick={saveUser} className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-xl shadow-md"><Lock className="w-3.5 h-3.5" />{tx('Guardar usuario', 'Save user')}</button>
+        <button type="button" onClick={newCapture} className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl"><span>🧹</span>{tx('Limpiar', 'Clear')}</button>
+        <button type="button" onClick={() => setTab(2)} className="inline-flex items-center gap-2 px-5 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl"><span>📋</span>{tx('Ver matriz', 'View matrix')}</button>
       </div>
     </div>}
 

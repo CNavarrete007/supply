@@ -21,6 +21,8 @@ export async function allUsers(signal, onProgress) {
   return { items, total };
 }
 export const listRoles = signal => getJson('/api/v1/roles', signal);
+/** Session user (public id and roles), used to prevent self-lockout in the user form. */
+export const authMe = signal => getJson('/api/v1/auth/me', signal);
 export const userFunctions = signal => getJson('/api/v1/users/functions', signal);
 export function auditEvents(filters = {}, signal) {
   const params = new URLSearchParams();

@@ -55,16 +55,61 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     await page.getByLabel('Buscar usuarios').fill('');
     await shot(page, 'usuarios_1_matriz');
 
-    // Ficha
+    // Usuarios · alta y actualización (formulario del diseño; guardar valida y queda bloqueado: no hay endpoint de escritura)
     await row(buyer.name).getByRole('button', { name: /Ficha/i }).click();
+    await page.getByTestId('user-form').waitFor();
     await page.getByLabel('Nombre completo').waitFor();
     const val = async l => page.getByLabel(l, { exact: true }).inputValue();
-    check('ficha con datos reales', await val('Nombre completo') === buyer.name && await val('Usuario / correo') === buyer.email && await val('Rol de acceso') === 'Comprador' && (await val('Credencial')).startsWith('Credencial activada'));
+    const form = page.getByTestId('user-form');
+    check('formulario del diseño: encabezado, modo actualización y botón Guardar habilitado', (await form.innerText()).includes('Alta y actualización de usuarios') && /Modo actualización: QA/.test(await page.getByTestId('user-mode').innerText()) && await page.getByRole('button', { name: /Guardar usuario/ }).isEnabled());
+    check('ficha con datos reales (editable)', await val('Nombre completo') === buyer.name && await val('Usuario / correo') === buyer.email && await val('Rol de acceso') === buyer.role_codes[0] && await val('Estatus') === 'active'
+      && (await page.getByLabel('Contraseña', { exact: true }).getAttribute('placeholder')) === 'Déjala vacía para conservar la contraseña actual');
     const bf = ((await (await page.request.get(UI + '/api/v1/users/functions')).json()).items || []).find(x => x.id === buyer.id) || {};
     const buyerDocs = (bf.po_buyer || 0) + (bf.review_buyer || 0) + (bf.rfq_contact || 0); // misma suma que usersRoles/model.mjs
     check('función comprador marcada con sus documentos', await page.getByLabel('🛒 Comprador', { exact: true }).isChecked() && await page.getByText(`${buyerDocs} documento(s)`).isVisible() && !(await page.getByLabel('✅ Autorizó', { exact: true }).isChecked()));
-    check('permisos de documento sin registros y guardar bloqueado', !(await page.getByLabel('Autorizar Orden de Compra').isChecked()) && await page.getByRole('button', { name: /Guardar usuario/ }).isDisabled());
+    check('permisos de documento: estado registrado en MariaDB', !(await page.getByLabel('Autorizar Orden de Compra').isChecked()));
+    await page.getByRole('button', { name: /Guardar usuario/ }).click();
+    check('actualización sin cambios: "No hay cambios que guardar"', (await page.getByTestId('user-save-msg').innerText()).includes('No hay cambios que guardar'));
+    await page.getByLabel('Teléfono', { exact: true }).fill('833 555 0101');
+    await page.getByRole('button', { name: /Guardar usuario/ }).click();
+    check('datos obligatorios faltantes en el registro (puesto) se exigen al guardar', buyer.position ? true : await form.getByText('Indica el puesto de trabajo.').count() >= 1);
+    await page.getByLabel('Puesto de trabajo').fill(buyer.position || 'Comprador');
+    await page.getByLabel('Autorizar Orden de Compra').check();
+    await page.getByRole('button', { name: /Guardar usuario/ }).click();
+    const sm = await page.getByTestId('user-save-msg').innerText();
+    check('actualización válida: lista los cambios y NO se guarda (sin endpoint de escritura)', sm.includes('no se guardó') && sm.includes('teléfono') && sm.includes('permisos por documento') && (buyer.position ? true : sm.includes('puesto')) && writes.length === 0, sm);
+    await page.getByLabel('Usuario / correo', { exact: true }).fill('qa.admin.a@supplyflow.invalid');
+    await page.getByRole('button', { name: /Guardar usuario/ }).click();
+    check('correo duplicado rechazado', await form.getByText('Ya existe un usuario con ese correo.').count() >= 1);
     await shot(page, 'usuarios_2_ficha');
+    // Protección: el usuario de la sesión no puede quitarse Master Admin
+    await page.getByLabel('Seleccionar usuario').selectOption(users.find(u => u.email === 'qa.admin.a@supplyflow.invalid').id);
+    await page.getByLabel('Rol de acceso', { exact: true }).selectOption('buyer');
+    await page.getByRole('button', { name: /Guardar usuario/ }).click();
+    check('sin autobloqueo: no puedes quitarte Master Admin a ti mismo', await form.getByText(/a ti mismo/).count() >= 1);
+    // Nueva captura
+    await page.getByRole('button', { name: 'Limpiar' }).click();
+    check('Limpiar: modo nueva captura con formulario vacío', /Modo nueva captura activo/.test(await page.getByTestId('user-mode').innerText()) && await val('Nombre completo') === '' && await val('Seleccionar usuario') === '');
+    await page.getByRole('button', { name: /Guardar usuario/ }).click();
+    const req = await Promise.all(['Indica el nombre completo.', 'Indica el usuario / correo.', 'Indica el puesto de trabajo.', 'Selecciona el rol de acceso.', 'La contraseña es obligatoria al habilitar el acceso al sistema.'].map(t => form.getByText(t, { exact: true }).count()));
+    check('obligatorios: nombre, correo, puesto, rol y contraseña', req.every(n => n >= 1), req.join(','));
+    await page.getByLabel('Nombre completo').fill('Persona Sintética QA');
+    await page.getByLabel('Usuario / correo', { exact: true }).fill('persona.qa@supplyflow.invalid');
+    await page.getByLabel('Puesto de trabajo').fill('Analista de compras');
+    await page.getByLabel('Rol de acceso', { exact: true }).selectOption('buyer');
+    await page.getByLabel('Contraseña', { exact: true }).fill('corta');
+    await page.getByRole('button', { name: /Guardar usuario/ }).click();
+    check('contraseña mínima de 8 caracteres', await form.getByText('La contraseña debe tener mínimo 8 caracteres.').count() >= 1);
+    await page.getByLabel('Permitir acceso al sistema').uncheck();
+    check('sin acceso: la contraseña se deshabilita y deja de ser obligatoria', await page.getByLabel('Contraseña', { exact: true }).isDisabled());
+    await page.getByLabel('Fotografía del personal').setInputFiles({ name: 'foto.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c40000000049454e44ae426082', 'hex') });
+    check('fotografía: vista previa y "Eliminar fotografía" habilitado', await form.getByRole('img', { name: 'Vista previa de la fotografía' }).count() === 1 && await page.getByRole('button', { name: 'Eliminar fotografía' }).isEnabled());
+    await page.getByRole('button', { name: /Guardar usuario/ }).click();
+    const nm = await page.getByTestId('user-save-msg').innerText();
+    check('alta válida: NO se guarda y la contraseña no se envía', nm.includes('no se guardó el alta de Persona Sintética QA') && nm.includes('no se envió') && writes.length === 0, nm);
+    await page.getByRole('button', { name: 'Eliminar fotografía' }).click();
+    check('Eliminar fotografía vuelve a las iniciales', await form.getByRole('img', { name: 'Vista previa de la fotografía' }).count() === 0);
+    await shot(page, 'usuarios_3_alta');
 
     // Roles
     await page.getByRole('button', { name: /Roles y permisos/ }).first().click();
