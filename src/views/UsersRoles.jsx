@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Lock, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react';
 import { allUsers, listRoles, userFunctions, auditEvents, authMe } from './usersRoles/api';
 import { FUNCTIONS, STATUSES, PHOTO_TYPES, emptyUser, fromUser, validateUser, passwordRequired, credentialActive, changedFields } from './usersRoles/userForm.mjs';
+import { emptyRole, fromRole, roleCodeOf, sectionCount, validateRole, changedRoleFields, roleCardInfo, roleDeleteBlock } from './usersRoles/roleForm.mjs';
 import { lastAccessText, matrixBadge, companyLine, accessPill, toggleAction, toggleBlock, reasonError, deleteBlock as userDeleteBlock, emailConfirmed } from './usersRoles/userMatrix.mjs';
 import {
   SECTIONS, MASTER, roleAccess, DOC_PERMISSIONS, effectivePermissions, statusKind, STATUS_LABEL, accessKind, functionsOf, accessSummary,
@@ -110,10 +111,27 @@ export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
   };
   const shown = useMemo(() => filterUsers(users.items, term, fnById, en), [users.items, term, fnById, en]);
 
-  // ---------- Tab 3: roles ----------
+  // ---------- Tab 3: roles (crear o editar; guardar requiere endpoint de escritura autorizado) ----------
   const [roleCode, setRoleCode] = useState('');
   const role = roles.items.find(r => r.code === roleCode) || null;
-  const access = roleAccess(roleCode);
+  const [rf, setRf] = useState(() => emptyRole());
+  const [rOrig, setROrig] = useState(null);
+  const [rTried, setRTried] = useState(false); const [rMsg, setRMsg] = useState(null);
+  const [rDel, setRDel] = useState(null); const [rTyped, setRTyped] = useState(''); const [rDelMsg, setRDelMsg] = useState('');
+  useEffect(() => { const next = role ? fromRole(role) : emptyRole(); setRf(next); setROrig(role ? next : null); setRTried(false); setRMsg(null); }, [roleCode, role?.code]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rv = useMemo(() => validateRole(rf, { roles: roles.items, editing: role }, en), [rf, roles.items, role, en]);
+  const setR = (k, v) => { setRf(f => ({ ...f, [k]: v })); setRMsg(null); };
+  const setSection = (k, v) => { setRf(f => ({ ...f, sections: { ...f.sections, [k]: v } })); setRMsg(null); };
+  const newRole = () => { setRoleCode(''); setRf(emptyRole()); setROrig(null); setRTried(false); setRMsg(null); };
+  const clearRole = () => { setRoleCode(''); setRf(emptyRole(false)); setROrig(null); setRTried(false); setRMsg(null); };
+  const saveRole = () => {
+    if (role && !changedRoleFields(rf, rOrig, en).length) { setRTried(false); setRMsg({ kind: 'info', text: tx('No hay cambios que guardar.', 'There are no changes to save.') }); return; }
+    setRTried(true);
+    if (!rv.ok) { setRMsg({ kind: 'error', text: rv.first }); notify(tx('Rol incompleto', 'Incomplete role'), rv.first, 'warning'); return; }
+    const what = role ? tx(`la actualización del rol ${rf.name} (${changedRoleFields(rf, rOrig, en).join(', ')})`, `the update of role ${rf.name} (${changedRoleFields(rf, rOrig, en).join(', ')})`) : tx(`el alta del rol ${rf.name} (código ${roleCodeOf(rf.name)}, ${sectionCount(rf)} secciones)`, `the creation of role ${rf.name} (code ${roleCodeOf(rf.name)}, ${sectionCount(rf)} sections)`);
+    const text = tx(`Datos validados, pero no se guardó ${what}: SupplyFlow aún no tiene endpoint de escritura de roles y el servidor todavía no evalúa permisos por sección. Habilitarlo requiere tu autorización.`, `Data validated, but ${what} was not saved: SupplyFlow does not yet have a role write endpoint and the server does not evaluate per-section permissions yet. Enabling it requires your authorization.`);
+    setRMsg({ kind: 'locked', text }); notify(tx('Registro no habilitado', 'Recording not enabled'), text, 'warning');
+  };
 
   // ---------- Tab 5: bitácora (paginada en el servidor) ----------
   const [af, setAf] = useState(AUDIT_EMPTY);
@@ -301,52 +319,83 @@ export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
       </div>; })()}
 
     {/* 3. ROLES Y PERMISOS */}
-    {tab === 3 && <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      <div className="lg:col-span-7 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5">
-        <div className="pb-3 border-b border-slate-100"><h3 className="text-base font-extrabold text-slate-900">{tx('Consultar rol', 'View role')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Selecciona un rol del catálogo para ver su acceso efectivo y los permisos registrados.', 'Select a role from the catalog to see its effective access and registered permissions.')}</p></div>
-        <div className="space-y-4">
-          <label className="block"><span className="block text-xs font-extrabold text-slate-800 mb-1">{tx('Nombre del rol', 'Role Name')}</span><input readOnly aria-label={tx('Nombre del rol', 'Role Name')} value={role ? `${role.name} (${role.code})` : ''} placeholder={DASH} className={inputCls} /></label>
-          <label className="block"><span className="block text-xs font-extrabold text-slate-800 mb-1">{tx('Descripción', 'Description')}</span><textarea readOnly rows={2} aria-label={tx('Descripción', 'Description')} value={role?.description || ''} placeholder={DASH} className={`${inputCls} resize-none`} /></label>
-          <div className="space-y-2 pt-1">
-            <label className="flex items-center gap-2"><input type="checkbox" disabled checked={!!role && access.canEdit} className="w-4 h-4 rounded border-slate-300" /><span className="text-xs font-bold text-slate-800">{tx('Puede crear, editar, seleccionar, continuar y eliminar registros', 'Can create, edit, select, continue, and delete records')}</span></label>
-            <label className="flex items-center gap-2"><input type="checkbox" disabled checked={false} className="w-4 h-4 rounded border-slate-300" /><span className="text-xs font-bold text-slate-800">{tx('Puede administrar usuarios y roles', 'Can manage users and roles')}</span></label>
-            {role && <p className="text-[10px] text-slate-400 pl-6">{role.code === MASTER ? tx('Master Admin puede registrar requisiciones, regularizaciones y solicitudes de cambio, y consultar usuarios; la administración de usuarios y roles aún no existe.', 'Master Admin can record requisitions, regularizations and change requests, and view users; user and role administration does not exist yet.') : tx('El servidor no concede escrituras ni consultas de módulos conectados a este rol.', 'The server grants no writes or connected-module reads to this role.')}</p>}
+    {tab === 3 && <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+      <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4" data-testid="role-form">
+        <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-slate-100">
+          <div><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Crear o editar rol', 'Create or edit role')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Selecciona las secciones que podrán abrir los usuarios asignados.', 'Select the sections assigned users will be able to open.')}</p></div>
+          <span className={`px-3 py-1 text-[10.5px] font-black rounded-full border shrink-0 ${role ? 'bg-purple-50 text-purple-800 border-purple-200' : 'bg-blue-50 text-blue-900 border-blue-100'}`}>{role ? tx('Editar rol', 'Edit role') : tx('Nuevo rol', 'New role')}</span>
+        </div>
+        {role ? <div data-testid="role-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-purple-200 bg-purple-50/60 text-xs font-black text-purple-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 shadow-inner shrink-0" />{tx(`Modo edición: ${role.name} (${role.code}). Modifica la información y presiona Guardar.`, `Edit mode: ${role.name} (${role.code}). Edit the information and press Save.`)}</div>
+          : <div data-testid="role-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-xs font-black text-emerald-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-300 to-emerald-600 shadow-inner shrink-0" />{tx('Modo nueva captura activo. Completa la información y presiona Guardar. Al terminar, el formulario se limpiará y bloqueará.', 'New capture mode active. Fill in the information and press Save. When finished, the form will be cleared and locked.')}</div>}
+        <label className="block"><span className="block text-xs font-black text-slate-900 mb-1.5">{tx('Nombre del rol', 'Role name')} *</span>
+          <input type="text" aria-label={tx('Nombre del rol', 'Role name')} value={rf.name} maxLength={128} onChange={e => setR('name', e.target.value)} className={`w-full px-3.5 py-3 bg-white border rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${rTried && rv.errors.name ? 'border-rose-400' : 'border-slate-300'}`} />
+          <span className="block text-[10px] text-slate-500 mt-1">{role ? `${tx('Código', 'Code')}: ${role.code}${role.is_system ? tx(' · rol del sistema', ' · system role') : ''}` : rf.name.trim() ? `${tx('Código que se asignará', 'Code to be assigned')}: ${roleCodeOf(rf.name) || '—'}` : tx('El código del rol se genera a partir del nombre.', 'The role code is generated from the name.')}</span>
+          {rTried && rv.errors.name && <span role="alert" className="block text-[10.5px] text-rose-600 font-semibold mt-1">{rv.errors.name}</span>}</label>
+        <label className="block"><span className="block text-xs font-black text-slate-900 mb-1.5">{tx('Descripción', 'Description')}</span>
+          <textarea rows={3} aria-label={tx('Descripción', 'Description')} value={rf.description} maxLength={600} onChange={e => setR('description', e.target.value)} className={`w-full px-3.5 py-3 bg-white border rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${rTried && rv.errors.description ? 'border-rose-400' : 'border-slate-300'}`} />
+          {rTried && rv.errors.description && <span role="alert" className="block text-[10.5px] text-rose-600 font-semibold mt-1">{rv.errors.description}</span>}</label>
+        <div className="space-y-2.5">
+          <label className="flex items-center gap-2.5 text-xs font-black text-slate-900 cursor-pointer"><input type="checkbox" checked={rf.canEdit} onChange={e => setR('canEdit', e.target.checked)} aria-label={tx('Puede crear, editar, seleccionar, continuar y eliminar registros', 'Can create, edit, select, continue and delete records')} className="w-4 h-4 rounded border-slate-300 text-blue-600" />{tx('Puede crear, editar, seleccionar, continuar y eliminar registros', 'Can create, edit, select, continue and delete records')}</label>
+          <label className="flex items-center gap-2.5 text-xs font-black text-slate-900 cursor-pointer"><input type="checkbox" checked={rf.canManageUsers} onChange={e => setR('canManageUsers', e.target.checked)} aria-label={tx('Puede administrar usuarios y roles', 'Can manage users and roles')} className="w-4 h-4 rounded border-slate-300 text-blue-600" />{tx('Puede administrar usuarios y roles', 'Can manage users and roles')}</label>
+          {role && <p className="text-[10px] text-slate-500 pl-6">{role.code === MASTER ? tx('Hoy el servidor concede a Master Admin las escrituras de requisiciones (RF1/R2/R3) y la consulta de usuarios; la administración de usuarios y roles aún no tiene endpoint.', 'Today the server grants Master Admin requisition writes (RF1/R2/R3) and user reads; user and role administration has no endpoint yet.') : tx('Hoy el servidor no concede consultas ni escrituras de módulos conectados a este rol.', 'Today the server grants this role no reads or writes of connected modules.')}</p>}
+        </div>
+        <div>
+          <span className="block text-xs font-black text-slate-900 mb-2">{tx('Secciones permitidas', 'Allowed sections')}{role ? <span className="font-semibold text-slate-400"> · {tx('precargadas con el acceso efectivo del servidor', 'preloaded with effective server access')}</span> : ''}</span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5" role="group" aria-label={tx('Secciones permitidas', 'Allowed sections')}>
+            {SECTIONS.map(([k, es, e, connected]) => <label key={k} title={connected ? tx('Conectado a MariaDB', 'Connected to MariaDB') : tx('Pantalla aún sin conexión a MariaDB', 'Screen not connected to MariaDB yet')} className={`flex items-center gap-3 p-3.5 rounded-xl border text-xs font-black cursor-pointer transition-all ${rf.sections[k] ? 'bg-blue-50/40 border-blue-300 text-slate-900' : 'bg-slate-50/40 border-slate-200 text-slate-800 hover:border-slate-300'}`}>
+              <input type="checkbox" checked={!!rf.sections[k]} onChange={ev => setSection(k, ev.target.checked)} aria-label={en ? e : es} className="w-4 h-4 rounded border-slate-300 text-blue-600 shrink-0" /><span className="leading-tight">{en ? e : es}{!connected && <sup className="text-slate-400 font-bold ml-0.5" aria-hidden="true">*</sup>}</span></label>)}
           </div>
-          <div>
-            <span className="block text-xs font-extrabold text-slate-900 mb-2">{tx('Secciones permitidas (acceso efectivo en el servidor)', 'Allowed sections (effective server access)')}</span>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {SECTIONS.map(([k, es, e, connected]) => { const on = !!role && access.sections[k]; return <label key={k} title={connected ? tx('Conectado a MariaDB · requiere Master Admin', 'Connected to MariaDB · requires Master Admin') : tx('Pantalla sin conexión a MariaDB', 'Screen not connected to MariaDB')} className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-bold transition-all ${on ? 'bg-slate-50/80 border-slate-300 text-slate-900 shadow-2xs' : 'bg-white border-slate-100 text-slate-500'}`}>
-                <input type="checkbox" disabled checked={on} aria-label={en ? e : es} className="w-3.5 h-3.5 rounded border-slate-300" /><span className="truncate">{en ? e : es}</span>{!connected && <span className="ml-auto text-[9px] font-semibold text-slate-400 shrink-0">{tx('sin BD', 'no DB')}</span>}</label>; })}
-            </div>
-            <p className="text-[10px] text-slate-400 mt-2">{tx('Hoy los módulos conectados exigen el rol Master Admin en el servidor; las pantallas "sin BD" aún no consultan MariaDB.', 'Connected modules currently require the Master Admin role on the server; "no DB" screens do not query MariaDB yet.')}</p>
-          </div>
-          {role && <div><span className="block text-xs font-extrabold text-slate-900 mb-1">{tx('Permisos registrados en MariaDB', 'Permissions registered in MariaDB')}</span>{role.permissions?.length ? <ul className="space-y-1">{role.permissions.map(p => <li key={p.code} className="text-[11px] text-slate-600"><code className="px-1.5 py-0.5 bg-slate-100 rounded text-[10px]">{p.code}</code> {p.description}</li>)}</ul> : <p className="text-[11px] text-slate-400">{tx('Sin permisos registrados para este rol.', 'No permissions registered for this role.')}</p>}</div>}
-          <div className="flex items-center gap-3 pt-4 border-t border-slate-100">
-            <button type="button" disabled title={LOCK} className="px-5 py-2 bg-slate-200 text-slate-500 font-extrabold text-xs rounded-xl flex items-center gap-1.5 cursor-not-allowed"><Lock className="w-3.5 h-3.5" />{tx('Guardar rol', 'Save role')}</button>
-            <button type="button" onClick={() => setRoleCode('')} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all flex items-center gap-1 cursor-pointer"><span>🧹</span>{tx('Limpiar', 'Clean')}</button>
-          </div>
+          <p className="text-[10px] text-slate-400 mt-1.5">{tx('* Pantalla que aún no consulta MariaDB (Flujo del Proceso, Contratista, Gestión del Contratista, Servicios Operativos, Automatización con IA, Ayuda y Configuración).', '* Screen that does not query MariaDB yet.')}</p>
+          {rTried && rv.errors.sections && <p role="alert" className="text-[10.5px] text-rose-600 font-semibold mt-1.5">{rv.errors.sections}</p>}
+        </div>
+        {rv.warnings.map(w => <p key={w} className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">{w}</p>)}
+        {rTried && rv.errors.master && <p role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold">{rv.errors.master}</p>}
+        {rMsg && <p role={rMsg.kind === 'error' ? 'alert' : 'status'} data-testid="role-save-msg" className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${rMsg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : rMsg.kind === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>{rMsg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{rMsg.text}</span></p>}
+        {role && <div className="text-[10.5px] text-slate-500">{tx('Permisos registrados en MariaDB', 'Permissions recorded in MariaDB')}: {role.permissions?.length ? role.permissions.map(p => <code key={p.code} className="mx-0.5 px-1.5 py-0.5 bg-slate-100 rounded text-[10px]">{p.code}</code>) : tx('ninguno', 'none')}</div>}
+        <div className="flex flex-wrap items-center gap-3 pt-1 text-sm font-black">
+          <button type="button" onClick={newRole} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-1.5"><span>+</span>{tx('Nuevo rol', 'New role')}</button>
+          <button type="button" onClick={saveRole} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-1.5"><span aria-hidden="true">💾</span>{tx('Guardar rol', 'Save role')}</button>
+          <button type="button" onClick={clearRole} className="px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm flex items-center gap-1.5"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
         </div>
       </div>
-      <div className="lg:col-span-5 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100"><div><h3 className="text-base font-extrabold text-slate-900">{tx('Catálogo de roles', 'Roles Catalog')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Los roles en uso no pueden eliminarse.', 'Roles currently in use cannot be deleted.')}</p></div><span className="px-2.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-100 rounded-full text-xs font-bold">{roles.items.length} {tx('roles', 'roles')}</span></div>
-        <div className="space-y-3 max-h-[700px] overflow-y-auto pr-1">
-          {roles.items.map(r => { const a = roleAccess(r.code); return <div key={r.code} className={`p-4 rounded-2xl border space-y-3 transition-all ${roleCode === r.code ? 'border-blue-400 bg-blue-50/30' : 'border-slate-200/80 bg-slate-50/40 hover:border-slate-300'}`}>
-            <div><h4 className="text-sm font-extrabold text-slate-900">{r.name}{r.is_system && <span className="ml-2 align-middle text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5">{tx('Sistema', 'System')}</span>}</h4><p className="text-xs text-slate-500 mt-0.5 font-medium leading-relaxed">{r.description || tx('Sin descripción registrada.', 'No description recorded.')}</p></div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-blue-50 text-blue-700 border border-blue-200/60">{a.sectionCount} {tx('secciones', 'sections')}</span>
-              <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${a.canEdit ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 'bg-amber-50 text-amber-700 border border-amber-200/60'}`}>{a.canEdit ? tx('Edición', 'Editing') : tx('Sin acceso efectivo', 'No effective access')}</span>
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-purple-50 text-purple-700 border border-purple-200/60">{r.users} {tx('usuario(s)', 'user(s)')}</span>
-              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-slate-100 text-slate-600 border border-slate-200">{(r.permissions || []).length} {tx('permiso(s)', 'permission(s)')}</span>
+
+      <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4" data-testid="role-catalog">
+        <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-100"><div><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Catálogo de roles', 'Roles catalog')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Los roles en uso no pueden eliminarse.', 'Roles in use cannot be deleted.')}</p></div><span data-testid="roles-badge" className="px-3 py-1 bg-purple-50 text-purple-800 border border-purple-100 rounded-full text-[10.5px] font-black shrink-0">{roles.items.length} {tx('roles', 'roles')}</span></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[860px] overflow-y-auto pr-1">
+          {roles.items.map(r => { const c = roleCardInfo(r, en); return <div key={r.code} data-testid="role-card" data-code={r.code} className={`p-4 rounded-2xl border space-y-3 transition-all ${roleCode === r.code ? 'border-blue-400 ring-2 ring-blue-100 bg-blue-50/20' : 'border-slate-200/80 bg-white hover:border-slate-300'} shadow-2xs`}>
+            <div><h4 className="text-base font-black text-slate-900">{r.name}{r.is_system && <span className="ml-2 align-middle text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded px-1.5 py-0.5">{tx('Sistema', 'System')}</span>}</h4><p className="text-[11px] text-slate-500 mt-1 leading-relaxed">{r.description || tx('Sin descripción registrada.', 'No description recorded.')}</p></div>
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-black">
+              <span className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-800 border border-blue-100">{c.sections} {tx('secciones', 'sections')}</span>
+              <span className={`px-2.5 py-1 rounded-full border ${c.modeTone}`}>{c.modeText}</span>
+              <span className="px-2.5 py-1 rounded-full bg-purple-50 text-purple-800 border border-purple-100">{c.users} {tx('usuario(s)', 'user(s)')}</span>
             </div>
-            <div className="flex items-center gap-2 pt-1">
-              <button type="button" onClick={() => setRoleCode(r.code)} className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 text-[10px] font-black tracking-wider rounded-lg transition-colors uppercase cursor-pointer">{tx('Ver', 'View')}</button>
-              <button type="button" disabled title={r.users ? tx('Rol en uso: no puede eliminarse.', 'Role in use: cannot be deleted.') : LOCK} className="px-3 py-1 bg-slate-200 text-slate-400 text-[10px] font-black tracking-wider rounded-lg uppercase cursor-not-allowed">{tx('Eliminar', 'Delete')}</button>
+            <div className="flex items-center gap-2 pt-2 text-xs font-black">
+              <button type="button" onClick={() => setRoleCode(r.code)} className="px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm uppercase">{tx('Editar', 'Edit')}</button>
+              <button type="button" onClick={() => { setRDel(r); setRTyped(''); setRDelMsg(''); }} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-sm uppercase">{tx('Eliminar', 'Delete')}</button>
             </div>
           </div>; })}
           {roles.status === 'ready' && !roles.items.length && <p className="text-xs text-slate-400">{tx('No hay roles registrados.', 'No roles registered.')}</p>}
         </div>
+        <p className="text-[10.5px] text-slate-400">{tx('Secciones y modo muestran el acceso efectivo que aplica hoy el servidor (los módulos conectados exigen Master Admin).', 'Sections and mode show the effective access the server applies today (connected modules require Master Admin).')}</p>
       </div>
     </div>}
+
+    {rDel && (() => { const b = roleDeleteBlock(rDel, en); const okName = rTyped.trim() === rDel.name; return <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onMouseDown={e => { if (e.target === e.currentTarget) setRDel(null); }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="sf-role-del" data-testid="role-delete" className="bg-white w-full max-w-md rounded-xl shadow-2xl overflow-hidden">
+        <div className="bg-rose-600 px-5 py-3"><h2 id="sf-role-del" className="text-white font-black text-sm">{tx('Eliminar rol', 'Delete role')} · {rDel.name}</h2></div>
+        <div className="p-5 space-y-3 text-xs text-slate-700">
+          {b ? <p className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{b}</span></p> : <>
+            <p>{tx('El rol no tiene usuarios asignados. Escribe exactamente su nombre para confirmar.', 'The role has no assigned users. Type its exact name to confirm.')}</p>
+            <label className="block text-sm font-medium"><span className="block text-[11px] font-bold text-slate-700 mb-1">{tx('Nombre a confirmar', 'Name to confirm')}</span><input aria-label={tx('Nombre a confirmar', 'Name to confirm')} value={rTyped} onChange={e => { setRTyped(e.target.value); setRDelMsg(''); }} autoComplete="off" placeholder={rDel.name} className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-rose-500" /></label>
+            {rDelMsg && <p role="status" className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{rDelMsg}</span></p>}
+          </>}
+          <div className="flex justify-end gap-2 text-xs font-bold">
+            <button type="button" onClick={() => setRDel(null)} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-200">{b ? tx('Entendido', 'Got it') : tx('Cancelar', 'Cancel')}</button>
+            {!b && <button type="button" disabled={!okName} onClick={() => setRDelMsg(tx(`No se eliminó el rol ${rDel.name}: eliminar roles es una escritura sin endpoint autorizado.`, `Role ${rDel.name} was not deleted: deleting roles is a write without an authorized endpoint.`))} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">{tx('Sí, eliminar', 'Yes, delete')}</button>}
+          </div>
+        </div>
+      </div>
+    </div>; })()}
 
     {/* 4. RESUMEN DE ACCESO */}
     {tab === 4 && <div className="space-y-6">

@@ -15,7 +15,7 @@ const fn = new Map([['a', { po_authorizer: 2 }], ['b', { po_buyer: 1, rfq_contac
 test('acceso efectivo del servidor: solo master_admin abre módulos conectados', () => {
   assert.equal(SECTIONS.length, 19);
   const m = roleAccess('master_admin'), c = roleAccess('compras');
-  assert.equal(m.sectionCount, 7); assert.equal(m.sections.clientes, true); assert.equal(m.sections.flujoProceso, false);
+  assert.equal(m.sectionCount, 12); assert.equal(m.sections.clientes, true); assert.equal(m.sections.factura, true); assert.equal(m.sections.flujoProceso, false);
   assert.equal(c.sectionCount, 0); assert.equal(c.canEdit, false); assert.equal(m.canEdit, true);
   assert.equal(m.canManageUsers, false, 'no hay endpoints de escritura de usuarios');
 });

@@ -133,13 +133,42 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     check('Eliminar fotografía vuelve a las iniciales', await form.getByRole('img', { name: 'Vista previa de la fotografía' }).count() === 0);
     await shot(page, 'usuarios_3_alta');
 
-    // Roles
+    // Roles · crear o editar rol + catálogo (guardar y eliminar validan y no se aplican: no hay endpoint de roles)
     await page.getByRole('button', { name: /Roles y permisos/ }).first().click();
     const master = roles.find(r => r.code === 'master_admin');
-    const card = name => page.locator('div.rounded-2xl').filter({ has: page.getByRole('heading', { name: new RegExp(`^${name}`) }) }).last();
-    check('catálogo con roles reales y conteo de usuarios', (await card(master.name).innerText()).includes(`${master.users} usuario(s)`) && (await card(master.name).innerText()).includes('7 secciones') && (await card('Comprador').innerText()).includes('0 secciones'));
-    await card(master.name).getByRole('button', { name: /^Ver$/ }).click();
-    check('rol: acceso efectivo por sección', await val('Nombre del rol') === `${master.name} (master_admin)` && await page.getByLabel('Clientes', { exact: true }).isChecked() && !(await page.getByLabel('Flujo del Proceso', { exact: true }).isChecked()));
+    const card = code => page.locator(`[data-testid="role-card"][data-code="${code}"]`);
+    await card('master_admin').waitFor();
+    check('catálogo con roles reales, conteo de usuarios, secciones y modo', (await card('master_admin').innerText()).includes(`${master.users} usuario(s)`) && (await card('master_admin').innerText()).includes('12 secciones') && (await card('master_admin').innerText()).includes('Edición')
+      && (await card('buyer').innerText()).includes('0 secciones') && (await page.getByTestId('roles-badge').innerText()) === `${roles.length} roles`);
+    check('nuevo rol: modo nueva captura con Inicio y Ayuda marcados', /Modo nueva captura activo/.test(await page.getByTestId('role-mode').innerText()) && await page.getByLabel('Inicio y Dashboard', { exact: true }).isChecked() && await page.getByLabel('Ayuda e Instructivo', { exact: true }).isChecked() && !(await page.getByLabel('Clientes', { exact: true }).isChecked()));
+    await card('master_admin').getByRole('button', { name: 'Editar' }).click();
+    check('editar rol: acceso efectivo por sección precargado', await val('Nombre del rol') === master.name && /Modo edición: Master Admin \(master_admin\)/.test(await page.getByTestId('role-mode').innerText()) && await page.getByLabel('Clientes', { exact: true }).isChecked() && !(await page.getByLabel('Flujo del Proceso', { exact: true }).isChecked()));
+    await page.getByRole('button', { name: /Guardar rol/ }).click();
+    check('editar sin cambios: "No hay cambios que guardar"', (await page.getByTestId('role-save-msg').innerText()).includes('No hay cambios'));
+    await page.getByLabel('Puede administrar usuarios y roles').uncheck();
+    await page.getByRole('button', { name: /Guardar rol/ }).click();
+    check('Master Admin no puede perder la administración', await page.getByTestId('role-form').getByText(/Master Admin debe conservar/).count() >= 1);
+    await page.getByRole('button', { name: /Nuevo rol/ }).click();
+    await page.getByRole('button', { name: /Guardar rol/ }).click();
+    check('nuevo rol: nombre obligatorio', await page.getByTestId('role-form').getByText('Indica el nombre del rol.', { exact: true }).count() >= 1);
+    await page.getByLabel('Nombre del rol').fill('Comprador');
+    await page.getByRole('button', { name: /Guardar rol/ }).click();
+    check('nuevo rol: nombre duplicado rechazado', await page.getByTestId('role-form').getByText('Ya existe un rol con ese nombre.').count() >= 1);
+    await page.getByLabel('Nombre del rol').fill('Operaciones QA');
+    await page.getByLabel('Descripción').fill('Gestiona requisiciones y recepción (sintético)');
+    await page.getByLabel('Puede crear, editar, seleccionar, continuar y eliminar registros').check();
+    await page.getByLabel('Solicitud / Requisición', { exact: true }).check();
+    await page.getByRole('button', { name: /Guardar rol/ }).click();
+    const rm = await page.getByTestId('role-save-msg').innerText();
+    check('nuevo rol válido: código generado, secciones y NO se guarda', rm.includes('no se guardó el alta del rol Operaciones QA') && rm.includes('código operaciones_qa') && rm.includes('3 secciones') && writes.length === 0, rm);
+    await page.getByRole('button', { name: 'Limpiar' }).click();
+    check('Limpiar deja el formulario vacío', await val('Nombre del rol') === '' && !(await page.getByLabel('Inicio y Dashboard', { exact: true }).isChecked()));
+    await card('buyer').getByRole('button', { name: 'Eliminar' }).click();
+    check('eliminar rol en uso: no puede eliminarse', (await page.getByTestId('role-delete').innerText()).includes('los roles en uso no pueden eliminarse') && await page.getByTestId('role-delete').getByRole('button', { name: 'Sí, eliminar' }).count() === 0);
+    await page.getByTestId('role-delete').getByRole('button', { name: 'Entendido' }).click();
+    await card('master_admin').getByRole('button', { name: 'Eliminar' }).click();
+    check('eliminar rol del sistema: no puede eliminarse', (await page.getByTestId('role-delete').innerText()).includes('rol del sistema'));
+    await page.getByTestId('role-delete').getByRole('button', { name: 'Entendido' }).click();
     await shot(page, 'usuarios_3_roles');
 
     // Resumen
