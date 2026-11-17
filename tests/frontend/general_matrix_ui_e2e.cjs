@@ -48,11 +48,16 @@ const today = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '
     await page.getByText('Matriz general por cliente').waitFor();
     const allCard = page.getByRole('button', { name: /Abrir matriz de todos los clientes/ });
     await page.waitForFunction(() => !document.body.innerText.includes('Consultando requisiciones en MariaDB'), null, { timeout: 20000 });
-    const nums = async loc => (await loc.locator('span.text-sm.font-black').allTextContents()).map(Number);
+    const nums = async loc => (await loc.locator('[data-testid="card-num"]').allTextContents()).map(Number);
     const allNums = await nums(allCard);
     check('tarjeta "Todos los clientes" = resumen de MariaDB (requisiciones, con OC, con factura)',
       allNums.join() === [head.summary.total, head.summary.with_purchase_order, head.summary.with_invoice].join(), `${allNums} vs ${head.summary.total},${head.summary.with_purchase_order},${head.summary.with_invoice}`);
     check('una tarjeta por cliente registrado', await page.getByText(`${clients.length} de ${clients.length} clientes`).isVisible());
+    const rec = (await api('/api/v1/recovery/matrix')).items; const ids = new Set(all.map(r => r.id));
+    const prog = rec.filter(x => ids.has(x.id) && x.progress !== null && x.progress !== undefined).map(x => Number(x.progress));
+    const avg = prog.length ? Math.round(prog.reduce((a, b) => a + b, 0) / prog.length) : null;
+    check('"Prom." = avance promedio del servidor (política de 8 etapas) y barra de avance', (await allCard.textContent()).includes(`Prom. ${avg === null ? '—' : `${avg}%`}`)
+      && (await allCard.getByRole('progressbar').getAttribute('aria-valuenow')) === String(avg ?? 0), `${avg}`);
     const qa1Card = page.getByRole('button', { name: `Abrir matriz de ${qa1.name}` });
     const qa1Nums = await nums(qa1Card);
     check('tarjeta del cliente con conteos reales', qa1Nums[0] === qa1.requisitions && qa1Nums[1] === 1 && qa1Nums[2] === 1, qa1Nums.join());
@@ -77,7 +82,7 @@ const today = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '
     const t2 = (await row2.textContent()).replace(/\s+/g, ' ');
     const risk2 = r2.need_date < today ? 'Vencido' : 'A tiempo';
     check('proveedor ganador por adjudicación, cotizaciones, etapa y riesgo', ['Instrumentos Europa Sintética', 'por adjudicación', 'Comparativo y autorización', risk2].every(x => t2.includes(x)) && (await row2.locator('td').nth(3).textContent()).trim().startsWith('2'), t2);
-    check('Emitir OC bloqueado', await row1.getByRole('button', { name: /Emitir OC/ }).isDisabled());
+    check('fila de solo consulta: sin acción de emitir OC', await row1.getByRole('button', { name: /Emitir OC/ }).count() === 0 && (await row1.locator('td').last().textContent()).trim() === 'Facturado');
     await shot(page, 'matriz_2_cliente');
     await matrix.getByLabel('Etapa').selectOption({ label: 'Factura (1)' });
     check('filtro de etapa', await matrix.getByText('1 requisiciones visibles').isVisible() && await row1.count() === 1);
@@ -92,7 +97,7 @@ const today = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '
 
     // Detalle existente (con proveedor de la OC)
     const detResp = page.waitForResponse(r => /\/api\/v1\/matrix\/requisitions\/[0-9a-f-]{36}$/.test(r.url()));
-    await row1.getByRole('button', { name: /^Ver$/ }).click();
+    await row1.getByRole('button', { name: `Ver detalle de ${r1.folio}` }).click();
     check('detalle "Ver" (200)', (await detResp).status() === 200);
     const dialog = page.getByRole('dialog');
     await dialog.getByText('OC-QA-0009').waitFor();
@@ -116,14 +121,19 @@ const today = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '
     check('impresión con las filas filtradas', (await popup.locator('tbody tr').count()) === qa1Rows.length && ptxt.includes('Grupo Gerez') && ptxt.includes(qa1.name) && ptxt.includes('FAC-QA-0001'));
     await popup.close();
 
-    // Fondo cierra la matriz; "Todos los clientes" abre todo
-    await page.locator('div.min-h-screen.cursor-pointer').first().click({ position: { x: 8, y: 8 } });
-    check('clic en el fondo cierra la matriz', await page.getByTestId('client-matrix').count() === 0);
+    // "← Cambiar cliente" cierra la matriz; "Todos los clientes" abre todo; "← Volver a clientes" también cierra
+    await matrix.getByRole('button', { name: 'Cambiar cliente' }).click();
+    check('"← Cambiar cliente" cierra la matriz', await page.getByTestId('client-matrix').count() === 0 && await page.getByRole('button', { name: /Volver a clientes/ }).count() === 0);
     await allCard.click();
     await matrix.waitFor();
     check('"Abrir todo" muestra todas las requisiciones', await matrix.getByText(`${head.total} requisiciones visibles`).isVisible());
     check('primera fila = orden del servidor', (await matrix.getByRole('row').nth(1).textContent()).includes(head.items[0].folio));
+    const heads = (await matrix.locator('thead th').allTextContents()).map(x => x.trim().toUpperCase());
+    check('matriz: 12 columnas del diseño', JSON.stringify(heads) === JSON.stringify(['REQUISICIÓN', 'CLIENTE / PROYECTO', 'FOLIO INTERNO', 'COTIZACIONES', 'PROVEEDOR GANADOR', 'OC', 'RECEPCIÓN', 'FACTURA', 'MONTO', 'FECHA REQUERIDA', 'ETAPA', 'RIESGO']), heads.join('|'));
+    check('encabezado "Todos los clientes · Matriz general"', (await matrix.textContent()).includes('Todos los clientes · Matriz general'));
     await shot(page, 'matriz_3_todos');
+    await page.getByRole('button', { name: /Volver a clientes/ }).click();
+    check('"← Volver a clientes" cierra la matriz', await page.getByTestId('client-matrix').count() === 0);
 
     check('sin escrituras a la API', writes.length === 0, writes.join(', '));
     check('sin errores JavaScript', jsErrors.length === 0, jsErrors.join(' | '));

@@ -12,7 +12,8 @@ export function mergeStages(rows = [], recoveryItems = null) {
   return rows.map(r => {
     const s = byId.get(r.id);
     if (!s) return { ...r };
-    return { ...r, stage_index: s.stage_index === null || s.stage_index === undefined ? null : Number(s.stage_index), client_tax: s.client_tax || null };
+    const progress = s.progress === null || s.progress === undefined || !Number.isFinite(Number(s.progress)) ? null : Number(s.progress);
+    return { ...r, stage_index: s.stage_index === null || s.stage_index === undefined ? null : Number(s.stage_index), client_tax: s.client_tax || null, progress };
   });
 }
 
@@ -59,8 +60,15 @@ export function averageOpenAge(rows = [], day = localToday()) {
   return ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : null;
 }
 
+/** Average stage progress (server policy: 10, 22, 36, 50, 64, 76, 90, 100 %) of the rows that have one; null otherwise. */
+export function averageProgress(rows = []) {
+  const v = rows.map(r => r.progress).filter(x => x !== null && x !== undefined && Number.isFinite(Number(x))).map(Number);
+  return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
+}
+
 function cardStats(rows, day) {
   return {
+    avgProgress: averageProgress(rows),
     requisitions: rows.length,
     withPO: rows.filter(r => Number(r.purchase_order_count) > 0).length,
     withInvoice: rows.filter(r => Number(r.invoice_count) > 0).length,

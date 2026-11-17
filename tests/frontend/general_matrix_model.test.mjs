@@ -79,3 +79,17 @@ test('impresión: escapa HTML de los datos', () => {
   assert.equal(escapeHtml(`"'&`), '&quot;&#39;&amp;');
   assert.equal(money('1500.000000', 'USD'), '$1,500.00 USD'); assert.equal(money(null, 'USD'), '—');
 });
+
+test('avance: se toma del servidor por requisición y se promedia por tarjeta', async () => {
+  const { averageProgress } = await import('../../src/views/generalMatrix/model.mjs');
+  const rec = [{ id: 'r1', stage_index: 7, progress: 100 }, { id: 'r2', stage_index: 3, progress: 50 }, { id: 'r3', stage_index: 2, progress: 36 }, { id: 'r4', stage_index: 0, progress: 10 }, { id: 'r5', stage_index: null, progress: null }];
+  const m = mergeStages(rows, rec);
+  assert.deepEqual(m.map(r => r.progress), [100, 50, 36, 10, null]);
+  assert.equal(averageProgress(m), Math.round((100 + 50 + 36 + 10) / 4), 'sin avance (pendiente de equivalencia) no cuenta');
+  assert.equal(averageProgress([]), null);
+  const cc = clientCards([{ id: 'c1', code: 'C1', name: 'Cliente Uno' }, { id: 'c2', code: 'C2', name: 'Cliente <Dos>' }], m, DAY);
+  assert.equal(cc.all.avgProgress, 49);
+  assert.equal(cc.items.find(c => c.id === 'c1').avgProgress, 75);
+  assert.equal(cc.items.find(c => c.id === 'c2').avgProgress, 23);
+  assert.equal(mergeStages(rows, null)[0].progress, undefined, 'sin fuente de etapas no se inventa avance');
+});

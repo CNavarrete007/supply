@@ -18,14 +18,15 @@ const check = (name, ok, detail = '') => results.push([name, !!ok, detail]);
 const api = p => new RegExp('/api/v1/' + p);
 
 // Contract per module: sidebar label, endpoints that MUST answer 200, and how to obtain a value from
-// MariaDB (via the same API) that MUST appear on screen. Optional `detail`: endpoint opened by "Ver".
+// MariaDB (via the same API) that MUST appear on screen. Optional `detail`: endpoint opened by "Ver" (or by `detailButton`).
 const MODULES = [
   { label: 'Clientes', endpoints: ['catalogs/clients\\?', 'matrix/clients'], detail: 'catalogs/clients/[0-9a-f-]{36}',
     expect: async r => (await r('/api/v1/catalogs/clients?page=1&page_size=25&q=&status=all')).items?.[0]?.name },
   { label: 'Proveedores', endpoints: ['catalogs/suppliers\\?'], detail: 'catalogs/suppliers/[0-9a-f-]{36}',
     expect: async r => (await r('/api/v1/catalogs/suppliers?page=1&page_size=25&q=&status=all')).items?.[0]?.name },
   // Matriz General: tarjetas por cliente; la matriz se abre con la tarjeta "Todos los clientes" (diseño clase_matriz_general).
-  { label: 'Matriz General', endpoints: ['matrix/requisitions\\?', 'matrix/clients', 'recovery/matrix$'], detail: 'matrix/requisitions/[0-9a-f-]{36}',
+  // En el rediseño del 17 nov 2026 el detalle se abre con el folio de la requisición ("Ver detalle de …").
+  { label: 'Matriz General', endpoints: ['matrix/requisitions\\?', 'matrix/clients', 'recovery/matrix$'], detail: 'matrix/requisitions/[0-9a-f-]{36}', detailButton: /^(Ver detalle de|View details of) /,
     prepare: async page => page.getByRole('button', { name: /Abrir matriz de todos los clientes|Open matrix for all clients/ }).click(),
     expect: async r => (await r('/api/v1/matrix/requisitions?page=1&page_size=25&q=&client=all&has=all')).items?.[0]?.folio },
   // Reportes: generador gerencial (clase_reportes) con las fuentes de la Matriz General; el reporte se genera con el botón.
@@ -95,7 +96,7 @@ const MODULES = [
       }
       if (m.detail && expected) {
         const wait = page.waitForResponse(r => api(m.detail).test(r.url()), { timeout: 15000 }).then(r => r.status()).catch(() => 'sin respuesta');
-        await page.getByRole('button', { name: /^(Ver|View)$/ }).first().click();
+        await page.getByRole('button', { name: m.detailButton || /^(Ver|View)$/ }).first().click();
         const status = await wait;
         check(`${m.label}: detalle "Ver" responde 200`, status === 200, String(status));
         await page.waitForTimeout(500);
