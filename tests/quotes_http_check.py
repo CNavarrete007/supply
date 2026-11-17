@@ -170,6 +170,19 @@ try:
         check(f"Adjudicación {x['folio']}: conteos y OC = comparativo", x['item_count'] == len(act) and x['awarded_items'] == sum(1 for l in act if l['award'])
               and sorted((x['purchase_orders'] or '').split(', ')) == sorted([o['folio'] for o in c10['orders']] or ['']) and (c10['customer_quote'] or {}).get('id') == x['id'])
 
+    # Tarjeta 11 · Matriz interna de proveedores: referencias, partidas ofertadas/adjudicadas y archivo, coherentes con el comparativo.
+    m11 = get(f'{R}/supplier-quotes?page_size=50')
+    check('Matriz interna: campos aditivos presentes y enteros', all({'requisition_id', 'client_reference', 'internal_reference', 'file_name'} <= set(x) and all(isinstance(x[k], int) for k in ('offered_count', 'awarded_lines', 'req_items', 'file_count')) for x in m11['items']))
+    check('Matriz interna: adjudicada ⇔ partidas adjudicadas > 0 (sin partidas canceladas)', all(x['awarded_lines'] <= x['req_items'] and (x['awarded_lines'] == 0 or x['awarded']) for x in m11['items']))
+    for x in m11['items'][:4]:
+        c11 = get(f"{R}/comparison?requisition={x['requisition_id']}")
+        cq = next((q for q in c11['quotes'] if q['id'] == x['id']), None)
+        act = [l for l in c11['lines'] if l['line_status'] == 'active']
+        check(f"Matriz interna {x['folio']}: comparativo de su requisición coincide", cq is not None and cq['awarded_lines'] == x['awarded_lines'] and len(act) == x['req_items'] and c11['requisition']['folio'] == x['requisition'])
+    if m11['items']:
+        q11 = m11['items'][0]
+        check('Matriz interna: búsqueda por referencia interna o del cliente', all(get(f"{R}/supplier-quotes?page_size=50&q={v}")['total'] >= 1 for v in [q11['client_reference'], q11['internal_reference']] if v))
+
     # Tarjeta 6 · Cotización al cliente: requisiciones con ofertas, tipo de cambio registrado y política de aprobación.
     quoted = get(f'{R}/rfq-requisitions?page_size=50&rfq=quoted')
     check('Cotización al cliente: rfq=quoted solo con cotizaciones de proveedor', all(i['quote_count'] > 0 for i in quoted['items']) and quoted['total'] <= allreq['total'])

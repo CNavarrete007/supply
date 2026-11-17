@@ -242,16 +242,17 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('"Ver matriz" abre la Matriz interna de proveedores', (await page.getByRole('button', { name: /Matriz interna de proveedores/ }).getAttribute('aria-pressed')) === 'true');
 
     // 11 · Cotizaciones recibidas: tarjetas por proveedor y filtro en el servidor
-    await page.getByRole('row').filter({ hasText: 'COT-QA-0004' }).waitFor();
-    const r4 = flat(await page.getByRole('row').filter({ hasText: 'COT-QA-0004' }).innerText());
+    await page.getByRole('button', { name: 'Abrir todas: Todas las cotizaciones' }).click();
+    await page.locator('[data-testid="sqm-row"][data-folio="COT-QA-0004"]').waitFor();
+    const r4 = flat(await page.locator('[data-testid="sqm-row"][data-folio="COT-QA-0004"]').innerText());
     const q4 = sqs.items.find(x => x.folio === 'COT-QA-0004');
-    check('cotización adjudicada: proveedor, total y estatus', [q4.supplier_name, usd(q4.total_amount), 'Adjudicada'].every(x => r4.includes(x)), r4);
+    check('cotización adjudicada: proveedor, total y estatus', [q4.supplier_name.toUpperCase(), usd(q4.total_amount), 'Adjudicada'].every(x => r4.includes(x)), r4);
     const sup = sqs.summary.suppliers.find(s => s.total > 1) || sqs.summary.suppliers[0];
     const bySup = page.waitForResponse(r => new RegExp(`supplier=${sup.id}`).test(r.url()));
-    await page.getByRole('button', { name: new RegExp(sup.name) }).first().click();
+    await page.getByRole('button', { name: `Abrir proveedor: ${sup.name}` }).click();
     check('filtro por proveedor en el servidor (200)', (await bySup).status() === 200);
-    await page.getByText(`${sup.total} registros`).waitFor();
-    check('solo cotizaciones del proveedor', (await page.getByRole('row').filter({ hasText: 'COT-QA' }).count()) === sup.total);
+    await page.getByText(`${sup.total} registro(s)`).waitFor();
+    check('solo cotizaciones del proveedor', (await page.getByTestId('sqm-row').count()) === sup.total);
     await shot(page, 'cot_11_recibidas');
 
 
@@ -751,15 +752,79 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await cmpOpen;
     check('"Abrir comparativo" abre la tarjeta 5 con la requisición elegida', (await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).first().getAttribute('aria-pressed')) === 'true');
 
-    // 11 · Matriz interna con costos
-    await page.getByRole('button', { name: /Matriz interna de proveedores/ }).click();
-    await page.getByRole('row').filter({ hasText: 'COT-QA-0004' }).waitFor();
-    const sqDet = page.waitForResponse(r => /\/quotes\/supplier-quotes\/[0-9a-f-]{36}$/.test(r.url()));
-    await page.getByRole('combobox', { name: 'Cotización de proveedor' }).selectOption(q4.id);
-    check('detalle interno (200)', (await sqDet).status() === 200);
-    const it = flat(await page.getByTestId('internal-quote').innerText());
-    check('partidas internas con precio unitario del proveedor', it.includes('Material sintético') && it.includes(usd(q4.total_amount)), it);
+    // 11 · Matriz interna de proveedores (tarjetas por proveedor → matriz con puntaje; uso interno con costos)
+    const m11 = await api('/api/v1/quotes/supplier-quotes?page=1&page_size=50');
+    const sup11 = m11.summary.suppliers; const s11 = k => sup11.reduce((a, x) => a + x[k], 0);
+    const first11 = page.waitForResponse(r => /\/quotes\/supplier-quotes\?/.test(r.url()));
+    await page.getByRole('button', { name: /Matriz interna de proveedores/ }).first().click();
+    check('matriz interna: consulta las cotizaciones de proveedor (200)', (await first11).status() === 200);
+    await page.getByTestId('sqm-supplier-card').first().waitFor();
+    const t11 = flat(await page.getByTestId('sqm-card').innerText());
+    check('matriz interna: encabezado, acciones y sin "Comparar con IA"', ['Matriz de cotizaciones', 'Consulta todas las ofertas registradas y define cuál será la seleccionada.', 'Acciones:', 'EDITAR abre la cotización para modificarla.', 'ELIMINAR borra la cotización después de confirmar.'].every(x => t11.includes(x)) && !/Comparar con IA/i.test(t11));
+    check('tarjetas: una por proveedor + "Todas las cotizaciones"', await page.getByTestId('sqm-supplier-card').count() === sup11.length + 1 && flat(await page.getByTestId('sqm-badge').innerText()) === `${sup11.length} proveedor(es) · ${s11('total')} cotización(es)`);
+    const all11 = flat(await page.getByTestId('sqm-supplier-card').first().innerText());
+    check('"Todas": cotizaciones, adjudicadas y sin adjudicar', all11.includes(`${s11('total')} Cotizaciones ${s11('awarded')} Adjudicadas ${s11('active')} Sin adjudicar`) && all11.includes('Abrir todas'), all11);
+    const sp11 = sup11.find(x => x.name === q4.supplier_name) || sup11[0];
+    const sc11 = flat(await page.getByTestId('sqm-supplier-card').filter({ hasText: sp11.name }).innerText());
+    check('tarjeta por proveedor: cotizaciones, adjudicadas y activas', sc11.includes(`${sp11.total} Cotizaciones ${sp11.awarded} Adjudicadas ${sp11.active} Activas`) && sc11.includes('Abrir proveedor'), sc11);
+    check('la matriz no se despliega hasta elegir una tarjeta', await page.getByTestId('sqm-matrix').count() === 0);
+    await page.getByRole('button', { name: 'Abrir todas: Todas las cotizaciones' }).click();
+    await page.getByTestId('sqm-row').first().waitFor();
+    check('"Abrir todas": todas las cotizaciones (página 1) y registro(s)', await page.getByTestId('sqm-row').count() === Math.min(m11.total, 25) && flat(await page.getByTestId('sqm-card').innerText()).includes(`${m11.total} registro(s)`));
+    const heads11 = (await page.getByTestId('sqm-matrix').locator('thead th').allInnerTexts()).map(x => flat(x).toUpperCase());
+    check('matriz: 12 columnas del diseño', JSON.stringify(heads11) === JSON.stringify(['FOLIO', 'REQUISICIÓN', 'REFERENCIA INTERNA', 'PROVEEDOR', 'TOTAL', 'ENTREGA', 'TÉCNICO', 'DOCUMENTAL', 'PUNTAJE', 'ESTATUS', 'PDF COTIZACIÓN', 'ACCIONES']), heads11.join('|'));
+    const r11 = f => page.locator(`[data-testid="sqm-row"][data-folio="${f}"]`);
+    const x4 = m11.items.find(x => x.id === q4.id);
+    const cmp4 = await api(`/api/v1/quotes/comparison?requisition=${x4.requisition_id}`);
+    await r11(q4.folio).getByText(/^\d+\.\d/).first().waitFor({ timeout: 15000 });
+    const row4 = flat(await r11(q4.folio).innerText());
+    check('fila: folio, requisición, proveedor, partidas, total y estatus de adjudicación', [q4.folio, x4.requisition, q4.supplier_name.toUpperCase(), `${x4.offered_count} partida(s)`, usd(q4.total_amount)].every(x => row4.includes(x))
+      && row4.includes(x4.awarded_lines && x4.awarded_lines >= x4.req_items ? 'Adjudicada total' : x4.awarded_lines ? 'Adjudicada parcial' : (x4.legacy_status || 'Recibida')), row4);
+    const exp4 = cmpModel.scoreQuotes(cmp4.quotes, cmp4.lines).find(x => x.id === q4.id);
+    check('puntaje calculado con el comparativo de la requisición (mismo criterio de la tarjeta 5)', !!exp4 && row4.includes(`${exp4.score.toFixed(1)}${exp4.recommended ? ' ★' : ''}`), `${exp4 && exp4.score} | ${row4}`);
+    check('PDF cotización: "Sin PDF" cuando no hay archivo registrado', x4.file_count ? row4.includes('VER PDF') : row4.includes('Sin PDF'));
+    const det11 = page.waitForResponse(r => r.url().endsWith(`/quotes/supplier-quotes/${q4.id}`));
+    await r11(q4.folio).getByRole('button', { name: 'EDITAR' }).click();
+    check('EDITAR consulta el detalle interno (200)', (await det11).status() === 200);
+    const dd11 = flat(await page.getByTestId('sqm-doc').contentFrame().locator('body').innerText());
+    check('detalle: partidas con precio unitario del proveedor y aviso interno', dd11.includes('Material sintético') && dd11.includes(usd(q4.total_amount)) && dd11.includes('no compartir con el cliente') && (await page.getByTestId('sqm-doc').getAttribute('sandbox')) === '');
+    check('EDITAR: modificar la cotización registrada está bloqueado', /escritura comercial bloqueada/.test(await page.getByTestId('sqm-detail').innerText()));
+    await page.getByTestId('sqm-detail').getByRole('button', { name: 'Cerrar' }).click();
+    const aw11 = m11.items.find(x => x.awarded);
+    if (aw11) {
+      await r11(aw11.folio).getByRole('button', { name: 'ELIMINAR' }).click();
+      check('ELIMINAR con adjudicación vigente: se conserva', /tiene adjudicación vigente: se conserva/.test(await page.getByTestId('sqm-delete').innerText()) && await page.getByTestId('sqm-delete').getByRole('button', { name: 'Sí, eliminar' }).count() === 0);
+      await page.getByTestId('sqm-delete').getByRole('button', { name: 'Entendido' }).click();
+    }
+    const fr11 = m11.items.find(x => !x.awarded);
+    if (fr11) {
+      await r11(fr11.folio).getByRole('button', { name: 'ELIMINAR' }).click();
+      const dl11 = page.getByTestId('sqm-delete');
+      check('ELIMINAR: confirmar exige el folio exacto', await dl11.getByRole('button', { name: 'Sí, eliminar' }).isDisabled());
+      await dl11.getByRole('textbox', { name: 'Folio a confirmar' }).fill(fr11.folio);
+      await dl11.getByRole('button', { name: 'Sí, eliminar' }).click();
+      check('ELIMINAR: escritura bloqueada, no se eliminó nada', (await dl11.getByRole('alert').innerText()).includes(`No se eliminó ${fr11.folio}`) && writes.length === 0);
+      await dl11.getByRole('button', { name: 'Cancelar' }).click();
+    }
+    const byS11 = page.waitForResponse(r => r.url().includes(`supplier=${sp11.id}`));
+    await page.getByRole('button', { name: `Abrir proveedor: ${sp11.name}` }).click();
+    const sp11r = await (await byS11).json(); await page.waitForTimeout(300);
+    check('"Abrir proveedor": solo sus cotizaciones (servidor)', sp11r.total === sp11.total && sp11r.items.every(x => x.supplier_id === sp11.id) && await page.getByTestId('sqm-row').count() === Math.min(sp11.total, 25));
+    const qq11 = page.waitForResponse(r => /\/supplier-quotes\?.*q=/.test(r.url()));
+    await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(q4.folio);
+    check('búsqueda en el servidor (200)', (await qq11).status() === 200);
     await shot(page, 'cot_11_interna');
+    await page.getByRole('button', { name: '← Volver a tarjetas' }).click();
+    check('"Volver a tarjetas" cierra la matriz', await page.getByTestId('sqm-matrix').count() === 0);
+    await page.getByRole('button', { name: 'Abrir todas: Todas las cotizaciones' }).click();
+    await r11(q4.folio).waitFor();
+    const cmpGo = page.waitForResponse(r => r.url().includes(`/quotes/comparison?requisition=${x4.requisition_id}`));
+    await r11(q4.folio).getByRole('button', { name: 'ADJUDICAR' }).click();
+    await cmpGo;
+    check('ADJUDICAR abre el comparativo (tarjeta 5) de la requisición', (await page.getByRole('button', { name: /Comparativo y selección preliminar/ }).first().getAttribute('aria-pressed')) === 'true');
+    await page.getByRole('button', { name: /Matriz interna de proveedores/ }).first().click();
+    await page.getByRole('button', { name: /Nueva cotización$/ }).first().click();
+    check('"+ Nueva cotización" abre Registro de cotización (tarjeta 4)', (await page.getByRole('button', { name: /Cotizaciones recibidas/ }).first().getAttribute('aria-pressed')) === 'true');
 
     // Responsive
     await page.setViewportSize({ width: 390, height: 900 });

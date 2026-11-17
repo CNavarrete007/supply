@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
-import { listSupplierQuotes, getSupplierQuote, getCustomerQuote, listRevisionFamilies } from './api';
-import { money, label, tone, revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
+import { getCustomerQuote, listRevisionFamilies } from './api';
+import { revStatusLabel, revStatusTone, crStatusLabel, familyReference, plainAmount } from './model.mjs';
 import { ChangeRequestModal } from '../recovery/ChangeRequestModal';
 import { RfqRequestCard } from './RfqRequestCard';
 import { RfqMatrixCard } from './RfqMatrixCard';
@@ -12,16 +12,13 @@ import { ClientFormatCard } from './ClientFormatCard';
 import { CustomerQuoteMatrixCard } from './CustomerQuoteMatrixCard';
 import { ClientDecisionCard } from './ClientDecisionCard';
 import { DefinitiveAwardCard } from './DefinitiveAwardCard';
+import { SupplierMatrixCard } from './SupplierMatrixCard';
 import { docModel, quoteDocHtml } from './quoteDocument.mjs';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
 // Cotizaciones y Comparativo · diseño Grupo Gerez (11 tarjetas) conectado a MariaDB en modo consulta.
 // GET /api/v1/quotes/* (Master Admin). Enviar RFQ, capturar cotizaciones, seleccionar, adjudicar, emitir la cotización al
 // cliente y registrar su decisión son escrituras comerciales que siguen bloqueadas hasta su validación integral.
-const DASH = '—';
-const show = v => (v === null || v === undefined || String(v).trim() === '' ? DASH : String(v));
-const ymd = v => (v ? String(v).slice(0, 10) : DASH);
-const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 function useLoad(fn, deps, enabled = true) {
   const [st, setSt] = useState({ status: 'idle', data: null, error: null });
@@ -57,32 +54,23 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const [rev, setRev] = useState(0);
   const [q, setQ] = useState(''); const [input, setInput] = useState('');
   const [page, setPage] = useState(1);
-  const [supplier, setSupplier] = useState('all');
   const [revStatus, setRevStatus] = useState('all');
   const [pdfId, setPdfId] = useState('');
   const [changeFor, setChangeFor] = useState(null);
   const [blocked, setBlocked] = useState(null);
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
-  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setSupplier('all'); setRevStatus('all'); };
+  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setRevStatus('all'); };
 
-  const sqs = useLoad(s => listSupplierQuotes({ page, q, supplier }, s), [tab, page, q, supplier, rev], tab === 11);
   const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
   const pdf = useLoad(s => getCustomerQuote(pdfId, s), [pdfId], !!pdfId);
   const [compReq, setCompReq] = useState('');
   const [rfqLang, setRfqLang] = useState(en ? 'en' : 'es');
   const [cqId, setCqId] = useState('');
-  const [sqId, setSqId] = useState(''); const sq = useLoad(s => getSupplierQuote(sqId, s), [sqId, rev], tab === 11 && !!sqId);
-  const day = today();
 
   const Err = ({ s }) => (s?.error ? <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{s.error.message}</p> : null);
   const Wait = ({ s }) => (s?.status === 'loading' ? <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p> : null);
-  const pill = (code, txt) => <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${tone(code)}`}>{txt || label(code, en)}</span>;
-  const lockBtn = t => <button type="button" disabled title={LOCK} className="px-3 py-1.5 bg-slate-200 text-slate-500 text-[11px] font-bold rounded-xl flex items-center gap-1.5 cursor-not-allowed"><Lock className="w-3.5 h-3.5" />{t}</button>;
   const box = 'bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4';
-  const head = (title, sub, right) => <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-slate-100"><div><h3 className="text-base font-extrabold text-slate-900">{title}</h3><p className="text-xs text-slate-500 mt-0.5">{sub}</p></div>{right}</div>;
-  const searchBox = ph => <div className="relative flex-1 min-w-[240px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input type="search" aria-label={tx('Buscar', 'Search')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={ph} className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" /></div>;
   const pager = st => { const last = Math.max(1, Math.ceil((st.data?.total || 0) / (st.data?.page_size || 25))); return <div className="flex justify-between items-center text-xs text-slate-600"><span>{st.data?.total ?? 0} {tx('registros', 'records')} · {tx('Página', 'Page')} {page} / {last}</span><div className="flex gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => n - 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= last} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div></div>; };
-  const table = (headers, rows, empty) => <div className="overflow-x-auto rounded-2xl border border-slate-200/80"><table className="w-full text-left border-collapse min-w-[900px]"><thead><tr className="bg-slate-50 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-200">{headers.map(h => <th key={h} className="py-3 px-3">{h}</th>)}</tr></thead><tbody className="divide-y divide-slate-100 text-[11px] text-slate-700">{rows}{!rows.length && <tr><td colSpan={headers.length} className="py-10 text-center text-xs text-slate-400 font-semibold">{empty}</td></tr>}</tbody></table></div>;
   const printCq = d => { if (!d) return; const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(quoteDocHtml(docModel(d, en), en, { logoUrl: `${window.location.origin}/image_923273.svg` }).html); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); };
 
   return <div className="space-y-6">
@@ -169,14 +157,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
 
     {tab === 4 && <SupplierQuoteCard en={en} notify={notify} lockText={LOCK} refresh={rev} onMatrix={() => go(11)} onCompare={reqId => { go(5); if (reqId) setCompReq(reqId); }} />}
 
-    {tab === 11 && <div className={box}>{head(tx('Matriz interna de proveedores', 'Internal suppliers matrix'), tx('Cotizaciones recibidas con su RFQ de origen; ofertas originales con costos y partidas (uso interno; no se muestran al cliente).', 'Received quotes with their source RFQ; original offers with costs and items (internal use; never shown to the client).'), null)}
-      {tab === 11 && <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">{[{ id: 'all', name: tx('Todas las cotizaciones', 'All quotes'), total: (sqs.data?.summary?.suppliers || []).reduce((n, x) => n + x.total, 0), awarded: (sqs.data?.summary?.suppliers || []).reduce((n, x) => n + x.awarded, 0), active: (sqs.data?.summary?.suppliers || []).reduce((n, x) => n + x.active, 0) }, ...(sqs.data?.summary?.suppliers || [])].map(c => <button key={c.id} type="button" aria-pressed={supplier === c.id} onClick={() => { setSupplier(c.id); setPage(1); }} className={`text-left p-3 rounded-2xl border bg-white ${supplier === c.id ? 'border-purple-500 ring-2 ring-purple-500/10' : 'border-slate-200 hover:border-purple-300'}`}><div className="text-[11px] font-extrabold text-slate-800 truncate" title={c.name}>{c.name}</div><div className="grid grid-cols-3 gap-1 mt-2 text-center">{[[c.total, tx('Total', 'Total')], [c.awarded, tx('Adjudicadas', 'Awarded')], [c.active, tx('Activas', 'Active')]].map(([n, l]) => <div key={l}><span className="block text-sm font-black tabular-nums">{n}</span><span className="block text-[9px] text-slate-400">{l}</span></div>)}</div></button>)}</div>}
-      <div className="flex flex-wrap gap-3">{searchBox(tx('Buscar cotización, referencia, requisición, proveedor o cliente...', 'Search quote, reference, requisition, supplier or client...'))}{tab === 11 && <select aria-label={tx('Cotización de proveedor', 'Supplier quote')} value={sqId} onChange={e => setSqId(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl min-w-[260px]"><option value="">{tx('Ver partidas de…', 'View items of…')}</option>{(sqs.data?.items || []).map(x => <option key={x.id} value={x.id}>{x.folio} · {x.supplier_name}</option>)}</select>}</div>
-      <Wait s={sqs} /><Err s={sqs} />
-      {table([tx('Cotización', 'Quote'), 'RFQ', tx('Requisición', 'Requisition'), tx('Proveedor', 'Supplier'), tx('Fecha', 'Date'), tx('Vigencia', 'Valid until'), tx('Total', 'Total'), tx('Entrega', 'Lead'), tx('Pago', 'Payment'), tx('Evaluación', 'Score'), tx('Estatus', 'Status')], (sqs.data?.items || []).map(x => <tr key={x.id} className="align-top"><td className="py-2.5 px-3 font-black">{x.folio}{x.supplier_reference && <div className="text-[10px] text-slate-400">{x.supplier_reference}</div>}</td><td className="py-2.5 px-3">{show(x.rfq_folio)}</td><td className="py-2.5 px-3">{x.requisition}<div className="text-[10px] text-slate-400">{x.client_name}</div></td><td className="py-2.5 px-3">{x.supplier_name}</td><td className="py-2.5 px-3">{ymd(x.quote_date)}</td><td className="py-2.5 px-3">{ymd(x.valid_until)}</td><td className="py-2.5 px-3 font-bold whitespace-nowrap">{money(x.total_amount, x.currency, en)}</td><td className="py-2.5 px-3">{x.lead_days !== null ? `${Number(x.lead_days)} ${tx('días', 'days')}` : DASH}</td><td className="py-2.5 px-3">{show(x.payment_terms)}</td><td className="py-2.5 px-3">{x.technical_score !== null ? Number(x.technical_score) : DASH}</td><td className="py-2.5 px-3">{x.awarded ? pill('awarded') : pill(x.status, x.legacy_status || label(x.status, en))}</td></tr>), tx('No hay cotizaciones de proveedor.', 'No supplier quotes.'))}
-      {pager(sqs)}
-      {tab === 11 && sq.data && <div data-testid="internal-quote" className="space-y-2"><h4 className="text-xs font-black text-slate-800">{sq.data.item.folio} · {sq.data.item.supplier_name} · {money(sq.data.item.total_amount, sq.data.item.currency, en)}</h4>{table(['#', tx('Descripción', 'Description'), tx('Cant. solicitada', 'Requested'), tx('Ofertada', 'Offered'), tx('Cantidad', 'Qty'), tx('Precio unitario', 'Unit price'), tx('Importe', 'Amount')], sq.data.items.map(i => <tr key={i.line_number}><td className="py-2.5 px-3">{i.line_number}</td><td className="py-2.5 px-3 font-semibold">{i.description}</td><td className="py-2.5 px-3">{Number(i.requested_quantity)}</td><td className="py-2.5 px-3">{i.offered ? tx('Sí', 'Yes') : 'No'}</td><td className="py-2.5 px-3">{Number(i.quantity)} {i.unit_label}</td><td className="py-2.5 px-3">{money(i.unit_price, sq.data.item.currency, en)}</td><td className="py-2.5 px-3 font-bold">{money(i.line_subtotal, sq.data.item.currency, en)}</td></tr>), tx('Sin partidas.', 'No items.'))}</div>}
-    </div>}
+    {tab === 11 && <SupplierMatrixCard en={en} notify={notify} refresh={rev} onNew={() => go(4)} onCompare={reqId => { go(5); if (reqId) setCompReq(reqId); }} />}
 
     {tab === 5 && <ComparisonCard en={en} notify={notify} requisition={compReq} onRequisition={setCompReq} refresh={rev} onAddCompany={() => go(4)}
       onRegisterSupplier={() => onNavigate?.('suppliers')} onOpenOrders={() => onNavigate?.('purchase_orders')} />}

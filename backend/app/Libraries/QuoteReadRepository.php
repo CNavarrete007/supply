@@ -264,20 +264,32 @@ final class QuoteReadRepository
     /** @param array{page:int,page_size:int,q:string,status:string,supplier:string} $f */
     public function supplierQuotes(int $org, array $f): array
     {
-        $from = 'FROM supplier_quotes q JOIN business_entities e ON e.id=q.id AND e.organization_id=q.organization_id' . sprintf(self::REQ, 'q') . sprintf(self::SUP, 'q');
+        $from = 'FROM supplier_quotes q JOIN business_entities e ON e.id=q.id AND e.organization_id=q.organization_id' . sprintf(self::REQ, 'q') . sprintf(self::SUP, 'q')
+            . ' JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id';
         $where = 'q.organization_id=?';
         $binds = [$org];
         if ($f['status'] !== 'all') { $where .= ' AND q.status_code=?'; $binds[] = $f['status']; }
         if ($f['supplier'] !== 'all') { $where .= ' AND se.public_id=?'; $binds[] = $f['supplier']; }
-        [$sq, $sb] = self::search($f['q'], ['q.folio', 'q.supplier_reference', 'r.folio', 's.legal_name', 'c.legal_name', 'q.legacy_status']);
+        [$sq, $sb] = self::search($f['q'], ['q.folio', 'q.supplier_reference', 'r.folio', 's.legal_name', 'c.legal_name', 'q.legacy_status', 'r.internal_reference', 'r.client_reference']);
+        // Tarjeta 11: archivos asociados a la cotización (vigentes; se excluyen los reemplazados o retirados).
+        $files = "FROM entity_files ef WHERE ef.organization_id=q.organization_id AND ef.entity_id=q.id AND ef.file_role NOT LIKE '%Removed' AND ef.file_role NOT LIKE '%Replaced' AND ef.file_role NOT LIKE '%.history'";
         $awarded = "EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=q.organization_id AND aw.supplier_quote_id=q.id AND aw.status_code='active' AND aw.superseded_at IS NULL)";
         $res = $this->page("e.public_id AS id,q.folio,q.supplier_reference,q.quote_date,q.valid_until,q.currency_code AS currency,q.subtotal_amount,q.tax_amount,q.total_amount,
             q.lead_days,q.payment_terms,q.technical_score,q.document_score,q.status_code AS status,q.legacy_status,q.source_kind,
             r.folio AS requisition,c.legal_name AS client_name,se.public_id AS supplier_id,s.code AS supplier_code,s.legal_name AS supplier_name,
             (SELECT f.folio FROM rfqs f WHERE f.id=q.rfq_id AND f.organization_id=q.organization_id) AS rfq_folio,
-            (SELECT COUNT(*) FROM supplier_quote_items it WHERE it.organization_id=q.organization_id AND it.supplier_quote_id=q.id) AS item_count,{$awarded} AS awarded",
+            (SELECT COUNT(*) FROM supplier_quote_items it WHERE it.organization_id=q.organization_id AND it.supplier_quote_id=q.id) AS item_count,{$awarded} AS awarded,
+            re.public_id AS requisition_id,r.client_reference,r.internal_reference,
+            (SELECT COUNT(*) FROM supplier_quote_items it WHERE it.organization_id=q.organization_id AND it.supplier_quote_id=q.id AND it.offered=1) AS offered_count,
+            (SELECT COUNT(DISTINCT aw.requisition_item_id) FROM awards aw JOIN requisition_items li ON li.id=aw.requisition_item_id AND li.organization_id=aw.organization_id
+              WHERE aw.organization_id=q.organization_id AND aw.supplier_quote_id=q.id AND li.line_status='active' AND aw.status_code='active' AND aw.superseded_at IS NULL) AS awarded_lines,
+            (SELECT COUNT(*) FROM requisition_items li WHERE li.organization_id=r.organization_id AND li.requisition_id=r.id AND li.line_status='active') AS req_items,
+            (SELECT COUNT(*) {$files}) AS file_count,(SELECT ef.original_filename {$files} ORDER BY ef.created_at DESC,ef.id DESC LIMIT 1) AS file_name",
             $from, $where . $sq, [...$binds, ...$sb], 'COALESCE(q.quote_date,DATE(e.created_at)) DESC,q.id DESC', $f);
-        foreach ($res['items'] as &$i) { $i['item_count'] = (int) $i['item_count']; $i['awarded'] = (bool) $i['awarded']; }
+        foreach ($res['items'] as &$i) {
+            $i['item_count'] = (int) $i['item_count']; $i['awarded'] = (bool) $i['awarded'];
+            foreach (['offered_count', 'awarded_lines', 'req_items', 'file_count'] as $k) { $i[$k] = (int) $i[$k]; }
+        }
         unset($i);
         $res['summary'] = [
             'statuses' => $this->facet('SELECT q.status_code AS code,COUNT(*) AS count FROM supplier_quotes q WHERE q.organization_id=? GROUP BY q.status_code ORDER BY count DESC', $org),
