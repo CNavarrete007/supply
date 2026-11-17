@@ -171,13 +171,21 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     await page.getByTestId('role-delete').getByRole('button', { name: 'Entendido' }).click();
     await shot(page, 'usuarios_3_roles');
 
-    // Resumen
+    // Resumen de seguridad y acceso: indicadores, filtro exacto en la matriz y recomendaciones con datos reales
     await page.getByRole('button', { name: /Resumen de acceso/ }).first().click();
-    const kpi = async l => Number((await page.getByText(l, { exact: true }).locator('xpath=preceding-sibling::div[1]').innerText()).trim());
-    check('resumen: personas, con acceso, compradores, preparó, autorizadores, inactivos',
-      await kpi('Personas') === users.length && await kpi('Con acceso') === users.filter(u => u.access_enabled && u.credential_state === 'local_validated' && u.status === 'active').length && await kpi('Compradores') === 1 && await kpi('Preparó / Revisó') === 1 && await kpi('Autorizadores') === 1 && await kpi('Inactivos / sin acceso') === 0);
-    check('recomendación de administradores con el conteo real', await page.getByText(/Hay 2 cuenta\(s\) Master Admin activa\(s\)/).isVisible());
+    await page.getByTestId('access-summary').waitFor();
+    const kpis = (await page.getByTestId('access-kpi').allInnerTexts()).map(x => x.replace(/\s+/g, ' ').trim());
+    const withAccess = users.filter(u => u.access_enabled && u.credential_state === 'local_validated' && u.status === 'active').length;
+    const inactive = users.filter(u => u.status !== 'active').length;
+    check('resumen: 6 indicadores del diseño con conteos reales', JSON.stringify(kpis) === JSON.stringify([`${users.length} Personas Usuarios y perfiles operativos`, `${withAccess} Con acceso Pueden iniciar sesión`, '1 Compradores Listas de compras y RFQ', '1 Preparó / Revisó Órdenes y cotizaciones', '1 Autorizadores Aprobación de documentos', `${inactive} Inactivos / bloqueados No aparecen en listas activas`]), kpis.join(' | '));
+    check('recomendación de administradores con el conteo real', await page.getByText(/Hay 2 cuenta\(s\) Master Admin activa\(s\)/).isVisible() && (await page.getByTestId('rec-admin').getAttribute('data-level')) === 'ok');
+    check('recomendación de contraseñas con credenciales pendientes y cuentas sin uso', /credencial pendiente de activación · \d+ cuenta\(s\) con acceso no han iniciado sesión en 90 días/.test(await page.getByTestId('rec-passwords').innerText()));
     await shot(page, 'usuarios_4_resumen');
+    await page.getByRole('button', { name: /^Compradores: / }).click();
+    await page.getByTestId('kpi-filter').waitFor();
+    check('indicador "Compradores" abre la matriz filtrada (mismo conteo)', await page.getByText('1 mostrados').isVisible() && await row(buyer.name).count() === 1 && (await page.getByTestId('kpi-filter').innerText()).includes('Compradores'));
+    await page.getByRole('button', { name: 'Quitar filtro Compradores' }).click();
+    check('quitar el filtro vuelve a mostrar a todos', await page.getByText(`${users.length} mostrados`).isVisible() && await page.getByTestId('kpi-filter').count() === 0);
 
     // Bitácora
     const first = page.waitForResponse(r => /\/api\/v1\/audit-events\?page=1&page_size=25$/.test(r.url()));

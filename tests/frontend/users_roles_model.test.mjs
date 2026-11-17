@@ -32,7 +32,7 @@ test('estatus, acceso y funciones observadas', () => {
   assert.deepEqual(functionsOf(fn.get('b')), { buyer: true, buyerDocs: 4, preparer: true, preparerDocs: 1, authorizer: false, authorizerDocs: 0 });
   assert.equal(functionsOf(undefined).buyer, false);
   const s = accessSummary(users, fn);
-  assert.deepEqual(s, { people: 4, withAccess: 1, buyers: 1, preparers: 1, authorizers: 1, inactiveBlocked: 2, activeAdmins: 1, pendingCredentials: 2 });
+  assert.deepEqual(s, { people: 4, withAccess: 1, buyers: 1, preparers: 1, authorizers: 1, inactiveBlocked: 1, noAccess: 1, activeAdmins: 1, pendingCredentials: 2 });
 });
 
 test('búsqueda por nombre, correo, rol, estatus y función (sin acentos)', () => {

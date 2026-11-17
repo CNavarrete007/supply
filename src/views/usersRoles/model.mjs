@@ -83,7 +83,8 @@ export function accessSummary(users = [], fnById = new Map()) {
     buyers: fns.filter(f => f.buyer).length,
     preparers: fns.filter(f => f.preparer).length,
     authorizers: fns.filter(f => f.authorizer).length,
-    inactiveBlocked: users.filter(u => statusKind(u) !== 'active' || !u.access_enabled).length,
+    inactiveBlocked: users.filter(u => statusKind(u) !== 'active').length, // "No aparecen en listas activas"
+    noAccess: users.filter(u => statusKind(u) === 'active' && !u.access_enabled).length, // personal operativo sin inicio de sesión
     activeAdmins: users.filter(u => isMaster(u.role_codes) && accessKind(u) === 'enabled').length,
     pendingCredentials: users.filter(u => accessKind(u) === 'pending').length,
   };
@@ -131,3 +132,23 @@ const CRITICAL = /delete|elimin|block|bloque|cancel|revok|reject|rechaz|deny|den
 export const isCritical = e => CRITICAL.test(e?.action || '') || (e?.result && !['success', 'ok'].includes(e.result));
 /** Actor shown in the log: current user record, else the legacy snapshot name, else "Sistema". */
 export const actorName = (e, en = false) => e?.actor_name || e?.actor_snapshot_name || (en ? 'System' : 'Sistema');
+
+/** Tarjeta 4 → matriz: filtros exactos de cada indicador (mismos criterios que accessSummary). */
+export const KPI_FILTERS = {
+  access: u => accessKind(u) === 'enabled',
+  buyer: (u, f) => functionsOf(f).buyer,
+  preparer: (u, f) => functionsOf(f).preparer,
+  authorizer: (u, f) => functionsOf(f).authorizer,
+  inactive: u => statusKind(u) !== 'active',
+};
+export const KPI_LABELS = { access: ['Con acceso', 'With access'], buyer: ['Compradores', 'Buyers'], preparer: ['Preparó / Revisó', 'Prepared / Reviewed'], authorizer: ['Autorizadores', 'Authorizers'], inactive: ['Inactivos / bloqueados', 'Inactive / blocked'] };
+export const applyKpiFilter = (users = [], key = '', fnById = new Map()) => (KPI_FILTERS[key] ? users.filter(u => KPI_FILTERS[key](u, fnById.get(u.id))) : users);
+
+/** Cuentas que pueden iniciar sesión y no lo han hecho en `days` días (o nunca): candidatas a revisar o bloquear. */
+export function staleAccounts(users = [], now = new Date(), days = 90) {
+  const limit = now.getTime() - days * 86400000;
+  return users.filter(u => accessKind(u) === 'enabled' && (!u.last_login_at || new Date(String(u.last_login_at).replace(' ', 'T').replace(/(\.\d{3})\d*$/, '$1') + 'Z').getTime() < limit));
+}
+
+/** Estado de la recomendación de administradores: 'ok' (≥ 2), 'warn' (1) o 'danger' (0). */
+export const adminLevel = n => (n >= 2 ? 'ok' : n === 1 ? 'warn' : 'danger');
