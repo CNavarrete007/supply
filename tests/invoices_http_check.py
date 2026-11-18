@@ -50,6 +50,22 @@ try:
     for i in items:
         if i['state'] != 'cancelled': mon[i['currency']] = mon.get(i['currency'], 0) + float(i['total_amount'])
     check('montos por moneda sin canceladas', all(abs(float(m['amount']) - mon.get(m['currency'], 0)) < 0.01 for m in d['summary']['money']) and len(d['summary']['money']) == len(mon))
+    cc = d['summary']['client_cards']
+    by = {}
+    for i in items:
+        b = by.setdefault(i['client_name'], {'invoices': 0, 'pending': 0, 'overdue': 0, 'paid': 0, 'cancelled': 0, 'req': set(), 'money': {}})
+        b['invoices'] += 1; b[i['state']] += 1; b['req'].add(i['requisition'])
+        if i['state'] != 'cancelled': b['money'][i['currency']] = b['money'].get(i['currency'], 0) + float(i['total_amount'])
+    check('tarjetas por cliente = lista (conteos por estado, requisiciones y montos por moneda)', len(cc['items']) == len(by) and all(
+        c['invoices'] == by[c['name']]['invoices'] and all(c[k] == by[c['name']][k] for k in ('pending', 'overdue', 'paid', 'cancelled')) and c['requisitions'] == len(by[c['name']]['req'])
+        and {m['currency']: round(float(m['invoiced']), 2) for m in c['money']} == {k: round(v, 2) for k, v in by[c['name']]['money'].items()} for c in cc['items']))
+    check('clients_total ≥ tarjetas y sin RFC/correo de más', cc['clients_total'] >= len(cc['items']) and all(set(c) == {'id', 'name', 'tax_id', 'invoices', 'active', 'pending', 'overdue', 'paid', 'cancelled', 'requisitions', 'projects', 'last_issue', 'money'} for c in cc['items']))
+    if cc['items']:
+        c0 = cc['items'][0]
+        fc = get(f"{R}?client={c0['id']}&page_size=50")
+        check('filtro por cliente = su tarjeta; las tarjetas no se reducen al cliente', fc['total'] == c0['invoices'] and all(i['client_name'] == c0['name'] for i in fc['items']) and len(fc['summary']['client_cards']['items']) == len(cc['items']))
+        nq = get(f'{R}?q=zz-no-existe-qa&page_size=1')['summary']['client_cards']
+        check('búsqueda sin coincidencias: 0 tarjetas y mismo clients_total', nq['items'] == [] and nq['clients_total'] == cc['clients_total'])
     check('archivo sin ruta de almacenamiento', not re.search(r'storage_key|storage_backend|sandbox/', json.dumps(items)))
     for s in ('pending', 'overdue', 'paid', 'cancelled'):
         f = get(f'{R}?state={s}&page_size=50'); check(f'filtro state={s}', f['total'] == st.get(s, 0) and all(i['state'] == s for i in f['items']))

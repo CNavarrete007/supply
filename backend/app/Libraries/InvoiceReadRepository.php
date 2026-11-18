@@ -87,10 +87,13 @@ final class InvoiceReadRepository
         $binds = [$org];
         if ($f['q'] !== '') {
             $l = self::like($f['q']);
-            $where[] = "(i.folio LIKE ? ESCAPE '!' OR i.invoice_number LIKE ? ESCAPE '!' OR i.fiscal_uuid LIKE ? ESCAPE '!' OR r.folio LIKE ? ESCAPE '!' OR c.legal_name LIKE ? ESCAPE '!' OR r.project_reference_snapshot LIKE ? ESCAPE '!'"
+            $where[] = "(i.folio LIKE ? ESCAPE '!' OR i.invoice_number LIKE ? ESCAPE '!' OR i.fiscal_uuid LIKE ? ESCAPE '!' OR r.folio LIKE ? ESCAPE '!' OR c.legal_name LIKE ? ESCAPE '!' OR c.tax_identifier LIKE ? ESCAPE '!' OR r.project_reference_snapshot LIKE ? ESCAPE '!'"
                 . " OR EXISTS (SELECT 1 FROM invoice_purchase_orders ip LEFT JOIN purchase_orders po ON po.id=ip.purchase_order_id AND po.organization_id=ip.organization_id WHERE ip.organization_id=i.organization_id AND ip.invoice_id=i.id AND (po.folio LIKE ? ESCAPE '!' OR ip.po_folio_snapshot LIKE ? ESCAPE '!')))";
-            array_push($binds, $l, $l, $l, $l, $l, $l, $l, $l);
+            array_push($binds, $l, $l, $l, $l, $l, $l, $l, $l, $l);
         }
+        // Client cards ("Facturas por cliente"): same search, never narrowed by the selected client.
+        $cardBase = self::from() . ' WHERE ' . implode(' AND ', $where);
+        $cardBinds = $binds;
         if ($f['client'] !== 'all') {
             $where[] = 'ce.public_id=?';
             $binds[] = $f['client'];
@@ -116,7 +119,37 @@ final class InvoiceReadRepository
         $states = array_map(static fn ($r) => ['code' => $r['inv_state'], 'count' => (int) $r['count']], $this->rows("SELECT {$state} AS inv_state,COUNT(*) AS count" . $base . ' GROUP BY inv_state ORDER BY inv_state', $binds));
         $money = array_map(static fn ($r) => ['currency' => $r['currency'], 'amount' => $r['amount'], 'invoices' => (int) $r['invoices']],
             $this->rows("SELECT i.currency_code AS currency,SUM(i.total_amount) AS amount,COUNT(*) AS invoices" . $base . " AND {$state}<>'cancelled' GROUP BY i.currency_code ORDER BY i.currency_code", $binds));
-        return ['items' => $items, 'total' => $total, 'page' => $f['page'], 'page_size' => $f['page_size'], 'summary' => ['states' => $states, 'money' => $money]];
+        return ['items' => $items, 'total' => $total, 'page' => $f['page'], 'page_size' => $f['page_size'], 'summary' => ['states' => $states, 'money' => $money,
+            'client_cards' => $this->clientCards($org, $cardBase, $cardBinds)]];
+    }
+
+    /**
+     * Invoices per client for the search: counts per state, requisitions, projects, last issue date and money per currency
+     * (invoiced and outstanding exclude cancelled invoices; currencies are never mixed). clients_total ignores the search.
+     */
+    private function clientCards(int $org, string $base, array $binds): array
+    {
+        $state = self::STATE;
+        $cards = $this->rows("SELECT ce.public_id AS id,c.legal_name AS name,c.tax_identifier AS tax_id,COUNT(*) AS invoices,
+            COALESCE(SUM({$state}<>'cancelled'),0) AS active,COALESCE(SUM({$state}='pending'),0) AS pending,COALESCE(SUM({$state}='overdue'),0) AS overdue,
+            COALESCE(SUM({$state}='paid'),0) AS paid,COALESCE(SUM({$state}='cancelled'),0) AS cancelled,COUNT(DISTINCT i.requisition_id) AS requisitions,
+            SUBSTRING(GROUP_CONCAT(DISTINCT NULLIF(TRIM(r.project_reference_snapshot),'') ORDER BY r.project_reference_snapshot SEPARATOR ', '),1,255) AS projects,MAX(i.issue_date) AS last_issue"
+            . $base . ' GROUP BY ce.public_id,c.legal_name,c.tax_identifier ORDER BY c.legal_name,ce.public_id', $binds);
+        $money = [];
+        foreach ($this->rows("SELECT ce.public_id AS id,i.currency_code AS currency,SUM(i.total_amount) AS invoiced,COALESCE(SUM(CASE WHEN {$state} IN ('pending','overdue') THEN i.total_amount END),0) AS outstanding"
+            . $base . " AND {$state}<>'cancelled' GROUP BY ce.public_id,i.currency_code ORDER BY i.currency_code", $binds) as $m) {
+            $money[$m['id']][] = ['currency' => $m['currency'], 'invoiced' => $m['invoiced'], 'outstanding' => $m['outstanding']];
+        }
+        $int = ['invoices', 'active', 'pending', 'overdue', 'paid', 'cancelled', 'requisitions'];
+        foreach ($cards as &$c) {
+            foreach ($int as $k) {
+                $c[$k] = (int) $c[$k];
+            }
+            $c['money'] = $money[$c['id']] ?? [];
+        }
+        unset($c);
+        $total = (int) $this->rows('SELECT COUNT(DISTINCT i.client_id) AS n' . self::from() . ' WHERE i.organization_id=? AND e.archived_at IS NULL', [$org])[0]['n'];
+        return ['items' => $cards, 'clients_total' => $total];
     }
 
     public function show(int $org, string $id): ?array

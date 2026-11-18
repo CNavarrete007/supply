@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { listInvoices, invoiceDetail, invoiceRequisitions, invoiceContext, invoiceControl } from './api';
 import { money, stateLabel, stateTone, statusText, daysOverdue, moneyList, controlCards, acceptLabel } from './model.mjs';
+import { clientCards, clientBadge, cardMoney, cardsEmpty, clientCaption, invoiceDeleteBlock, invoiceNumberConfirmed, deleteReasonError } from './invoiceMatrix.mjs';
 import { CURRENCIES, STATUSES, FILE_TYPES, emptyInvoice, fromInvoice, contextDefaults, computeTotal, validateInvoice, changedInvoiceFields, previewType, fileSize } from './invoiceForm.mjs';
 
 // Factura · diseño Grupo Gerez (3 tarjetas) conectado a MariaDB en modo consulta.
@@ -41,11 +42,17 @@ export function InvoiceModule({ lang = 'es', language, isEnglish, onNotify }) {
   const [reqId, setReqId] = useState('');
   const [invSel, setInvSel] = useState('');
   const [view, setView] = useState('');
+  const [client, setClient] = useState(null); // tarjeta 2: null = tarjetas por cliente; card object = matriz de ese cliente
+  const [cardInput, setCardInput] = useState(''); const [cardQ, setCardQ] = useState('');
+  const [reqLabel, setReqLabel] = useState(''); // folio when card 1 is opened from the matrix (EDITAR)
+  const [del, setDel] = useState(null); const [delNum, setDelNum] = useState(''); const [delReason, setDelReason] = useState(''); const [delMsg, setDelMsg] = useState(null);
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const t = setTimeout(() => setCardQ(cardInput.trim()), 300); return () => clearTimeout(t); }, [cardInput]);
   const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); };
   const day = today();
 
-  const list = useLoad(s => listInvoices({ page, q, state }, s), [page, q, state, rev], tab === 2);
+  const cardsLd = useLoad(s => listInvoices({ page: 1, page_size: 1, q: cardQ }, s), [cardQ, rev], tab === 2);
+  const list = useLoad(s => listInvoices({ page, q, state, client: client?.id }, s), [page, q, state, rev, client?.id], tab === 2 && !!client);
   const reqs = useLoad(s => invoiceRequisitions(s), [rev], tab === 1);
   const ctx = useLoad(s => invoiceContext(reqId, s), [reqId, rev], tab === 1 && !!reqId);
   const ctrl = useLoad(s => invoiceControl(s), [rev], tab === 3);
@@ -54,7 +61,6 @@ export function InvoiceModule({ lang = 'es', language, isEnglish, onNotify }) {
   const Err = ({ s }) => (s?.error ? <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{s.error.message}</p> : null);
   const Wait = ({ s }) => (s?.status === 'loading' ? <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p> : null);
   const pill = inv => <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${stateTone(inv.state)}`}>{statusText(inv, en)}</span>;
-  const lockBtn = t => <button type="button" disabled title={LOCK} className="px-3 py-1.5 bg-slate-200 text-slate-500 text-[11px] font-bold rounded-2xl flex items-center gap-1.5 cursor-not-allowed"><Lock className="w-3.5 h-3.5" />{t}</button>;
   const box = 'bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6 text-left space-y-5';
   const head = (title, sub, right) => <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div><h3 className="text-base font-bold text-slate-900">{title}</h3><p className="text-xs text-slate-400">{sub}</p></div>{right}</div>;
   const field = (k, v) => <div key={k} className="space-y-1"><div className="text-[11px] font-bold text-slate-500">{k}</div><div className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium text-slate-700 min-h-[38px] break-words">{v}</div></div>;
@@ -72,7 +78,7 @@ export function InvoiceModule({ lang = 'es', language, isEnglish, onNotify }) {
     <td className={`py-2.5 px-3 font-bold whitespace-nowrap ${v.state === 'cancelled' ? 'line-through text-slate-400' : ''}`}>{money(v.total_amount, v.currency, en)}</td>
     <td className="py-2.5 px-3">{pill(v)}</td>
     <td className="py-2.5 px-3 text-[10px] whitespace-nowrap">{fileText(v.file)}{v.acknowledgments > 0 && <div className="text-emerald-700 font-bold">🔒 {v.acknowledgments} {tx('acuse(s)', 'ack(s)')}</div>}</td>
-    {actions && <td className="py-2.5 px-3 whitespace-nowrap"><div className="flex gap-1"><button type="button" onClick={() => setView(v.id)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-lg">{tx('📄 Ver', '📄 View')}</button>{[tx('VER ARCHIVO', 'VIEW FILE'), tx('EDITAR', 'EDIT'), tx('ELIMINAR', 'DELETE')].map(t => <button key={t} type="button" disabled title={LOCK} className="px-2 py-1 bg-slate-100 text-slate-400 text-[9px] font-bold rounded-lg cursor-not-allowed">{t}</button>)}</div></td>}
+    {actions && <td className="py-2.5 px-3 whitespace-nowrap"><div className="flex gap-1"><button type="button" onClick={() => setView(v.id)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-lg">{tx('📄 Ver', '📄 View')}</button><button type="button" disabled title={tx('El archivo es privado: su descarga sigue bloqueada.', 'The file is private: downloading it stays blocked.')} className="px-2 py-1 bg-slate-100 text-slate-400 text-[9px] font-bold rounded-lg cursor-not-allowed">{tx('VER ARCHIVO', 'VIEW FILE')}</button><button type="button" onClick={() => editInvoice(v)} className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[9px] font-bold rounded-lg">{tx('EDITAR', 'EDIT')}</button><button type="button" onClick={() => { setDel(v); setDelNum(''); setDelReason(''); setDelMsg(null); }} className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[9px] font-bold rounded-lg">{tx('ELIMINAR', 'DELETE')}</button></div></td>}
   </tr>;
   const H = [tx('Factura', 'Invoice'), 'UUID', tx('Requisición', 'Requisition'), 'OC', tx('Cliente / Proyecto', 'Client / Project'), tx('Emisor', 'Issuer'), tx('Receptor', 'Receiver'), tx('Emisión', 'Issued'), tx('Vencimiento', 'Due'), 'Total', tx('Estatus', 'Status'), tx('Archivo', 'File')];
   const pager = st => { const last = Math.max(1, Math.ceil((st.data?.total || 0) / (st.data?.page_size || 25))); return <div className="flex justify-between items-center text-xs text-slate-600"><span>{st.data?.total ?? 0} {tx('facturas', 'invoices')} · {tx('Página', 'Page')} {page} / {last}</span><div className="flex gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => n - 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= last} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div></div>; };
@@ -98,7 +104,20 @@ export function InvoiceModule({ lang = 'es', language, isEnglish, onNotify }) {
   }, [cd, cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- also after "+ Nueva factura" (runs after the reset above)
   const fv = useMemo(() => validateInvoice(form, { readiness: cd?.readiness || null, invoices: cd?.invoices || [], editing: cur, original, today: day }, en), [form, cd, cur, original, day, en]);
   const setF = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaveMsg(null); };
-  const clearForm = () => { setReqId(''); setInvSel(''); setForm(emptyInvoice(day)); setOriginal(null); setTried(false); setSaveMsg(null); if (fileRef.current) fileRef.current.value = ''; };
+  const editInvoice = v => { setReqLabel(v.requisition); setReqId(v.requisition_id); setInvSel(v.id); setTab(1); setView(''); window.scrollTo?.({ top: 0, behavior: 'smooth' }); };
+  const newInvoice = () => { clearForm(); setTab(1); };
+  const openClient = c => { setClient(c); setInput(''); setQ(''); setState('all'); setPage(1); };
+  const backToClients = () => { setClient(null); setInput(''); setQ(''); setState('all'); setPage(1); if (!client) setCardInput(''); };
+  const cards = useMemo(() => clientCards(cardsLd.data?.summary?.client_cards, en), [cardsLd.data, en]);
+  const delBlock = del ? invoiceDeleteBlock(del, en) : null;
+  const tryDelete = () => {
+    if (delBlock) { setDelMsg({ kind: 'error', text: delBlock }); return; }
+    if (!invoiceNumberConfirmed(del, delNum)) { setDelMsg({ kind: 'error', text: tx(`Escribe exactamente el número de factura (${del.invoice_number}) para confirmar.`, `Type the exact invoice number (${del.invoice_number}) to confirm.`) }); return; }
+    const re = deleteReasonError(delReason, en); if (re) { setDelMsg({ kind: 'error', text: re }); return; }
+    const text = tx(`Datos validados, pero no se eliminó ${del.folio} (${del.invoice_number}): eliminar facturas es una escritura comercial bloqueada hasta su autorización. Si debe anularse, regístrala como Cancelada desde EDITAR.`, `Data validated, but ${del.folio} (${del.invoice_number}) was not deleted: deleting invoices is a commercial write blocked until authorized. If it must be voided, record it as Cancelled from EDIT.`);
+    setDelMsg({ kind: 'locked', text }); notify(tx('Eliminación no habilitada', 'Deletion not enabled'), text, 'warning');
+  };
+  const clearForm = () => { setReqLabel(''); setReqId(''); setInvSel(''); setForm(emptyInvoice(day)); setOriginal(null); setTried(false); setSaveMsg(null); if (fileRef.current) fileRef.current.value = ''; };
   const calcTotal = () => { const t = computeTotal(form); if (t === null) { notify(tx('Calcular total', 'Calculate total'), tx('Captura un subtotal válido (y los impuestos, si aplican).', 'Enter a valid subtotal (and taxes, if any).'), 'warning'); setTried(true); return; } setF('total', t); };
   const viewFile = () => { // local preview only, with a forced safe type (never HTML/SVG in the app origin)
     const type = previewType(form.file); if (!type) { setTried(true); return; }
@@ -135,7 +154,7 @@ export function InvoiceModule({ lang = 'es', language, isEnglish, onNotify }) {
       {(() => { const lbl = (t, req, k, child, cls = '') => <label className={`block ${cls}`}><span className="block text-[11px] font-black text-slate-900 mb-1.5">{t}{req ? ' *' : ''}</span>{child}{tried && fv.errors[k] && <span role="alert" className="block text-[10.5px] text-rose-600 font-semibold mt-1">{fv.errors[k]}</span>}</label>;
         const ctl = k => `w-full px-3.5 py-3 bg-white border rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${tried && fv.errors[k] ? 'border-rose-400' : 'border-slate-300'}`;
         return <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {lbl(tx('Requisición entregada y aceptada', 'Delivered and accepted requisition'), true, 'requisition', <select id="inv-req" aria-label={tx('Requisición entregada y aceptada', 'Delivered and accepted requisition')} value={reqId} onChange={e => { setReqId(e.target.value); setInvSel(''); }} className={ctl('requisition')}><option value="">{tx('Seleccionar requisición...', 'Select requisition...')}</option>{(reqs.data?.items || []).map(r => <option key={r.id} value={r.id}>{r.folio} · {r.client_name} · {r.invoiced ? tx('facturada', 'invoiced') : r.ready ? tx('lista para facturar', 'ready to invoice') : tx('entrega/aceptación pendiente', 'delivery/acceptance pending')}</option>)}</select>, 'md:col-span-2')}
+          {lbl(tx('Requisición entregada y aceptada', 'Delivered and accepted requisition'), true, 'requisition', <select id="inv-req" aria-label={tx('Requisición entregada y aceptada', 'Delivered and accepted requisition')} value={reqId} onChange={e => { setReqId(e.target.value); setInvSel(''); setReqLabel(''); }} className={ctl('requisition')}><option value="">{tx('Seleccionar requisición...', 'Select requisition...')}</option>{reqId && reqs.data && !reqs.data.items.some(r => r.id === reqId) && <option value={reqId}>{cd?.requisition?.folio || reqLabel || reqId}</option>}{(reqs.data?.items || []).map(r => <option key={r.id} value={r.id}>{r.folio} · {r.client_name} · {r.invoiced ? tx('facturada', 'invoiced') : r.ready ? tx('lista para facturar', 'ready to invoice') : tx('entrega/aceptación pendiente', 'delivery/acceptance pending')}</option>)}</select>, 'md:col-span-2')}
           {lbl(tx('Número de factura', 'Invoice number'), true, 'number', <input type="text" aria-label={tx('Número de factura', 'Invoice number')} value={form.number} maxLength={40} placeholder={tx('Ej. A-1058', 'E.g. A-1058')} onChange={e => setF('number', e.target.value)} className={ctl('number')} />)}
           {lbl(tx('UUID / Folio fiscal', 'UUID / Tax folio'), false, 'uuid', <input type="text" aria-label={tx('UUID / Folio fiscal', 'UUID / Tax folio')} value={form.uuid} maxLength={36} placeholder={tx('UUID del CFDI', 'CFDI UUID')} onChange={e => setF('uuid', e.target.value)} className={`${ctl('uuid')} font-mono`} />)}
           {lbl(tx('Fecha de emisión', 'Issue date'), true, 'issue', <input type="date" aria-label={tx('Fecha de emisión', 'Issue date')} value={form.issue} max={day} onChange={e => setF('issue', e.target.value)} className={ctl('issue')} />)}
@@ -183,13 +202,69 @@ export function InvoiceModule({ lang = 'es', language, isEnglish, onNotify }) {
       </div>
     </div>}
 
-    {tab === 2 && <div className={box}>{head(tx('Matriz de facturas', 'Invoice matrix'), tx('Concentrado de facturas relacionadas con requisiciones, órdenes de compra y entregas aceptadas.', 'Invoices related to requisitions, purchase orders and accepted deliveries.'), lockBtn(tx('Nueva factura', 'New invoice')))}
-      <div className="flex flex-wrap gap-3"><div className="relative flex-1 min-w-[240px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input type="search" aria-label={tx('Buscar', 'Search')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={tx('Buscar factura, UUID, requisición, OC, cliente o proyecto...', 'Search invoice, UUID, requisition, PO, client or project...')} className="w-full pl-9 pr-3 p-3 bg-white border border-slate-200 rounded-2xl text-xs font-medium text-slate-700 outline-none focus:border-blue-500" /></div>
-        <select aria-label={tx('Estatus', 'Status')} value={state} onChange={e => { setState(e.target.value); setPage(1); }} className="p-3 bg-white border border-slate-200 rounded-2xl text-xs font-medium text-slate-700"><option value="all">{tx('Todos los estatus', 'All statuses')}</option><option value="active">{tx('Vigentes', 'Active')}</option>{['pending', 'overdue', 'paid', 'cancelled'].map(s => <option key={s} value={s}>{stateLabel(s, en)} ({list.data?.summary?.states?.find(x => x.code === s)?.count ?? 0})</option>)}</select></div>
-      <Wait s={list} /><Err s={list} />
-      <p className="text-[11px] text-slate-500">{tx('Facturado vigente', 'Active invoiced')}: {(list.data?.summary?.money || []).map(m => `${money(m.amount, m.currency, en)} (${m.invoices})`).join('  |  ') || DASH}</p>
-      {table([...H, tx('Acciones', 'Actions')], (list.data?.items || []).map(v => invRow(v)), tx('No hay facturas registradas.', 'No invoices recorded.'))}
-      {pager(list)}
+    {tab === 2 && <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 sm:p-6 text-left space-y-5" data-testid="invoice-matrix">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+        <div><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Matriz de facturas', 'Invoice matrix')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Concentrado de facturas relacionadas con requisiciones, órdenes de compra y entregas aceptadas.', 'Invoices related to requisitions, purchase orders and accepted deliveries.')}</p></div>
+        <span className="text-sm font-black"><button type="button" onClick={newInvoice} className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md">+ {tx('Nueva factura', 'New invoice')}</button></span>
+      </div>
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <div><h4 className="text-sm font-black text-slate-900">{tx('Facturas por cliente', 'Invoices by client')}</h4><p className="text-[11px] text-slate-500 mt-0.5">{tx('Selecciona un cliente para abrir únicamente la matriz de facturas de ese cliente.', 'Select a client to open only that client’s invoice matrix.')}</p></div>
+        <span className="text-xs font-black self-start"><button type="button" onClick={backToClients} className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl shadow-2xs">← {tx('Volver a clientes', 'Back to clients')}</button></span>
+      </div>
+
+      {!client && <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <input type="search" aria-label={tx('Buscar cliente', 'Search client')} value={cardInput} onChange={e => setCardInput(e.target.value)} maxLength={120} placeholder={tx('Buscar cliente, factura, proyecto o RFC...', 'Search client, invoice, project or RFC...')} className="flex-1 min-w-0 px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
+          <span data-testid="invoice-client-badge" className="px-3 py-1 bg-blue-50 text-blue-900 font-black text-[11px] rounded-full border border-blue-100 self-start sm:self-auto whitespace-nowrap">{cardsLd.data ? clientBadge(cardsLd.data.summary?.client_cards, en) : '…'}</span>
+        </div>
+        <Wait s={cardsLd} /><Err s={cardsLd} />
+        {cardsLd.data && (cards.length ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {cards.map(c => <div key={c.id} data-testid="invoice-client-card" data-client={c.name} className="relative bg-white rounded-2xl border border-slate-200/90 p-4 shadow-2xs hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden group">
+            <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b from-fuchsia-600 to-purple-600 rounded-l-2xl" />
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className={`w-10 h-10 rounded-xl text-white font-black text-xs flex items-center justify-center shrink-0 shadow-sm bg-gradient-to-br ${c.isAll ? 'from-fuchsia-600 via-purple-600 to-indigo-600' : 'from-fuchsia-600 to-purple-600'}`}>{c.tag}</div>
+                <div className="min-w-0"><h5 className="font-black text-xs text-slate-900 uppercase tracking-tight truncate" title={c.name}>{c.name}</h5><p className="text-[11px] text-slate-400 font-medium truncate">{c.isAll ? tx('Vista general', 'Overview') : `RFC ${c.tax_id || tx('sin registrar', 'not recorded')}`}</p></div>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 bg-slate-50/80 p-2 rounded-xl border border-slate-100 my-2">
+                {[[c.invoices, tx('Facturas', 'Invoices'), 'text-slate-800'], [c.pending, tx('Pendientes', 'Pending'), 'text-amber-600'], [c.overdue, tx('Vencidas', 'Overdue'), 'text-rose-600'], [c.paid, tx('Pagadas', 'Paid'), 'text-emerald-600']].map(([n, l, tone]) => <div key={l} className="flex items-baseline gap-1.5 px-2 py-1 bg-white rounded-lg border border-slate-100 min-w-0"><span className={`text-sm font-black tabular-nums ${tone}`}>{n}</span><span className="text-[9.5px] font-bold text-slate-500 uppercase truncate">{l}</span></div>)}
+              </div>
+              <div className="space-y-0.5 text-[10.5px]">
+                {cardMoney(c, en).map(m => <div key={m.currency} className="flex flex-wrap justify-between gap-x-2"><span className="font-bold text-slate-700 tabular-nums">{m.invoiced}</span>{m.outstanding && <span className="text-amber-700 font-semibold">{tx('Por cobrar', 'Outstanding')} {m.outstanding}</span>}</div>)}
+                {!cardMoney(c, en).length && <div className="text-slate-400">{tx('Sin facturado vigente', 'No active invoiced amount')}</div>}
+                <div className="text-slate-400 truncate" title={c.projects || ''}>{c.requisitions} {tx('requisición(es)', 'requisition(s)')}{c.cancelled ? ` · ${c.cancelled} ${tx('cancelada(s)', 'cancelled')}` : ''}{c.projects ? ` · ${c.projects}` : ''}</div>
+              </div>
+            </div>
+            <span className="text-[11px] font-bold"><button type="button" aria-label={`${tx('Abrir matriz', 'Open matrix')}: ${c.name}`} onClick={() => openClient(c)} className="flex items-center justify-between w-full pt-2 text-purple-700 hover:text-purple-900 transition-colors cursor-pointer border-t border-slate-100 mt-3 group-hover:underline"><span>{c.isAll ? tx('Abrir todas', 'Open all') : tx('Abrir matriz', 'Open matrix')}</span><span className="text-xs">➔</span></button></span>
+          </div>)}
+        </div> : <div data-testid="invoice-cards-empty" className="p-8 border border-dashed border-slate-300 rounded-2xl bg-slate-50/40 text-center text-sm text-slate-600">{cardsEmpty(cardsLd.data.summary?.client_cards, cardQ, en)}</div>)}
+      </div>}
+
+      {client && <div className="space-y-4">
+        <div data-testid="invoice-client-head" className="flex flex-wrap items-center gap-3 p-4 rounded-2xl border border-purple-200 bg-purple-50/50">
+          <div className="w-10 h-10 rounded-xl text-white font-black text-xs flex items-center justify-center shrink-0 shadow-sm bg-gradient-to-br from-fuchsia-600 to-purple-600">{client.tag}</div>
+          <div className="min-w-0 flex-1"><h4 className="text-sm font-black text-slate-900">{client.name} · {tx('Matriz de facturas', 'Invoice matrix')}</h4><p className="text-[11px] text-slate-600 mt-0.5">{clientCaption(client, en)}</p></div>
+        </div>
+        <div className="flex flex-wrap gap-3"><div className="relative flex-1 min-w-[240px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input type="search" aria-label={tx('Buscar', 'Search')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={tx('Buscar factura, UUID, requisición, OC o proyecto...', 'Search invoice, UUID, requisition, PO or project...')} className="w-full pl-9 pr-3 py-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" /></div>
+          <select aria-label={tx('Estatus', 'Status')} value={state} onChange={e => { setState(e.target.value); setPage(1); }} className="px-3 py-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-800"><option value="all">{tx('Todos los estatus', 'All statuses')}</option><option value="active">{tx('Vigentes', 'Active')}</option>{['pending', 'overdue', 'paid', 'cancelled'].map(s => <option key={s} value={s}>{stateLabel(s, en)} ({list.data?.summary?.states?.find(x => x.code === s)?.count ?? 0})</option>)}</select></div>
+        <Wait s={list} /><Err s={list} />
+        <p className="text-[11px] text-slate-500">{tx('Facturado vigente', 'Active invoiced')}: {(list.data?.summary?.money || []).map(m => `${money(m.amount, m.currency, en)} (${m.invoices})`).join('  |  ') || DASH}</p>
+        {table([...H, tx('Acciones', 'Actions')], (list.data?.items || []).map(v => invRow(v)), q || state !== 'all' ? tx('Ninguna factura coincide con la búsqueda o el estatus.', 'No invoice matches the search or status.') : tx('Este cliente no tiene facturas registradas.', 'This client has no recorded invoices.'))}
+        {pager(list)}
+      </div>}
+    </div>}
+
+    {del && <div role="dialog" aria-modal="true" aria-label={tx('Eliminar factura', 'Delete invoice')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setDel(null)}>
+      <div data-testid="invoice-delete" className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-4 text-left" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between"><h3 className="text-sm font-black text-rose-700">{tx('Eliminar factura', 'Delete invoice')} {del.folio}</h3><button type="button" aria-label={tx('Cerrar', 'Close')} onClick={() => setDel(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
+        <p className="text-xs text-slate-600">{del.invoice_number} · {del.requisition} · {money(del.total_amount, del.currency, en)} · {statusText(del, en)}</p>
+        {delBlock ? <p role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">{delBlock}</p> : <>
+          <label className="block"><span className="block text-[11px] font-black text-slate-900 mb-1.5">{tx(`Escribe el número de factura (${del.invoice_number}) para confirmar`, `Type the invoice number (${del.invoice_number}) to confirm`)}</span><input type="text" aria-label={tx('Número de factura a eliminar', 'Invoice number to delete')} value={delNum} onChange={e => { setDelNum(e.target.value); setDelMsg(null); }} className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm" /></label>
+          <label className="block"><span className="block text-[11px] font-black text-slate-900 mb-1.5">{tx('Motivo', 'Reason')} *</span><textarea rows={3} aria-label={tx('Motivo de la eliminación', 'Deletion reason')} value={delReason} maxLength={520} onChange={e => { setDelReason(e.target.value); setDelMsg(null); }} className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm" /></label>
+        </>}
+        {delMsg && <p role={delMsg.kind === 'error' ? 'alert' : 'status'} data-testid="invoice-delete-msg" className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${delMsg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{delMsg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{delMsg.text}</span></p>}
+        <div className="flex flex-wrap justify-end gap-2 text-xs font-black"><button type="button" onClick={() => setDel(null)} className="px-4 py-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50">{tx('Cancelar', 'Cancel')}</button>{!delBlock && <button type="button" onClick={tryDelete} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl">{tx('Eliminar', 'Delete')}</button>}</div>
+      </div>
     </div>}
 
     {tab === 3 && <div className={box}>{head(tx('Control de facturación y cierre', 'Billing control and closing'), tx('El proceso llega al 100 % cuando la factura está registrada y no se encuentra cancelada.', 'The process reaches 100% when the invoice is recorded and not cancelled.'), <button type="button" onClick={() => go(2)} className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-2xl">{tx('Ver facturas', 'View invoices')}</button>)}
