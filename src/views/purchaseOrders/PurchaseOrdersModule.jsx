@@ -38,8 +38,7 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
   const [sort, setSort] = useState('recent');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
-  const [pdfLang, setPdfLang] = useState(en ? 'en' : 'es');
-  const pdfEn = pdfLang === 'en';
+  const pdfEn = en; // el PDF y el Formato usan el idioma de la aplicación (sin selector propio en la matriz)
   const [list, setList] = useState({ status: 'loading', error: null, data: null });
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -211,11 +210,6 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
       <div className="flex flex-col sm:flex-row items-start justify-between gap-3 pb-4 border-b border-slate-100">
         <div className="min-w-0 flex-1"><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Matriz de órdenes de compra', 'Purchase orders matrix')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Organiza las órdenes primero por comprador y abre después la matriz paginada del responsable seleccionado.', 'Organizes orders first by buyer and then opens the paginated matrix of the selected owner.')}</p></div>
         <span className="text-sm font-black shrink-0"><button type="button" onClick={() => setTab(1)} title={tx('Las nuevas OC se generan desde la adjudicación definitiva (Emisión de orden de compra).', 'New POs are generated from the definitive award (Purchase Order Issuance).')} className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl shadow-md">+ {tx('Nueva orden', 'New order')}</button></span>
-      </div>
-      <div className="flex flex-wrap items-center gap-3 p-4 rounded-2xl border border-blue-100 bg-blue-50/40">
-        <label htmlFor="po-pdf-lang" className="text-xs font-black text-slate-800 flex items-center gap-1.5"><span aria-hidden="true">🌐</span>Idioma de Orden de Compra / Purchase Order language:</label>
-        <select id="po-pdf-lang" value={pdfLang} onChange={e => setPdfLang(e.target.value)} className="px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-800"><option value="es">Español</option><option value="en">English</option></select>
-        <span className="text-[10px] font-black text-blue-900 bg-blue-100/80 rounded-full px-3 py-1" title={tx('Etiquetas y textos del formato en el idioma elegido; los datos capturados (descripciones, nombres) se imprimen como se registraron.', 'Form labels and texts in the chosen language; captured data (descriptions, names) print as recorded.')}>{pdfEn ? 'PDF: 100% in the selected language' : 'PDF: 100% en el idioma seleccionado'}</span>
       </div>
       <div className="flex flex-col sm:flex-row items-start justify-between gap-3">
         <div><h4 className="text-sm sm:text-base font-black text-slate-900">{tx('Órdenes de compra por comprador', 'Purchase orders by buyer')}</h4><p className="text-[11px] text-slate-500 mt-0.5">{tx('Selecciona un comprador para consultar únicamente sus órdenes de compra.', 'Select a buyer to view only their purchase orders.')}</p></div>

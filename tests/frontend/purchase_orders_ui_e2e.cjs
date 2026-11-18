@@ -45,7 +45,8 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     const mx = page.getByTestId('po-matrix');
     await mx.getByTestId('po-buyer-card').first().waitFor();
     const mxt = (await mx.innerText()).replace(/\s+/g, ' ');
-    check('matriz: textos del diseño', ['Matriz de órdenes de compra', 'Organiza las órdenes primero por comprador', 'Idioma de Orden de Compra / Purchase Order language:', 'PDF: 100% en el idioma seleccionado', 'Órdenes de compra por comprador', 'Selecciona un comprador para consultar únicamente sus órdenes de compra.'].every(x => mxt.includes(x)), mxt.slice(0, 300));
+    check('matriz: textos del diseño', ['Matriz de órdenes de compra', 'Organiza las órdenes primero por comprador', 'Órdenes de compra por comprador', 'Selecciona un comprador para consultar únicamente sus órdenes de compra.'].every(x => mxt.includes(x)), mxt.slice(0, 300));
+    check('sin selector de idioma de la OC (el PDF usa el idioma de la aplicación)', !mxt.includes('Idioma de Orden de Compra') && await page.locator('#po-pdf-lang').count() === 0);
     check('matriz: "+ Nueva orden" y "← Volver a compradores" habilitados', await mx.getByRole('button', { name: /Nueva orden/ }).isEnabled() && await mx.getByRole('button', { name: /Volver a compradores/ }).isEnabled());
     check('matriz: buscador de compradores del diseño', await mx.getByRole('searchbox', { name: 'Buscar comprador' }).getAttribute('placeholder') === 'Buscar comprador, correo, teléfono o puesto...');
     const nB = head.summary.buyers.length; const comp = n => `${n} comprador${n === 1 ? '' : 'es'}`;
@@ -120,18 +121,11 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     check('ELIMINAR con recepciones/facturas: no procede', (await page.getByTestId('po-delete').innerText()).includes(`${p1.receipt_count} recepción(es)`) && await page.getByTestId('po-delete').getByRole('button', { name: 'Eliminar', exact: true }).count() === 0);
     await page.getByTestId('po-delete').getByRole('button', { name: 'Cancelar' }).click();
 
-    // PDF real (jsPDF) en el idioma elegido
+    // PDF real (jsPDF) en el idioma de la aplicación
     const dl = page.waitForEvent('download');
     await row3.getByRole('button', { name: /Descargar PDF/i }).click();
     const file = await dl; const pdfPath = await file.path(); const pdfRaw = require('fs').readFileSync(pdfPath).toString('latin1');
     check('DESCARGAR PDF: archivo con folio, revisión, partidas y total', file.suggestedFilename() === `OC-QA-0003-Rev${p3.version_number - 1}.pdf` && pdfRaw.startsWith('%PDF') && ['Orden de Compra OC-QA-0003', 'Instrumento sint', '3,900.00 USD'].every(x => pdfRaw.includes(x)), file.suggestedFilename());
-    await mx.getByLabel('Idioma de Orden de Compra / Purchase Order language:').selectOption('en');
-    check('idioma del PDF: aviso en inglés', (await mx.innerText()).includes('PDF: 100% in the selected language'));
-    const dl2 = page.waitForEvent('download');
-    await row3.getByRole('button', { name: /Descargar PDF/i }).click();
-    const raw2 = require('fs').readFileSync(await (await dl2).path()).toString('latin1');
-    check('PDF en inglés', raw2.includes('Purchase Order OC-QA-0003') && raw2.includes('UNIT PRICE') && !raw2.includes('Orden de Compra OC-QA-0003'));
-    await mx.getByLabel('Idioma de Orden de Compra / Purchase Order language:').selectOption('es');
     const pop = context.waitForEvent('page');
     await row3.getByRole('button', { name: /Ver PDF/i }).click();
     const pv = await pop; await pv.waitForURL(/^blob:|about:blank/, { timeout: 8000 }).catch(() => {});
