@@ -262,13 +262,46 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     await cv3.getByRole('button', { name: /Ver órdenes/ }).click();
     check('control: "Ver órdenes" abre la Matriz de órdenes', await page.getByText('Matriz de órdenes de compra').first().isVisible());
 
-    // Enmiendas
+    // 4 · Modificaciones / Enmiendas (diseño): KPI, búsqueda/estado, tarjetas por familia, historial y acciones sin escritura
+    const curAll = (await api('/api/v1/purchase-orders?page=1&page_size=50&scope=current')).items;
     await page.getByRole('button', { name: /Modificaciones \/ Enmiendas/ }).first().click();
-    await page.getByText('Familias de OC').waitFor();
-    const fam = page.locator('div.rounded-2xl').filter({ has: page.getByText('OC-QA-0003', { exact: true }) }).last();
-    await fam.getByRole('button', { name: /Historial/i }).click();
-    const ftext = (await fam.innerText()).replace(/\s+/g, ' ');
-    check('enmiendas: familia con Rev. 0 y Rev. 1 y modificar bloqueado', ftext.includes('Rev. 0') && ftext.includes('Rev. 1') && await fam.getByRole('button', { name: /Modificar OC/i }).isDisabled(), ftext);
+    const am = page.getByTestId('po-amend'); await am.waitFor();
+    await am.getByTestId('po-family').first().waitFor();
+    const amt = (await am.innerText()).replace(/\s+/g, ' ');
+    check('enmiendas: título, subtítulo, avisos de control y Actualizar', ['Modificaciones / Enmiendas de Orden de Compra', 'Crea Rev. N sin borrar la OC anterior', 'Nuevo control:', 'La aprobación permite una sola enmienda', 'OC emitida:', 'la revisión anterior queda histórica/Sustituida'].every(x => amt.includes(x)) && await am.getByRole('button', { name: /Actualizar/ }).isEnabled(), amt.slice(0, 300));
+    const kpi4 = async k => Number((await page.getByTestId(`po-amend-kpi-${k}`).innerText()).trim().split(/\s/)[0]);
+    const pend4 = curAll.filter(p => p.change_pending || p.mod_pending).length, rec4 = curAll.filter(p => p.reconciliation_status && !['reconciled', 'ok', 'not_required'].includes(p.reconciliation_status)).length;
+    check('enmiendas: KPI = MariaDB (familias, con enmienda, cambios pendientes, conciliación)', await kpi4('families') === curAll.length && await kpi4('amended') === curAll.filter(p => p.versions > 1).length && await kpi4('pending') === pend4 && await kpi4('reconciliation') === rec4);
+    check('enmiendas: una tarjeta por familia', await am.getByTestId('po-family').count() === Math.min(12, curAll.length));
+    const p3a = curAll.find(p => p.folio === 'OC-QA-0003');
+    const f3 = am.locator('[data-testid="po-family"][data-folio="OC-QA-0003"]');
+    const f3t = (await f3.innerText()).replace(/\s+/g, ' ');
+    check('enmiendas: familia con Rev. N, monto original (Rev. 0) y vigente, recepción y factura vigente', [`Rev. ${p3a.version_number - 1}`, money(p3a.original_total_amount, p3a.original_currency).slice(1), money(p3a.total_amount, p3a.currency).slice(1), 'Monto original', 'Monto vigente', 'Recepción', 'Factura vigente'].every(x => f3t.includes(x)) && Number(p3a.original_total_amount) !== Number(p3a.total_amount), f3t);
+    check('enmiendas: solicitud pendiente visible y sin SOLICITAR MODIFICACIÓN', (!p3a.mod_pending || f3t.includes(`Solicitud pendiente: ${p3a.mod_pending}`)) && await f3.getByRole('button', { name: /Solicitar modificación/i }).count() === (p3a.mod_pending ? 0 : 1));
+    await f3.getByRole('button', { name: /Historial/i }).click();
+    await f3.getByTestId('po-family-history').getByText('Rev. 0', { exact: false }).first().waitFor();
+    const h3 = (await f3.getByTestId('po-family-history').innerText()).replace(/\s+/g, ' ');
+    check('enmiendas: HISTORIAL con todas las revisiones de la serie (detalle del servidor)', h3.includes('Rev. 0') && h3.includes(`Rev. ${p3a.version_number - 1}`) && h3.includes(money(p3a.original_total_amount, p3a.original_currency)), h3);
+    const pop4 = context.waitForEvent('page'); await f3.getByRole('button', { name: /^Ver PDF$/i }).first().click();
+    const pg4 = await pop4; check('enmiendas: VER PDF abre la OC vigente', !!pg4); await pg4.close().catch(() => {});
+    const f1 = am.locator('[data-testid="po-family"][data-folio="OC-QA-0001"]');
+    if (await f1.getByRole('button', { name: /Solicitar modificación/i }).count()) {
+      await f1.getByRole('button', { name: /Solicitar modificación/i }).click();
+      const dlg4 = page.getByRole('dialog', { name: /Solicitud de modificación/ });
+      check('enmiendas: SOLICITAR MODIFICACIÓN abre el formulario de solicitud de la OC', await dlg4.isVisible() && (await dlg4.innerText()).includes('OC-QA-0001'));
+      await dlg4.getByRole('button', { name: 'Cancelar' }).click();
+    }
+    const sel4 = am.getByRole('combobox', { name: 'Estado de la familia' });
+    check('enmiendas: estados del diseño', JSON.stringify(await sel4.locator('option').allInnerTexts()) === JSON.stringify(['Todos los estados', 'Cambio pendiente', 'Con enmienda', 'Conciliación requerida', 'Cancelada']));
+    await sel4.selectOption('amended');
+    check('enmiendas: filtro "Con enmienda"', await am.getByTestId('po-family').count() === curAll.filter(p => p.versions > 1).length);
+    await sel4.selectOption('cancelled');
+    check('enmiendas: filtro "Cancelada"', await am.getByTestId('po-family').count() === curAll.filter(p => p.state_key === 'cancelled').length);
+    await sel4.selectOption('all');
+    await am.getByRole('searchbox', { name: 'Buscar familias de OC' }).fill('aceros sinteticos');
+    check('enmiendas: búsqueda por proveedor sin acentos', await am.getByTestId('po-family').count() === curAll.filter(p => /aceros sint/i.test(p.supplier_name)).length);
+    await am.getByRole('searchbox', { name: 'Buscar familias de OC' }).fill('');
+    check('enmiendas: rango "Mostrando…"', (await page.getByTestId('po-amend-range').innerText()).includes(`de ${curAll.length} familias`));
     await shot(page, 'oc_4_enmiendas');
 
     // Mis tareas

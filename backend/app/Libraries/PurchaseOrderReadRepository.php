@@ -84,6 +84,11 @@ final class PurchaseOrderReadRepository
             (SELECT MAX(gr.legacy_received_percent) FROM goods_receipts gr WHERE gr.organization_id=po.organization_id AND gr.purchase_order_id IN (SELECT s2.id FROM purchase_orders s2 WHERE s2.organization_id=po.organization_id AND s2.series_public_id=po.series_public_id)) AS received_percent,
             (SELECT COUNT(*) FROM invoices inv WHERE inv.organization_id=po.organization_id AND inv.primary_purchase_order_id IN (SELECT s2.id FROM purchase_orders s2 WHERE s2.organization_id=po.organization_id AND s2.series_public_id=po.series_public_id)) AS invoice_count,
             (SELECT COUNT(*) FROM purchase_orders v WHERE v.organization_id=po.organization_id AND v.series_public_id=po.series_public_id) AS versions,
+            (SELECT v.total_amount FROM purchase_orders v WHERE v.organization_id=po.organization_id AND v.series_public_id=po.series_public_id ORDER BY v.version_number LIMIT 1) AS original_total_amount,
+            (SELECT v.currency_code FROM purchase_orders v WHERE v.organization_id=po.organization_id AND v.series_public_id=po.series_public_id ORDER BY v.version_number LIMIT 1) AS original_currency,
+            (SELECT COUNT(*) FROM invoices inv WHERE inv.organization_id=po.organization_id AND LOWER(COALESCE(inv.legacy_status,inv.status_code,'')) NOT IN ('cancelada','cancelled')
+               AND inv.primary_purchase_order_id IN (SELECT s2.id FROM purchase_orders s2 WHERE s2.organization_id=po.organization_id AND s2.series_public_id=po.series_public_id)) AS active_invoice_count,
+            (SELECT cr.folio FROM requisition_change_requests cr WHERE cr.id=po.change_request_id AND cr.organization_id=po.organization_id) AS change_request_folio,
             (SELECT COUNT(*) FROM purchase_order_items it WHERE it.organization_id=po.organization_id AND it.purchase_order_id=po.id) AS item_count,
             (SELECT SUBSTRING(GROUP_CONCAT(it.description ORDER BY it.line_number,it.id SEPARATOR ' · '),1,240) FROM purchase_order_items it WHERE it.organization_id=po.organization_id AND it.purchase_order_id=po.id) AS item_summary,
             (SELECT GROUP_CONCAT(m.folio ORDER BY m.requested_at SEPARATOR ', ') FROM purchase_order_modification_requests m WHERE m.organization_id=po.organization_id AND m.series_public_id=po.series_public_id AND m.status_code='pending') AS mod_pending,
@@ -103,7 +108,7 @@ final class PurchaseOrderReadRepository
 
     private static function normalize(array $r): array
     {
-        foreach (['version_number', 'receipt_count', 'invoice_count', 'versions', 'item_count'] as $k) {
+        foreach (['version_number', 'receipt_count', 'invoice_count', 'versions', 'item_count', 'active_invoice_count'] as $k) {
             if (array_key_exists($k, $r)) { $r[$k] = (int) $r[$k]; }
         }
         foreach (['change_pending', 'auto_generated'] as $k) {

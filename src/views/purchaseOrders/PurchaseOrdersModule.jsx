@@ -5,6 +5,7 @@ import { PO_STATES, poState, buyerCardList, filterBuyers, buyersBadge, rangeText
 import { allUsers, authMe } from '../usersRoles/api.js';
 import { buildPoPdf, pdfName, loadPoLogo } from './poPdf.mjs';
 import { controlAlerts, partialNote, poLine, overdueDays, otherChecks } from './poControl.mjs';
+import { AMEND_FILTERS, familyRow, amendKpis, filterFamilies, versionLine, familyRange } from './poAmend.mjs';
 import { money, opLabel, statusTone, progressOf, poPrintHtml, revLabel } from './model.mjs';
 import { issuanceOptions, winningSuppliers, supplierTotal, toGenerate, validateIssuance, issuanceLockedText } from './poIssuance.mjs';
 
@@ -119,7 +120,11 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     const c = new AbortController();
     if (tab === 1 || tab === 3) { setIss(x => ({ ...x, status: 'loading' })); poIssuance(c.signal).then(v => !c.signal.aborted && setIss({ status: 'ready', data: v, error: null })).catch(e => !c.signal.aborted && setIss({ status: 'error', data: null, error: e })); }
     if (tab === 5) { setTasks(x => ({ ...x, status: 'loading' })); poTasks(c.signal).then(v => !c.signal.aborted && setTasks({ status: 'ready', data: v, error: null })).catch(e => !c.signal.aborted && setTasks({ status: 'error', data: null, error: e })); }
-    if (tab === 4) { setFam(x => ({ ...x, status: 'loading' })); listPurchaseOrders({ pageSize: 50, scope: 'all', sort: 'recent' }, c.signal).then(v => !c.signal.aborted && setFam({ status: 'ready', data: v, error: null })).catch(e => !c.signal.aborted && setFam({ status: 'error', data: null, error: e })); }
+    if (tab === 4) { // todas las familias: versión vigente de cada serie (páginas de 50)
+      setFam(x => ({ ...x, status: 'loading' }));
+      (async () => { let items = []; let total = 0; for (let p = 1; p <= 40; p++) { const v = await listPurchaseOrders({ page: p, pageSize: 50, scope: 'current', sort: 'recent' }, c.signal); items = items.concat(v.items || []); total = v.total || 0; if (items.length >= total || !(v.items || []).length) break; } return { items, total }; })()
+        .then(v => !c.signal.aborted && setFam({ status: 'ready', data: v, error: null })).catch(e => !c.signal.aborted && setFam({ status: 'error', data: null, error: e }));
+    }
     return () => c.abort();
   }, [tab, revision]);
   // 3 · Control de autorización: alertas del servidor; al desplegarlas, los documentos que las originan.
@@ -137,11 +142,19 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     const text = issuanceLockedText(issOpt, v.orders, en);
     setIssMsg({ kind: 'locked', items: [text], warnings: v.warnings }); notify(tx('Emisión no habilitada', 'Issuance not enabled'), text, 'warning');
   };
-  const families = useMemo(() => {
-    const m = new Map();
-    for (const po of fam.data?.items || []) { const f = m.get(po.series_id) || { id: po.series_id, folio: po.folio, versions: [] }; f.versions.push(po); m.set(po.series_id, f); }
-    return [...m.values()].map(f => ({ ...f, versions: f.versions.sort((a, b) => a.version_number - b.version_number) })).sort((a, b) => b.versions.length - a.versions.length || String(a.folio).localeCompare(String(b.folio)));
-  }, [fam.data]);
+  // 4 · Modificaciones / Enmiendas: familias (versión vigente), búsqueda/estado en el navegador, historial bajo demanda.
+  const families = useMemo(() => (fam.data?.items || []).map(po => familyRow(po, en)), [fam.data, en]);
+  const [amendQ, setAmendQ] = useState(''); const [amendF, setAmendF] = useState('all'); const [amendPage, setAmendPage] = useState(1);
+  const shownFamilies = useMemo(() => filterFamilies(families, amendQ, amendF), [families, amendQ, amendF]);
+  const AMEND_PAGE = 12; const amendLast = Math.max(1, Math.ceil(shownFamilies.length / AMEND_PAGE));
+  const [hist, setHist] = useState({});
+  const toggleHistory = f => {
+    setOpenFamily(o => (o === f.id ? '' : f.id));
+    if (hist[f.id]?.status === 'ready' || hist[f.id]?.status === 'loading') return;
+    setHist(h => ({ ...h, [f.id]: { status: 'loading' } }));
+    poDetail(f.id).then(d => setHist(h => ({ ...h, [f.id]: { status: 'ready', versions: (d.versions || []).map(v => versionLine(v, en)) } })))
+      .catch(e => setHist(h => ({ ...h, [f.id]: { status: 'error', error: e } })));
+  };
   const [openFamily, setOpenFamily] = useState('');
 
   // Detalle / formato
@@ -174,7 +187,7 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
       <div className="flex items-center gap-2"><span className="px-3 py-1 bg-emerald-50 text-emerald-700 font-bold text-[10px] rounded-full border border-emerald-200">{tx('Fuente: MariaDB', 'Source: MariaDB')}</span><button type="button" onClick={() => setRevision(n => n + 1)} className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl shadow-xs flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5" />{tx('Actualizar', 'Refresh')}</button></div>
     </div>
     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3.5">
-      {cards.map(([id, icon, title, desc]) => { const on = tab === id; return <button key={id} type="button" aria-pressed={on} onClick={() => setTab(id)} className={`p-4 rounded-2xl text-left transition-all duration-200 cursor-pointer flex flex-col justify-between min-h-[130px] border ${on ? 'bg-gradient-to-r from-[#2563eb] via-[#7c3aed] to-[#c026d3] text-white border-transparent shadow-lg shadow-purple-500/20 scale-[1.01]' : 'bg-white text-slate-800 border-slate-200/90 hover:border-[#60a5fa] hover:ring-1 hover:ring-[#60a5fa] hover:shadow-lg hover:shadow-blue-500/15'}`}>
+      {cards.map(([id, icon, title, desc]) => { const on = tab === id; return <button key={id} type="button" aria-pressed={on} onClick={() => { setTab(id); setActMsg(null); }} className={`p-4 rounded-2xl text-left transition-all duration-200 cursor-pointer flex flex-col justify-between min-h-[130px] border ${on ? 'bg-gradient-to-r from-[#2563eb] via-[#7c3aed] to-[#c026d3] text-white border-transparent shadow-lg shadow-purple-500/20 scale-[1.01]' : 'bg-white text-slate-800 border-slate-200/90 hover:border-[#60a5fa] hover:ring-1 hover:ring-[#60a5fa] hover:shadow-lg hover:shadow-blue-500/15'}`}>
         <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-base mb-3 ${on ? 'bg-white/20 text-white backdrop-blur-md' : 'bg-[#eef2ff] text-blue-600 border border-blue-100/50'}`}><span>{icon}</span></div>
         <div><h3 className={`text-xs font-bold leading-snug ${on ? 'text-white' : 'text-slate-900'}`}>{title}</h3><p className={`text-[11px] mt-1 leading-normal ${on ? 'text-white/80' : 'text-slate-400'}`}>{desc}</p></div>
       </button>; })}
@@ -397,15 +410,40 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     </div>}
 
     {/* 4 · ENMIENDAS */}
-    {tab === 4 && <div className={box}>
-      <div className="pb-3 border-b border-slate-100"><h3 className="text-base font-extrabold text-slate-900">{tx('Modificaciones / Enmiendas de Orden de Compra', 'Purchase Order modifications / amendments')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Cada Rev. N conserva la OC anterior; incluye cambios, cancelaciones y conciliación con recepción y factura.', 'Each Rev. N keeps the previous PO; includes changes, cancellations and reconciliation with receipt and invoice.')}</p></div>
+    {tab === 4 && <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4" data-testid="po-amend">
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-3 pb-4 border-b border-slate-100">
+        <div className="min-w-0 flex-1"><h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2"><span aria-hidden="true">🔁</span>{tx('Modificaciones / Enmiendas de Orden de Compra', 'Purchase Order modifications / amendments')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Crea Rev. N sin borrar la OC anterior. Incluye cambios del cliente, cancelaciones y conciliación con recepción/factura.', 'Creates Rev. N without deleting the previous PO. Includes client changes, cancellations and reconciliation with receipt/invoice.')}</p></div>
+        <span className="text-sm font-black shrink-0"><button type="button" onClick={() => { setHist({}); setRevision(n => n + 1); }} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl shadow-2xs flex items-center gap-2"><RefreshCw className="w-4 h-4" />{tx('Actualizar', 'Refresh')}</button></span>
+      </div>
+      <div className="space-y-2.5 text-xs text-slate-800">
+        <p className="p-3.5 rounded-xl border-l-4 border-l-amber-500 bg-amber-50/80"><strong>{tx('Nuevo control:', 'New control:')}</strong> {tx('una OC emitida no se modifica directamente. Primero usa', 'an issued PO is not modified directly. First use')} <strong>{tx('SOLICITAR MODIFICACIÓN', 'REQUEST CHANGE')}</strong> {tx('y espera su aprobación. La aprobación permite una sola enmienda; después la nueva Rev. N vuelve al flujo normal de revisión/autorización.', 'and wait for its approval. The approval allows a single amendment; afterwards the new Rev. N returns to the normal review/authorization flow.')}</p>
+        <p className="p-3.5 rounded-xl border-l-4 border-l-amber-500 bg-amber-50/80"><strong>{tx('OC emitida:', 'Issued PO:')}</strong> {tx('primero utiliza', 'first use')} <strong>{tx('SOLICITAR MODIFICACIÓN', 'REQUEST CHANGE')}</strong>. {tx('Solo después de la aprobación previa se habilita', 'Only after the prior approval is')} <strong>{tx('MODIFICAR OC', 'MODIFY PO')}</strong>{tx('; la revisión anterior queda histórica/Sustituida y la nueva inicia como Borrador para pasar nuevamente por revisión y autorización.', ' enabled; the previous revision stays historical/Superseded and the new one starts as Draft to go through review and authorization again.')}</p>
+      </div>
       <Loading on={fam.status === 'loading'} /><Err e={fam.error} />
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[[families.length, tx('Familias de OC', 'PO families')], [families.filter(f => f.versions.length > 1).length, tx('Con revisión / enmienda', 'With revision / amendment')], [ctr.change_pending ?? 0, tx('Cambios pendientes', 'Pending changes')], [ctr.reconciliation_pending ?? 0, tx('Conciliación requerida', 'Reconciliation required')]].map(([n, l]) => <div key={l} className="p-4 rounded-xl border border-slate-200 bg-white"><div className="text-2xl font-black text-slate-900 tabular-nums">{n}</div><div className="text-[11px] text-slate-500 font-bold">{l}</div></div>)}</div>
-      {(fam.data?.total || 0) > 50 && <p className="text-[11px] text-amber-700">{tx('Se muestran las 50 versiones más recientes.', 'Showing the 50 most recent versions.')}</p>}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">{families.map(f => { const last = f.versions[f.versions.length - 1]; const on = openFamily === f.id; return <div key={f.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-2"><div className="flex justify-between gap-2"><span className="text-sm font-black text-slate-900">{f.folio}</span><span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 rounded-full px-2 py-0.5">{revLabel(last)}</span></div><div className="text-[11px] text-slate-500">{last.supplier_name}</div><div className="text-xs font-bold">{money(last.total_amount, last.currency, en)}</div>
-        <div className="flex gap-1.5"><button type="button" onClick={() => setOpenFamily(on ? '' : f.id)} className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black rounded-lg uppercase">{on ? tx('Ocultar', 'Hide') : tx('Historial', 'History')}</button>{lockBtn(tx('Modificar OC', 'Modify PO'))}</div>
-        {on && <ul className="space-y-1 pt-2 border-t border-slate-100">{f.versions.map(v => <li key={v.id} className="text-[10px] text-slate-600 flex justify-between gap-2"><span>{revLabel(v)} · {ymd(v.order_date)}</span><span className="font-bold">{money(v.total_amount, v.currency, en)}</span><button type="button" onClick={() => openFormat(v.id)} className="text-blue-700 font-bold">{tx('Ver', 'View')}</button></li>)}</ul>}</div>; })}</div>
-      {fam.status === 'ready' && !families.length && <p className="text-xs text-slate-400 text-center py-8">{tx('No hay órdenes de compra registradas.', 'No purchase orders recorded.')}</p>}
+      {(() => { const k = amendKpis(families); return <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[['families', k.families, tx('Familias de OC', 'PO families'), 'bg-blue-600'], ['amended', k.amended, tx('Con revisión / enmienda', 'With revision / amendment'), 'bg-purple-600'], ['pending', k.pending, tx('Cambios pendientes', 'Pending changes'), 'bg-amber-500'], ['reconciliation', k.reconciliation, tx('Conciliación requerida', 'Reconciliation required'), 'bg-rose-600']].map(([key, n, l, bar]) =>
+        <div key={key} data-testid={`po-amend-kpi-${key}`} className="relative overflow-hidden bg-white rounded-2xl border border-slate-200/80 px-4 pt-5 pb-3 shadow-2xs"><div className={`absolute top-0 left-0 right-0 h-1.5 ${bar}`} /><div className="text-xl font-black text-slate-900 tabular-nums">{fam.status === 'ready' ? n : '…'}</div><div className="text-[10.5px] font-bold text-slate-600">{l}</div></div>)}</div>; })()}
+      <input type="search" aria-label={tx('Buscar familias de OC', 'Search PO families')} value={amendQ} onChange={e => { setAmendQ(e.target.value); setAmendPage(1); }} maxLength={120} placeholder={tx('Buscar OC, proveedor, requisición, CR o estatus...', 'Search PO, supplier, requisition, CR or status...')} className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
+      <select aria-label={tx('Estado de la familia', 'Family state')} value={amendF} onChange={e => { setAmendF(e.target.value); setAmendPage(1); }} className="w-full px-4 py-3 bg-white border border-blue-300 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20">{AMEND_FILTERS.map(([v, es, e2]) => <option key={v} value={v}>{en ? e2 : es}</option>)}</select>
+      {actMsg && <div data-testid="po-amend-msg" role={actMsg.kind === 'error' ? 'alert' : 'status'} className={`flex items-start justify-between gap-3 p-3 rounded-xl border text-xs ${actMsg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : actMsg.kind === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-blue-50 border-blue-200 text-blue-900'}`}><span className="flex items-start gap-2">{actMsg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{actMsg.folio ? <strong>{actMsg.folio}: </strong> : null}{actMsg.text}</span></span><button type="button" aria-label={tx('Cerrar aviso', 'Close notice')} onClick={() => setActMsg(null)} className="p-1 rounded hover:bg-white/60"><X className="w-3.5 h-3.5" /></button></div>}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">{shownFamilies.slice((amendPage - 1) * AMEND_PAGE, amendPage * AMEND_PAGE).map(f => { const on = openFamily === f.id; const h = hist[f.id]; const busy = pdfBusy === `${f.id}:view`;
+        return <div key={f.id} data-testid="po-family" data-folio={f.folio} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs flex flex-col gap-3">
+          <div><h4 className="text-[12.5px] font-black text-slate-900 uppercase leading-snug">{f.folio} · {f.supplier}</h4><p className="text-[10.5px] text-slate-500 mt-1.5">{f.reference} · {f.cr}</p></div>
+          <span className={`self-start px-2.5 py-0.5 rounded-full text-[10px] font-black border ${f.tone}`}>{f.badge}</span>
+          <div className="grid grid-cols-2 gap-2">{[[f.original, tx('Monto original', 'Original amount')], [f.current, tx('Monto vigente', 'Current amount')], [f.reception, tx('Recepción', 'Receipt')], [f.invoice, tx('Factura vigente', 'Active invoice')]].map(([v, l]) =>
+            <div key={l} className="p-2.5 rounded-xl border border-slate-200 bg-slate-50/40 min-w-0"><div className="text-[13px] font-black text-slate-900 tabular-nums break-words leading-tight">{v}</div><div className="text-[9.5px] font-bold text-slate-500">{l}</div></div>)}</div>
+          {f.modPending && <p className="text-[10.5px] font-bold text-amber-800">{tx('Solicitud pendiente', 'Pending request')}: {f.modPending}</p>}
+          {f.flags.reconciliation && <p className="text-[10.5px] font-bold text-rose-700">{tx('Conciliación requerida con recepción/factura', 'Reconciliation required with receipt/invoice')}</p>}
+          <div className="mt-auto flex flex-wrap gap-2 text-[10.5px] font-black uppercase">
+            <button type="button" aria-expanded={on} onClick={() => toggleHistory(f)} className="px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl uppercase">{on ? tx('Ocultar', 'Hide') : tx('Historial', 'History')}</button>
+            <button type="button" disabled={busy} onClick={() => pdfOf(f.po, 'view')} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl uppercase disabled:opacity-50">{busy ? '…' : tx('Ver PDF', 'View PDF')}</button>
+            {f.canRequest && <button type="button" onClick={() => onRequest(f.po)} className="px-3 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white rounded-xl uppercase flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" />{tx('Solicitar modificación', 'Request change')}</button>}
+            {f.canModify && <button type="button" onClick={() => onModify(f.po)} className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl uppercase">{tx('Modificar OC', 'Modify PO')}</button>}
+          </div>
+          {on && <div data-testid="po-family-history" className="pt-3 border-t border-slate-100 space-y-1.5">{!h || h.status === 'loading' ? <Loading on /> : h.status === 'error' ? <Err e={h.error} /> : h.versions.map(v =>
+            <div key={v.id} className="p-2 rounded-lg bg-slate-50 border border-slate-100 text-[10.5px]"><div className="flex justify-between gap-2"><strong>{v.title}</strong><strong className="tabular-nums">{v.amount}</strong></div><div className="flex justify-between gap-2 text-slate-500"><span>{v.status} · {v.amend}</span><button type="button" disabled={pdfBusy === `${v.id}:view`} onClick={() => pdfOf({ id: v.id, folio: f.folio }, 'view')} className="text-blue-700 font-black shrink-0">{tx('Ver PDF', 'View PDF')}</button></div></div>)}</div>}
+        </div>; })}</div>
+      {fam.status === 'ready' && !shownFamilies.length && <div className="p-8 border border-dashed border-slate-300 rounded-2xl text-center text-sm text-slate-500">{families.length ? tx('Ninguna familia coincide con la búsqueda o el estado.', 'No family matches the search or state.') : tx('No hay órdenes de compra registradas.', 'No purchase orders recorded.')}</div>}
+      {shownFamilies.length > 0 && <div className="flex flex-wrap justify-between items-center gap-2 text-xs text-slate-600"><span data-testid="po-amend-range" className="font-bold text-blue-900">{familyRange(amendPage, AMEND_PAGE, shownFamilies.length, en)}</span>{amendLast > 1 && <div className="flex gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={amendPage <= 1} onClick={() => setAmendPage(n => n - 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={amendPage >= amendLast} onClick={() => setAmendPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div>}</div>}
     </div>}
 
     {/* 5 · REVISIÓN Y AUTORIZACIÓN (mis tareas) */}
