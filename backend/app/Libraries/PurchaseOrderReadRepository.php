@@ -149,6 +149,9 @@ final class PurchaseOrderReadRepository
               COUNT(*) AS items,GROUP_CONCAT(DISTINCT aw.currency_code) AS currencies,SUM(aw.subtotal_amount) AS awarded_amount,
               (SELECT GROUP_CONCAT(DISTINCT po.folio ORDER BY po.folio SEPARATOR ', ') FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
                  WHERE pr.organization_id=aw.organization_id AND pr.requisition_id=aw.requisition_id AND po.supplier_id=aw.supplier_id) AS existing_pos,
+              (SELECT GROUP_CONCAT(DISTINCT po.folio ORDER BY po.folio SEPARATOR ', ') FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
+                 WHERE pr.organization_id=aw.organization_id AND pr.requisition_id=aw.requisition_id AND po.supplier_id=aw.supplier_id
+                   AND LOWER(COALESCE(po.legacy_status,po.operational_status,'')) NOT IN ('cancelada','sustituida','cancelled','superseded')) AS active_pos,
               (SELECT cqv.client_decision_status FROM customer_quote_versions cqv WHERE cqv.organization_id=aw.organization_id AND cqv.requisition_id=aw.requisition_id ORDER BY cqv.quote_date DESC,cqv.version_number DESC,cqv.id DESC LIMIT 1) AS client_decision
             FROM awards aw
             JOIN requisitions r ON r.id=aw.requisition_id AND r.organization_id=aw.organization_id
@@ -161,7 +164,60 @@ final class PurchaseOrderReadRepository
             ORDER BY r.folio,s.legal_name LIMIT 500
             SQL, [$org]);
         $losing = (int) ($this->rows("SELECT COUNT(*) AS n FROM supplier_quotes sq WHERE sq.organization_id=? AND EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=sq.organization_id AND aw.requisition_id=sq.requisition_id AND aw.status_code='active') AND NOT EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=sq.organization_id AND aw.supplier_quote_id=sq.id AND aw.status_code='active')", [$org])[0]['n'] ?? 0);
-        return ['items' => array_map(static function (array $r): array { $r['items'] = (int) $r['items']; return $r; }, $rows), 'losing_quotes' => $losing];
+        return ['items' => array_map(static function (array $r): array { $r['items'] = (int) $r['items']; return $r; }, $rows), 'losing_quotes' => $losing,
+            'requisitions' => $this->issuanceRequisitions($org), 'lines' => $this->issuanceLines($org)];
+    }
+
+    /**
+     * Card 1 selector: requisitions with an active definitive award OR a current client quote APPROVED (same status rule as
+     * Cotizaciones, QuoteReadRepository::STATUS_KEY over the current version of each client quote). client_approved tells
+     * whether a PO may be issued; quotes_received counts every supplier quote (winners and losers).
+     */
+    private function issuanceRequisitions(int $org): array
+    {
+        $key = QuoteReadRepository::STATUS_KEY;
+        $current = 'NOT EXISTS (SELECT 1 FROM customer_quote_versions nx WHERE nx.organization_id=v.organization_id AND nx.customer_quote_id=v.customer_quote_id AND nx.version_number>v.version_number)';
+        $approved = "EXISTS (SELECT 1 FROM customer_quote_versions v WHERE v.organization_id=r.organization_id AND v.requisition_id=r.id AND {$current} AND ({$key})='approved')";
+        $award = "EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=r.organization_id AND aw.requisition_id=r.id AND aw.status_code='active' AND aw.superseded_at IS NULL)";
+        $rows = $this->rows(<<<SQL
+            SELECT re.public_id AS id,r.folio,r.client_reference,r.project_reference_snapshot AS project,c.legal_name AS client_name,
+              IF({$approved},1,0) AS client_approved,
+              (SELECT GROUP_CONCAT(v.folio ORDER BY v.quote_date DESC,v.version_number DESC SEPARATOR ', ') FROM customer_quote_versions v WHERE v.organization_id=r.organization_id AND v.requisition_id=r.id AND {$current} AND ({$key})='approved') AS customer_quote,
+              (SELECT COUNT(*) FROM supplier_quotes sq WHERE sq.organization_id=r.organization_id AND sq.requisition_id=r.id) AS quotes_received,
+              (SELECT COUNT(*) FROM requisition_items ri WHERE ri.organization_id=r.organization_id AND ri.requisition_id=r.id AND ri.cancelled_at IS NULL) AS item_count,
+              (SELECT COUNT(DISTINCT aw.requisition_item_id) FROM awards aw WHERE aw.organization_id=r.organization_id AND aw.requisition_id=r.id AND aw.status_code='active' AND aw.superseded_at IS NULL) AS awarded_items
+            FROM requisitions r
+            JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
+            JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+            WHERE r.organization_id=? AND re.archived_at IS NULL AND ({$award} OR {$approved})
+            ORDER BY r.folio LIMIT 500
+            SQL, [$org]);
+        foreach ($rows as &$r) {
+            $r['client_approved'] = (bool) $r['client_approved'];
+            foreach (['quotes_received', 'item_count', 'awarded_items'] as $k) {
+                $r[$k] = (int) $r[$k];
+            }
+        }
+        unset($r);
+        return $rows;
+    }
+
+    /** Awarded lines (active definitive award) per requisition and winning supplier; losing quotes are never listed. */
+    private function issuanceLines(int $org): array
+    {
+        return $this->rows(<<<'SQL'
+            SELECT re.public_id AS requisition_id,se.public_id AS supplier_id,ri.line_number,ri.description,aw.quantity,ri.unit_label,aw.unit_price,
+              aw.subtotal_amount AS subtotal,aw.currency_code AS currency,sq.folio AS quote_folio
+            FROM awards aw
+            JOIN requisitions r ON r.id=aw.requisition_id AND r.organization_id=aw.organization_id
+            JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
+            JOIN requisition_items ri ON ri.id=aw.requisition_item_id AND ri.organization_id=aw.organization_id
+            JOIN suppliers s ON s.id=aw.supplier_id AND s.organization_id=aw.organization_id
+            JOIN business_entities se ON se.id=s.id AND se.organization_id=s.organization_id
+            JOIN supplier_quotes sq ON sq.id=aw.supplier_quote_id AND sq.organization_id=aw.organization_id
+            WHERE aw.organization_id=? AND aw.status_code='active' AND aw.superseded_at IS NULL AND re.archived_at IS NULL
+            ORDER BY r.folio,s.legal_name,ri.line_number,aw.id LIMIT 2000
+            SQL, [$org]);
     }
 
     /** POs needing attention of the current actor (responsible) + modification requests assigned to them. */

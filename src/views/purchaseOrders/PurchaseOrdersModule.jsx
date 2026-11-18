@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, Eye, X } from 'lucide-react';
 import { listPurchaseOrders, poIssuance, poTasks, poDetail } from './api';
-import { money, opLabel, statusTone, progressOf, buyerCards, issuanceGroups, poPrintHtml } from './model.mjs';
+import { money, opLabel, statusTone, progressOf, buyerCards, poPrintHtml } from './model.mjs';
+import { issuanceOptions, winningSuppliers, supplierTotal, toGenerate, validateIssuance, issuanceLockedText } from './poIssuance.mjs';
 
 // Órdenes de Compra · diseño Grupo Gerez (6 tarjetas) conectado a MariaDB en modo consulta.
 // GET /api/v1/purchase-orders[/issuance|/tasks|/{id}] (Master Admin). Emitir, autorizar, modificar y eliminar OC siguen
@@ -59,7 +60,17 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     if (tab === 4) { setFam(x => ({ ...x, status: 'loading' })); listPurchaseOrders({ pageSize: 50, scope: 'all', sort: 'recent' }, c.signal).then(v => !c.signal.aborted && setFam({ status: 'ready', data: v, error: null })).catch(e => !c.signal.aborted && setFam({ status: 'error', data: null, error: e })); }
     return () => c.abort();
   }, [tab, revision]);
-  const ig = useMemo(() => issuanceGroups(iss.data || {}), [iss.data]);
+  // 1 · Emisión: requisición aprobada → proveedores ganadores (1 OC por proveedor). Crear OC valida y no escribe.
+  const [issReq, setIssReq] = useState(''); const [issMsg, setIssMsg] = useState(null);
+  const io = useMemo(() => issuanceOptions(iss.data || {}, en), [iss.data, en]);
+  const issOpt = io.options.find(o => o.id === issReq && o.ready) || null;
+  const winners = useMemo(() => winningSuppliers(iss.data || {}, issOpt ? issReq : ''), [iss.data, issReq, issOpt]);
+  const createPOs = () => {
+    const v = validateIssuance(issOpt, winners, en);
+    if (!v.ok) { setIssMsg({ kind: 'error', items: v.errors, warnings: v.warnings }); return; }
+    const text = issuanceLockedText(issOpt, v.orders, en);
+    setIssMsg({ kind: 'locked', items: [text], warnings: v.warnings }); notify(tx('Emisión no habilitada', 'Issuance not enabled'), text, 'warning');
+  };
   const families = useMemo(() => {
     const m = new Map();
     for (const po of fam.data?.items || []) { const f = m.get(po.series_id) || { id: po.series_id, folio: po.folio, versions: [] }; f.versions.push(po); m.set(po.series_id, f); }
@@ -105,17 +116,53 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 flex items-start gap-2 text-[11px] text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{LOCK}</span></div>
 
     {/* 1 · EMISIÓN (consulta) */}
-    {tab === 1 && <div className={box}>
-      <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-slate-100"><div><h3 className="text-base font-extrabold text-slate-900">{tx('Órdenes de Compra por proveedor adjudicado', 'Purchase Orders by awarded vendor')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Requisiciones con adjudicación definitiva vigente, agrupadas por proveedor ganador (1 requisición ➝ 1 OC por proveedor).', 'Requisitions with a current definitive award, grouped by winning vendor (1 requisition ➝ 1 PO per vendor).')}</p></div><span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 rounded-full px-3 py-1">{tx('Paso 5 · Orden de compra', 'Step 5 · Purchase order')}</span></div>
-      <Loading on={iss.status === 'loading'} /><Err e={iss.error} />
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{[[ig.metrics.awardedItems, tx('Partidas adjudicadas', 'Awarded items')], [ig.metrics.winningSuppliers, tx('Proveedores ganadores', 'Winning vendors')], [ig.metrics.toGenerate, tx('OC por generar', 'POs to generate')], [ig.metrics.losingQuotes, tx('Cotizaciones perdedoras', 'Losing quotes')]].map(([n, l]) => <div key={l} className="p-4 rounded-xl border border-slate-200/80 bg-slate-50/50"><div className="text-2xl font-black text-slate-900 tabular-nums">{iss.status === 'ready' ? n : '…'}</div><div className="text-[11px] text-slate-500 font-bold">{l}</div></div>)}</div>
-      <div className="space-y-3">
-        {ig.groups.map(g => <div key={g.id} className="rounded-2xl border border-slate-200 p-4 space-y-3"><div className="flex flex-wrap justify-between gap-2"><div><div className="text-sm font-extrabold text-slate-900">{g.folio}</div><div className="text-[11px] text-slate-500">{g.client}</div></div><span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 rounded-full px-2.5 py-1 self-start">{tx('Decisión del cliente', 'Client decision')}: {show(g.decision)}</span></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{g.suppliers.map(sp => <div key={sp.id} className="p-3 rounded-xl border border-slate-200 bg-white space-y-1.5"><div className="flex justify-between gap-2"><span className="text-[10px] text-slate-400 font-bold uppercase">{tx('Proveedor ganador', 'Winning vendor')}</span><span className="text-[10px] font-bold text-blue-700">{sp.items} {tx('partida(s)', 'item(s)')}</span></div><div className="text-xs font-extrabold text-slate-900">{sp.name}</div><div className="text-[11px] text-slate-600">{tx('Adjudicado', 'Awarded')}: {money(sp.amount, sp.currencies, en)}</div>
-            {sp.existing ? <div className="text-[11px] font-bold text-emerald-700">✓ {tx('OC generada', 'PO generated')}: {sp.existing}</div> : lockBtn(tx('Crear OC de este proveedor', 'Create PO for this vendor'), 'w-full py-1.5')}</div>)}</div></div>)}
-        {iss.status === 'ready' && !ig.groups.length && <p className="text-xs text-slate-400 text-center py-8">{tx('No hay adjudicaciones vigentes registradas.', 'No current awards recorded.')}</p>}
+    {tab === 1 && <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5" data-testid="po-issuance">
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-3 pb-4 border-b border-slate-100">
+        <div className="min-w-0 flex-1"><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Orden de compra', 'Purchase order')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Las nuevas OC se generan desde la adjudicación definitiva: una Orden de Compra por cada proveedor ganador, únicamente después de la aprobación del cliente.', 'New POs are generated from the definitive award: one Purchase Order per winning vendor, only after the client’s approval.')}</p></div>
+        <span className="text-[10.5px] font-black text-amber-800 bg-amber-100/80 border border-amber-200 rounded-full px-3 py-1 shrink-0">{tx('Paso 5 · Orden de compra', 'Step 5 · Purchase order')}</span>
       </div>
-      <p className="text-[11px] text-slate-400">{tx('La emisión agrupa todas las partidas ganadas del mismo proveedor en una sola OC. Crear OC permanece bloqueado.', 'Issuance groups all items won by the same vendor into one PO. Creating POs remains blocked.')}</p>
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/30 p-4 sm:p-5 space-y-5">
+        <div className="flex flex-col sm:flex-row items-start justify-between gap-3 pb-4 border-b border-slate-200/70">
+          <div className="min-w-0 flex-1"><h4 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2"><span aria-hidden="true">🛒</span>{tx('Órdenes de Compra por proveedor adjudicado', 'Purchase Orders by awarded vendor')}</h4><p className="text-[11px] text-slate-500 mt-0.5">{tx('SupplyFlow muestra únicamente requisiciones con Cotización al Cliente APROBADA y únicamente proveedores con adjudicación definitiva. Las cotizaciones perdedoras no aparecen aquí.', 'SupplyFlow only shows requisitions with an APPROVED client quote and only vendors with a definitive award. Losing quotes do not appear here.')}</p></div>
+          <span className="text-[10.5px] font-black text-purple-800 bg-purple-100/80 border border-purple-200 rounded-full px-3 py-1 shrink-0">{tx('1 requisición → 1 OC por proveedor', '1 requisition → 1 PO per vendor')}</span>
+        </div>
+        <Loading on={iss.status === 'loading'} /><Err e={iss.error} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label className="block"><span className="block text-[11px] font-black text-slate-900 mb-1.5">{tx('Requisición aprobada por el cliente', 'Requisition approved by the client')} *</span>
+            <select aria-label={tx('Requisición aprobada por el cliente', 'Requisition approved by the client')} value={issReq} onChange={e => { setIssReq(e.target.value); setIssMsg(null); }} className="w-full px-3.5 py-3 bg-white border border-blue-300 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500">
+              <option value="">{tx('Seleccionar requisición...', 'Select requisition...')}</option>
+              {io.options.map(o => <option key={o.id} value={o.id} disabled={!o.ready}>{o.label}</option>)}
+            </select>
+            <span className="block text-[11px] text-slate-600 mt-1.5">{tx('La requisición debe tener aprobación del cliente y adjudicación definitiva por partida.', 'The requisition must have the client’s approval and a definitive award per item.')}</span></label>
+          <label className="block"><span className="block text-[11px] font-black text-slate-900 mb-1.5">{tx('Regla de emisión', 'Issuance rule')}</span>
+            <input type="text" readOnly aria-label={tx('Regla de emisión', 'Issuance rule')} value={tx('Agrupar todas las partidas ganadas del mismo proveedor en una sola OC', 'Group all items won by the same vendor into a single PO')} className="w-full px-3.5 py-3 bg-slate-100 border border-slate-200 rounded-xl text-sm text-slate-600 cursor-default" />
+            <span className="block text-[11px] text-slate-600 mt-1.5">{tx('No se seleccionan cotizaciones individuales. Se utiliza el proveedor ganador de cada partida.', 'Individual quotes are not selected. The winning vendor of each item is used.')}</span></label>
+        </div>
+        {io.waiting.length > 0 && <p data-testid="po-iss-waiting" className="text-[11px] text-slate-500">{tx(`${io.waiting.length} requisición(es) con adjudicación esperan la aprobación del cliente y no se muestran: ${io.waiting.map(r => r.folio).join(', ')}.`, `${io.waiting.length} requisition(s) with an award are awaiting the client’s approval and are not shown: ${io.waiting.map(r => r.folio).join(', ')}.`)}</p>}
+        {iss.status === 'ready' && !io.options.some(o => o.ready) && <p className="text-[11px] text-amber-800">{tx('No hay requisiciones aprobadas por el cliente con adjudicación definitiva.', 'There are no client-approved requisitions with a definitive award.')}</p>}
+
+        {!issOpt ? <div data-testid="po-iss-empty" className="max-w-sm p-6 border border-dashed border-slate-300 rounded-2xl bg-white text-center text-sm text-slate-600 leading-relaxed">{tx(`Selecciona una requisición aprobada. Aquí no se muestran las ${io.quotesReceived} cotizaciones recibidas: solo aparecerán los proveedores ganadores de la adjudicación definitiva.`, `Select an approved requisition. The ${io.quotesReceived} quotes received are not shown here: only the winning vendors of the definitive award will appear.`)}</div>
+          : <div className="space-y-4">
+            <div data-testid="po-iss-context" className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3.5 rounded-xl bg-emerald-50/70 border-l-4 border-emerald-500 text-xs text-emerald-900">
+              <span className="font-black">{issOpt.req.folio}</span><span>{issOpt.req.client_name}</span>{issOpt.req.project && <span>{tx('Proyecto', 'Project')}: {issOpt.req.project}</span>}
+              <span>{tx('Cotización al cliente aprobada', 'Approved client quote')}: <strong>{issOpt.req.customer_quote}</strong></span>
+              <span>{tx(`${issOpt.req.quotes_received} cotización(es) recibida(s) · ${winners.length} proveedor(es) ganador(es)`, `${issOpt.req.quotes_received} quote(s) received · ${winners.length} winning vendor(s)`)}</span>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">{winners.map(sp => <div key={sp.id} data-testid="po-iss-supplier" data-supplier={sp.name} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3 shadow-2xs">
+              <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><div className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{tx('Proveedor ganador', 'Winning vendor')}</div><div className="text-sm font-black text-slate-900 truncate" title={sp.name}>{sp.name}</div></div>
+                {sp.generated ? <span className="text-[10.5px] font-black text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1">✓ {tx('OC generada', 'PO generated')}: {sp.po}</span> : <span className="text-[10.5px] font-black text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">{tx('OC por generar', 'PO to generate')}</span>}</div>
+              <div className="overflow-x-auto rounded-xl border border-slate-100"><table className="w-full text-left text-[11px] min-w-[420px]"><thead><tr className="bg-slate-50 text-[9.5px] font-extrabold text-slate-500 uppercase">{['#', tx('Descripción', 'Description'), tx('Cant.', 'Qty'), tx('P. unitario', 'Unit price'), tx('Importe', 'Amount')].map(h => <th key={h} className="py-2 px-2.5">{h}</th>)}</tr></thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">{sp.lines.map(l => <tr key={`${l.line_number}-${l.quote_folio}`}><td className="py-2 px-2.5">{l.line_number}</td><td className="py-2 px-2.5">{l.description}</td><td className="py-2 px-2.5 whitespace-nowrap">{Number(l.quantity)} {l.unit_label}</td><td className="py-2 px-2.5 whitespace-nowrap">{money(l.unit_price, l.currency, en)}</td><td className="py-2 px-2.5 whitespace-nowrap font-bold">{money(l.subtotal, l.currency, en)}</td></tr>)}</tbody></table></div>
+              <div className="flex flex-wrap justify-between gap-2 text-[11px]"><span className="text-slate-500">{tx('Cotización ganadora', 'Winning quote')}: {sp.quotes.join(', ') || DASH} · {sp.lines.length} {tx('partida(s)', 'item(s)')}</span><span className="font-black text-slate-900">Total: {supplierTotal(sp, en) || DASH}</span></div>
+            </div>)}</div>
+          </div>}
+
+        {issMsg && <div data-testid="po-iss-msg" role={issMsg.kind === 'error' ? 'alert' : 'status'} className={`p-3 rounded-xl border text-xs space-y-1 ${issMsg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{issMsg.items.map(t => <p key={t} className="flex items-start gap-2">{issMsg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{t}</span></p>)}{issMsg.warnings.map(w => <p key={w} className="text-amber-800">⚠ {w}</p>)}</div>}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-200/70">
+          <span data-testid="po-iss-count" className="text-xs text-slate-700"><strong className="font-black">{issOpt ? toGenerate(winners) : 0}</strong> {tx('OC por generar', 'POs to generate')}</span>
+          <span className="text-sm font-black"><button type="button" onClick={createPOs} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">🛒</span>{tx('Crear una OC por cada proveedor', 'Create one PO per vendor')}</button></span>
+        </div>
+      </div>
     </div>}
 
     {/* 2 · MATRIZ */}

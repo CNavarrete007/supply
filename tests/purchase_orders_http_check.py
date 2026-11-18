@@ -47,6 +47,17 @@ try:
         det = get(f"{R}/{cur[0]['id']}")
         check('detalle: partidas, versiones de la serie y documentos', {'item', 'items', 'versions', 'receipts', 'invoices', 'modification_requests'} <= set(det) and len(det['versions']) == cur[0]['versions'] and det['item']['folio'] == cur[0]['folio'])
     iss = get(R + '/issuance'); check('emisión: forma', isinstance(iss['items'], list) and isinstance(iss['losing_quotes'], int))
+    reqs, lines = iss['requisitions'], iss['lines']
+    check('emisión: requisiciones con forma y tipos', isinstance(reqs, list) and all(set(r) == {'id', 'folio', 'client_reference', 'project', 'client_name', 'client_approved', 'customer_quote', 'quotes_received', 'item_count', 'awarded_items'}
+        and isinstance(r['client_approved'], bool) and all(isinstance(r[k], int) for k in ('quotes_received', 'item_count', 'awarded_items')) for r in reqs))
+    check('emisión: toda requisición con adjudicación vigente aparece en el selector', {i['requisition_id'] for i in iss['items']} <= {r['id'] for r in reqs})
+    check('emisión: aprobada = cotización al cliente vigente con estatus "Aprobada" (misma regla que Cotizaciones)', all((r['customer_quote'] is not None) == r['client_approved'] for r in reqs))
+    cqs = get('/api/v1/quotes/customer-quotes?scope=current&group=approved&page=1&page_size=50')['items']
+    check('emisión: requisiciones aprobadas = cotizaciones al cliente aprobadas vigentes', {r['folio'] for r in reqs if r['client_approved']} == {c['requisition'] for c in cqs})
+    check('emisión: partidas solo de proveedores ganadores (sin perdedoras)', all(any(i['requisition_id'] == l['requisition_id'] and i['supplier_id'] == l['supplier_id'] for i in iss['items']) for l in lines)
+        and all(i['items'] == sum(1 for l in lines if l['requisition_id'] == i['requisition_id'] and l['supplier_id'] == i['supplier_id']) for i in iss['items']))
+    check('emisión: importe adjudicado = suma de partidas', all(abs(float(i['awarded_amount']) - sum(float(l['subtotal']) for l in lines if l['requisition_id'] == i['requisition_id'] and l['supplier_id'] == i['supplier_id'])) < 0.01 for i in iss['items']))
+    check('emisión: OC activa nunca es cancelada/sustituida', all(not i['active_pos'] or i['existing_pos'] for i in iss['items']))
     t = get(R + '/tasks'); check('tareas: forma', isinstance(t['responsible'], list) and isinstance(t['modification_requests'], list))
 finally:
     logout(adm)

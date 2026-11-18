@@ -495,7 +495,8 @@ final class QuoteReadRepository
      * imported (legacy) label wins and, without one, the status codes decide. "expired" without a legacy label means a quote sent to
      * the client whose validity date already passed and has no client decision; it is derived for display only (nothing is stored).
      */
-    private const STATUS_KEY = "CASE WHEN v.document_status IN ('superseded','cancelled') THEN 'superseded'
+    /** Status of a client quote version (alias v); public so Órdenes de Compra applies the same client-approval rule. */
+    public const STATUS_KEY = "CASE WHEN v.document_status IN ('superseded','cancelled') THEN 'superseded'
         WHEN NULLIF(TRIM(v.legacy_status),'') IS NOT NULL THEN CASE WHEN v.legacy_status LIKE '%borrador%' THEN 'draft'
           WHEN v.legacy_status LIKE '%revisi_n interna%' OR v.legacy_status LIKE 'en revisi_n%' THEN 'review' WHEN v.legacy_status LIKE '%autorizada%' THEN 'authorized'
           WHEN v.legacy_status LIKE '%enviada%' THEN 'sent' WHEN v.legacy_status LIKE '%modificaci_n%' OR v.legacy_status LIKE '%cambios%' THEN 'change_requested'

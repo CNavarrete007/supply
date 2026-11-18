@@ -11,6 +11,7 @@ if (!/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(UI) || !PASSWORD) { conso
 const results = [];
 const check = (name, ok, detail = '') => results.push([name, !!ok, detail]);
 const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` }); };
+const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v))} ${c}`;
 
 (async () => {
   const browser = await chromium.launch();
@@ -77,13 +78,56 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     await popup.waitForLoadState(); check('imprimir abre el formato', (await popup.textContent('body')).includes('OC-QA-0003')); await popup.close();
     await shot(page, 'oc_6_formato');
 
-    // Emisión
+    // 1 · Emisión de orden de compra (diseño): requisición aprobada → proveedores ganadores; crear OC valida y no escribe
     await page.getByRole('button', { name: /Emisión de orden de compra/ }).first().click();
     const iss = await api('/api/v1/purchase-orders/issuance');
-    await page.getByText('Partidas adjudicadas').waitFor();
-    const metric = async l => Number((await page.getByText(l, { exact: true }).locator('xpath=preceding-sibling::div[1]').innerText()).trim());
-    check('emisión: métricas desde adjudicaciones reales', await metric('Partidas adjudicadas') === iss.items.reduce((n, i) => n + i.items, 0) && await metric('OC por generar') === iss.items.filter(i => !i.existing_pos).length && await metric('Cotizaciones perdedoras') === iss.losing_quotes);
-    check('emisión: crear OC bloqueado', await page.getByRole('button', { name: /Crear OC de este proveedor/ }).first().isDisabled());
+    const ib = page.getByTestId('po-issuance');
+    await ib.waitFor();
+    await page.waitForFunction(() => !document.querySelector('[data-testid="po-issuance"]')?.innerText.includes('Consultando MariaDB'));
+    const ibt = (await ib.innerText()).replace(/\s+/g, ' ');
+    check('emisión: textos del diseño', ['Orden de compra', 'Las nuevas OC se generan desde la adjudicación definitiva', 'Paso 5 · Orden de compra', 'Órdenes de Compra por proveedor adjudicado', 'Las cotizaciones perdedoras no aparecen aquí.', '1 requisición → 1 OC por proveedor', 'La requisición debe tener aprobación del cliente y adjudicación definitiva por partida.', 'No se seleccionan cotizaciones individuales. Se utiliza el proveedor ganador de cada partida.'].every(x => ibt.includes(x)), ibt.slice(0, 300));
+    check('emisión: regla de emisión fija', await ib.getByRole('textbox', { name: 'Regla de emisión' }).inputValue() === 'Agrupar todas las partidas ganadas del mismo proveedor en una sola OC');
+    const sel1 = ib.getByRole('combobox', { name: 'Requisición aprobada por el cliente' });
+    const approved = iss.requisitions.filter(r => r.client_approved), ready1 = approved.filter(r => r.awarded_items > 0);
+    const optVals = await sel1.locator('option').evaluateAll(os => os.map(o => [o.value, o.disabled]));
+    check('emisión: solo requisiciones con Cotización al Cliente aprobada (sin adjudicación: deshabilitada)', optVals.length === approved.length + 1 && approved.every(r => optVals.some(([v, dis]) => v === r.id && dis === !(r.awarded_items > 0))), JSON.stringify(optVals));
+    const waiting = iss.requisitions.filter(r => !r.client_approved && r.awarded_items > 0);
+    check('emisión: con adjudicación sin aprobación del cliente no se ofrecen', waiting.every(r => !optVals.some(([v]) => v === r.id)) && (!waiting.length || (await page.getByTestId('po-iss-waiting').innerText()).includes(waiting[0].folio)));
+    const qr = ready1.reduce((n, r) => n + r.quotes_received, 0);
+    check('emisión: estado vacío del diseño con cotizaciones recibidas', (await page.getByTestId('po-iss-empty').innerText()).includes(`Aquí no se muestran las ${qr} cotizaciones recibidas`));
+    check('emisión: "0 OC por generar" sin selección', (await page.getByTestId('po-iss-count').innerText()).replace(/\s+/g, ' ').trim() === '0 OC por generar');
+    await ib.getByRole('button', { name: /Crear una OC por cada proveedor/ }).click();
+    check('emisión: crear sin requisición pide seleccionarla', (await page.getByTestId('po-iss-msg').innerText()).includes('Selecciona una requisición aprobada por el cliente.'));
+    const rq1 = ready1.find(r => iss.items.some(i => i.requisition_id === r.id && i.active_pos)) || ready1[0];
+    if (rq1) {
+      await sel1.selectOption(rq1.id);
+      await ib.getByTestId('po-iss-supplier').first().waitFor();
+      const cx1 = (await page.getByTestId('po-iss-context').innerText()).replace(/\s+/g, ' ');
+      check('emisión: contexto con cotización al cliente aprobada y cotizaciones recibidas', [rq1.folio, rq1.client_name, rq1.customer_quote, `${rq1.quotes_received} cotización(es) recibida(s)`].every(x => cx1.includes(x)), cx1);
+      const win1 = iss.items.filter(i => i.requisition_id === rq1.id);
+      check('emisión: una tarjeta por proveedor ganador (sin perdedoras)', await ib.getByTestId('po-iss-supplier').count() === win1.length);
+      for (const w of win1) {
+        const card = ib.locator(`[data-testid="po-iss-supplier"][data-supplier="${w.supplier_name}"]`);
+        const ct = (await card.innerText()).replace(/\s+/g, ' ');
+        const ls = iss.lines.filter(l => l.requisition_id === rq1.id && l.supplier_id === w.supplier_id);
+        check(`emisión: ${w.supplier_name} con partidas adjudicadas, importes y estado de OC`, ls.every(l => ct.includes(l.description) && ct.includes(money(l.subtotal, l.currency)) && ct.includes(l.quote_folio)) && (w.active_pos ? ct.includes(`OC generada: ${w.active_pos}`) : ct.includes('OC por generar')), ct);
+      }
+      const pend1 = win1.filter(i => !i.active_pos).length;
+      check(`emisión: "${pend1} OC por generar"`, (await page.getByTestId('po-iss-count').innerText()).replace(/\s+/g, ' ').trim() === `${pend1} OC por generar`);
+      if (!pend1) { await ib.getByRole('button', { name: /Crear una OC por cada proveedor/ }).click(); check('emisión: todas generadas no se duplican', (await page.getByTestId('po-iss-msg').innerText()).includes('ya fueron generadas')); }
+      await shot(page, 'oc_1_emision');
+      // Escenario con OC pendiente: misma respuesta real del servidor, pero sin la OC ya generada (solo en el navegador de la prueba).
+      const sim = JSON.parse(JSON.stringify(iss)); sim.items.forEach(i => { if (i.requisition_id === rq1.id) { i.active_pos = null; i.existing_pos = null; } });
+      await context.route('**/api/v1/purchase-orders/issuance', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(sim) }));
+      await page.getByRole('button', { name: /Actualizar/ }).first().click();
+      await page.getByTestId('po-iss-count').filter({ hasText: `${win1.length} OC por generar` }).waitFor();
+      await ib.getByRole('button', { name: /Crear una OC por cada proveedor/ }).click();
+      const lm = (await page.getByTestId('po-iss-msg').innerText()).replace(/\s+/g, ' ');
+      check('emisión (OC pendiente): valida y NO genera; una OC por proveedor con su total', lm.includes(`Datos validados, pero ${win1.length === 1 ? 'no se generó la OC' : `no se generaron las ${win1.length} OC`} de ${rq1.folio}`) && win1.every(w => lm.includes(w.supplier_name)) && lm.includes('escritura comercial bloqueada'), lm);
+      await shot(page, 'oc_1_emision_pendiente');
+      await context.unroute('**/api/v1/purchase-orders/issuance');
+      await page.getByRole('button', { name: /Actualizar/ }).first().click();
+    } else check('emisión: sin requisiciones listas', ibt.includes('No hay requisiciones aprobadas por el cliente con adjudicación definitiva.'));
     await shot(page, 'oc_2_emision');
 
     // Control de autorización
