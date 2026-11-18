@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { listInvoices, invoiceDetail, invoiceRequisitions, invoiceContext, invoiceControl } from './api';
-import { money, stateLabel, stateTone, statusText, daysOverdue, moneyList, controlCards, acceptLabel } from './model.mjs';
+import { money, stateLabel, stateTone, statusText, daysOverdue, moneyList, controlCards, acceptLabel, poList, acceptedText } from './model.mjs';
 import { clientCards, clientBadge, cardMoney, cardsEmpty, clientCaption, invoiceDeleteBlock, invoiceNumberConfirmed, deleteReasonError } from './invoiceMatrix.mjs';
 import { CURRENCIES, STATUSES, FILE_TYPES, emptyInvoice, fromInvoice, contextDefaults, computeTotal, validateInvoice, changedInvoiceFields, previewType, fileSize } from './invoiceForm.mjs';
 
@@ -106,6 +106,7 @@ export function InvoiceModule({ lang = 'es', language, isEnglish, onNotify }) {
   const setF = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaveMsg(null); };
   const editInvoice = v => { setReqLabel(v.requisition); setReqId(v.requisition_id); setInvSel(v.id); setTab(1); setView(''); window.scrollTo?.({ top: 0, behavior: 'smooth' }); };
   const newInvoice = () => { clearForm(); setTab(1); };
+  const invoiceReq = r => { clearForm(); setReqLabel(r.folio); setReqId(r.id); setTab(1); window.scrollTo?.({ top: 0, behavior: 'smooth' }); }; // FACTURAR
   const openClient = c => { setClient(c); setInput(''); setQ(''); setState('all'); setPage(1); };
   const backToClients = () => { setClient(null); setInput(''); setQ(''); setState('all'); setPage(1); if (!client) setCardInput(''); };
   const cards = useMemo(() => clientCards(cardsLd.data?.summary?.client_cards, en), [cardsLd.data, en]);
@@ -267,14 +268,32 @@ export function InvoiceModule({ lang = 'es', language, isEnglish, onNotify }) {
       </div>
     </div>}
 
-    {tab === 3 && <div className={box}>{head(tx('Control de facturación y cierre', 'Billing control and closing'), tx('El proceso llega al 100 % cuando la factura está registrada y no se encuentra cancelada.', 'The process reaches 100% when the invoice is recorded and not cancelled.'), <button type="button" onClick={() => go(2)} className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-2xl">{tx('Ver facturas', 'View invoices')}</button>)}
+    {tab === 3 && <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 sm:p-6 text-left space-y-5" data-testid="invoice-control">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+        <div><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Control de facturación y cierre', 'Billing control and closing')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('El proceso llega al 100% cuando la factura está registrada y no se encuentra cancelada.', 'The process reaches 100% when the invoice is recorded and not cancelled.')}</p></div>
+        <span className="text-sm font-black self-start sm:self-auto"><button type="button" onClick={() => go(2)} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl shadow-2xs flex items-center gap-2"><span aria-hidden="true">📋</span>{tx('Ver facturas', 'View invoices')}</button></span>
+      </div>
       <Wait s={ctrl} /><Err s={ctrl} />
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">{controlCards(ctrl.data?.counters, ctrl.data?.money || [], en).map(c => <div key={c.key} data-testid={`metric-${c.key}`} className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-2xs relative overflow-hidden flex flex-col justify-between min-h-[110px]"><div className={`absolute top-0 left-0 right-0 h-1.5 ${c.bar} rounded-t-2xl`} /><div className="pt-1">{Array.isArray(c.value) ? c.value.map(v => <div key={v} className="text-sm font-black text-slate-900 leading-tight tabular-nums">{v}</div>) : <span className="text-2xl font-black text-slate-900 leading-none tabular-nums">{ctrl.data ? c.value : '…'}</span>}</div><div className="mt-2"><p className="text-[11px] text-slate-400 font-medium leading-tight">{c.title}</p></div></div>)}</div>
-      {ctrl.data && <div className="space-y-4">
-        <div className="space-y-2"><h4 className="text-xs font-black text-slate-800">{tx('Listos para facturar', 'Ready to invoice')}</h4>{table([tx('Requisición', 'Requisition'), tx('Cliente', 'Client'), tx('Órdenes de compra', 'Purchase orders')], ctrl.data.ready_to_invoice.map(r => <tr key={r.id}><td className="py-2.5 px-3 font-bold">{r.folio}</td><td className="py-2.5 px-3">{r.client_name}</td><td className="py-2.5 px-3">{r.purchase_orders}</td></tr>), tx('No hay entregas aceptadas pendientes de factura.', 'No accepted deliveries pending invoice.'), 'min-w-[480px]')}</div>
-        <div className="space-y-2"><h4 className="text-xs font-black text-slate-800">{tx('Facturas vencidas', 'Overdue invoices')}</h4>{table(H, ctrl.data.overdue.map(v => invRow(v, false)), tx('No hay facturas vencidas.', 'No overdue invoices.'))}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">{controlCards(ctrl.data?.counters, ctrl.data?.money || [], en).map(c => <div key={c.key} data-testid={`metric-${c.key}`} className="bg-white border border-slate-200/80 rounded-2xl px-4 pb-4 pt-5 shadow-sm relative overflow-hidden flex flex-col justify-between min-h-[118px]">
+        <div className={`absolute top-0 left-0 right-0 h-1.5 ${c.bar}`} />
+        <div>{Array.isArray(c.value) ? (ctrl.data ? c.value.map(v => <div key={v} className={`font-black text-slate-900 leading-tight tabular-nums whitespace-nowrap ${c.value.length > 1 ? 'text-[15px]' : 'text-2xl'}`}>{v}</div>) : <span className="text-2xl font-black text-slate-900">…</span>) : <span className="text-2xl font-black text-slate-900 leading-none tabular-nums">{ctrl.data ? c.value : '…'}</span>}</div>
+        <div className="mt-2"><p className="text-[11px] text-slate-500 font-medium leading-tight">{c.title}</p><p className={`text-[10.5px] font-black leading-tight mt-1.5 ${c.tone}`}>{c.sub}</p></div>
+      </div>)}</div>
+
+      {ctrl.data && <div className="space-y-5">
+        <div className="space-y-3">
+          <div className="pb-3 border-b border-slate-100"><h4 className="text-sm sm:text-base font-black text-slate-900">{tx('Entregas aceptadas pendientes de factura', 'Accepted deliveries pending invoice')}</h4><p className="text-[11px] text-slate-500 mt-0.5">{tx('Selecciona FACTURAR para abrir el registro con el expediente relacionado.', 'Select INVOICE to open the registration with the related file.')}</p></div>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200/80"><table className="w-full text-left border-collapse text-[11px] min-w-[760px]"><thead><tr className="bg-slate-50 text-[10px] font-extrabold text-slate-600 uppercase tracking-wider border-b border-slate-200">{[tx('Requisición', 'Requisition'), tx('Cliente', 'Client'), tx('Proyecto', 'Project'), 'OC', tx('Entrega aceptada', 'Accepted delivery'), tx('Acción', 'Action')].map(h => <th key={h} className="py-3 px-3 whitespace-nowrap">{h}</th>)}</tr></thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">{ctrl.data.ready_to_invoice.map(r => <tr key={r.id} data-folio={r.folio} className="align-top hover:bg-slate-50/60">
+              <td className="py-3 px-3 font-black whitespace-nowrap">{r.folio}</td><td className="py-3 px-3">{r.client_name}</td><td className="py-3 px-3">{show(r.project)}</td>
+              <td className="py-3 px-3 whitespace-nowrap">{poList(r.purchase_orders).map(p => <div key={p}>{p}</div>)}{!poList(r.purchase_orders).length && DASH}</td>
+              <td className={`py-3 px-3 ${r.accepted_on ? 'whitespace-nowrap' : 'text-slate-500'}`}>{acceptedText(r.accepted_on, en)}</td>
+              <td className="py-3 px-3"><span className="text-[11px] font-black"><button type="button" aria-label={`${tx('Facturar', 'Invoice')} ${r.folio}`} onClick={() => invoiceReq(r)} className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white rounded-lg shadow-sm">{tx('FACTURAR', 'INVOICE')}</button></span></td>
+            </tr>)}{!ctrl.data.ready_to_invoice.length && <tr><td colSpan={6} className="py-10 text-center text-xs text-slate-500">{tx('No hay entregas aceptadas pendientes de factura.', 'No accepted deliveries pending invoice.')}</td></tr>}</tbody></table></div>
+        </div>
+        {ctrl.data.overdue.length > 0 && <div className="space-y-2"><h4 className="text-sm font-black text-rose-700">{tx('Facturas vencidas', 'Overdue invoices')}</h4>{table(H, ctrl.data.overdue.map(v => invRow(v, false)), tx('No hay facturas vencidas.', 'No overdue invoices.'))}</div>}
         <p className="text-[11px] text-slate-500">{tx('Saldo por cobrar', 'Outstanding')}: {moneyList(ctrl.data.money, 'outstanding', en).join('  |  ') || DASH} · {tx('Vencido', 'Overdue')}: {moneyList(ctrl.data.money, 'overdue', en).join('  |  ') || DASH}</p>
-        <p className="text-[10px] text-slate-400">{tx('Vencida: vigente, no pagada y con fecha de vencimiento anterior a hoy. Los montos nunca se suman entre monedas y excluyen facturas canceladas.', 'Overdue: active, unpaid and due before today. Amounts are never summed across currencies and exclude cancelled invoices.')}</p>
+        <p className="text-[10px] text-slate-400">{tx('Listos para facturar: requisiciones recibidas al 100 % y aceptadas por el cliente, sin factura vigente (misma regla que el Semáforo de Recepción). Vencida: vigente, no pagada y con vencimiento anterior a hoy. Los montos nunca se suman entre monedas y excluyen facturas canceladas.', 'Ready to invoice: requisitions 100% received and accepted by the client, without an active invoice (same rule as the Reception traffic light). Overdue: active, unpaid and due before today. Amounts are never summed across currencies and exclude cancelled invoices.')}</p>
       </div>}
     </div>}
 

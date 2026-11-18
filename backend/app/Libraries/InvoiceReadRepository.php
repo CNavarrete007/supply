@@ -233,6 +233,7 @@ final class InvoiceReadRepository
         $money = $this->rows("SELECT i.currency_code AS currency,SUM(i.total_amount) AS invoiced,SUM(CASE WHEN {$state} IN ('pending','overdue') THEN i.total_amount ELSE 0 END) AS outstanding,SUM(CASE WHEN {$state}='overdue' THEN i.total_amount ELSE 0 END) AS overdue"
             . self::from() . " WHERE i.organization_id=? AND e.archived_at IS NULL AND {$state}<>'cancelled' GROUP BY i.currency_code ORDER BY i.currency_code", [$org]);
         $ready = array_values(array_filter((new ReceptionReadRepository($this->db))->readiness($org), static fn ($r) => $r['ready'] && ! $r['invoiced']));
+        $extra = $this->readyExtra($org, array_column($ready, 'id'));
         $overdue = $this->rows('SELECT ' . self::header() . self::from() . " WHERE i.organization_id=? AND e.archived_at IS NULL AND {$state}='overdue' ORDER BY i.due_date,i.id", [$org]);
         self::shape($overdue);
         foreach ($overdue as &$r) {
@@ -241,7 +242,32 @@ final class InvoiceReadRepository
         unset($r);
         return [
             'counters' => ['ready_to_invoice' => count($ready), 'active' => $counts['pending'] + $counts['overdue'] + $counts['paid'], 'pending_payment' => $counts['pending'] + $counts['overdue'], 'overdue' => $counts['overdue'], 'paid' => $counts['paid'], 'cancelled' => $counts['cancelled']],
-            'money' => $money, 'ready_to_invoice' => array_map(static fn ($r) => ['id' => $r['id'], 'folio' => $r['folio'], 'client_name' => $r['client_name'], 'purchase_orders' => $r['purchase_orders']], $ready), 'overdue' => $overdue,
+            'money' => $money, 'ready_to_invoice' => array_map(static fn ($r) => ['id' => $r['id'], 'folio' => $r['folio'], 'client_name' => $r['client_name'], 'purchase_orders' => $r['purchase_orders'],
+                'project' => $extra[$r['id']]['project'] ?? null, 'accepted_on' => $extra[$r['id']]['accepted_on'] ?? null], $ready), 'overdue' => $overdue,
         ];
+    }
+
+    /**
+     * Project and latest ACCEPTED delivery date of the requisitions ready to invoice (card 3 "Entregas aceptadas pendientes
+     * de factura"). accepted_on stays null when the acceptance only exists in an imported receipt without a delivery record.
+     */
+    private function readyExtra(int $org, array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $out = [];
+        foreach ($this->rows("SELECT re.public_id AS id,r.project_reference_snapshot AS project FROM requisitions r JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id WHERE r.organization_id=? AND re.public_id IN ({$in})", [$org, ...$ids]) as $r) {
+            $out[$r['id']] = ['project' => $r['project'], 'accepted_on' => null];
+        }
+        foreach ($this->rows("SELECT re.public_id AS id,d.delivery_date,d.acceptance_status FROM delivery_items di JOIN deliveries d ON d.id=di.delivery_id AND d.organization_id=di.organization_id"
+            . " JOIN business_entities re ON re.id=di.requisition_id AND re.organization_id=di.organization_id WHERE di.organization_id=? AND re.public_id IN ({$in})", [$org, ...$ids]) as $d) {
+            $cur = $out[$d['id']]['accepted_on'] ?? null;
+            if (isset($out[$d['id']]) && $d['delivery_date'] !== null && ReceptionReadRepository::isAccepted($d['acceptance_status']) && ($cur === null || $d['delivery_date'] > $cur)) {
+                $out[$d['id']]['accepted_on'] = substr((string) $d['delivery_date'], 0, 10);
+            }
+        }
+        return $out;
     }
 }

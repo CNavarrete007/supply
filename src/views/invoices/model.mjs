@@ -17,12 +17,18 @@ export const daysOverdue = (due, today) => {
 };
 /** Money list per currency (never summed across currencies). */
 export const moneyList = (rows = [], key = 'amount', en = false) => rows.filter(r => Number(r[key]) !== 0 || key === 'amount' || key === 'invoiced').map(r => money(r[key], r.currency, en));
-/** Control metrics in the design order with their color bars. */
+/** Control metrics in the design order: color bar, title, colored caption. "Total facturado" lists each currency (never summed). */
 export const controlCards = (c = {}, moneyRows = [], en = false) => [
-  ['ready_to_invoice', en ? 'Ready to invoice' : 'Listos para facturar', 'bg-amber-500', c.ready_to_invoice],
-  ['active', en ? 'Active invoices' : 'Facturas vigentes', 'bg-purple-600', c.active],
-  ['pending_payment', en ? 'Pending payment' : 'Pendientes de pago', 'bg-orange-500', c.pending_payment],
-  ['overdue', en ? 'Overdue' : 'Vencidas', 'bg-rose-600', c.overdue],
-  ['paid', en ? 'Paid' : 'Pagadas', 'bg-emerald-500', c.paid],
-  ['total', en ? 'Total invoiced' : 'Total facturado', 'bg-teal-600', null],
-].map(([key, title, bar, n]) => ({ key, title, bar, value: key === 'total' ? (moneyRows.length ? moneyList(moneyRows, 'invoiced', en) : ['$0.00']) : Number(n ?? 0) }));
+  ['ready_to_invoice', en ? 'Ready to invoice' : 'Listos para facturar', en ? 'Accepted deliveries without invoice' : 'Entregas aceptadas sin factura', 'bg-amber-500', 'text-amber-600', c.ready_to_invoice],
+  ['active', en ? 'Active invoices' : 'Facturas vigentes', en ? 'Non-cancelled records' : 'Registros no cancelados', 'bg-purple-600', 'text-purple-700', c.active],
+  ['pending_payment', en ? 'Pending payment' : 'Pendientes de pago', en ? 'Administrative follow-up' : 'Seguimiento administrativo', 'bg-orange-600', 'text-orange-600', c.pending_payment],
+  ['overdue', en ? 'Overdue' : 'Vencidas', en ? 'Due date exceeded' : 'Fecha de vencimiento superada', 'bg-rose-600', 'text-rose-600', c.overdue],
+  ['paid', en ? 'Paid' : 'Pagadas', en ? 'Settled invoices' : 'Facturas liquidadas', 'bg-emerald-600', 'text-emerald-600', c.paid],
+  ['total', en ? 'Total invoiced' : 'Total facturado', en ? 'Recorded nominal sum' : 'Suma nominal registrada', 'bg-cyan-600', 'text-cyan-700', null],
+].map(([key, title, sub, bar, tone, n]) => ({ key, title, sub, bar, tone, value: key === 'total' ? (moneyRows.length ? moneyList(moneyRows, 'invoiced', en) : ['$0.00']) : Number(n ?? 0) }));
+
+/** "OC-1, OC-2" → ['OC-1', 'OC-2'] (one per line in "Entregas aceptadas pendientes de factura"). */
+export const poList = v => String(v ?? '').split(',').map(x => x.trim()).filter(Boolean);
+
+/** Accepted delivery date, or a note when the acceptance only exists in an imported receipt. */
+export const acceptedText = (date, en = false) => (date ? String(date).slice(0, 10) : en ? 'Accepted (no delivery date recorded)' : 'Aceptada (sin fecha de entrega registrada)');

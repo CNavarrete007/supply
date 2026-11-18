@@ -85,6 +85,12 @@ try:
     check('listos para facturar = semáforo de Recepción', k['ready_to_invoice'] == rc['counters']['ready_to_invoice'] and sorted(r['id'] for r in c['ready_to_invoice']) == sorted(r['id'] for r in rc['ready_to_invoice']))
     rq = get(f'{R}/requisitions')
     check('requisiciones: listas sin factura = control', len([r for r in rq['items'] if r['ready'] and not r['invoiced']]) == k['ready_to_invoice'])
+    ok_extra = True
+    for r in c['ready_to_invoice']:
+        cx = get(f"{R}/requisitions/{r['id']}")
+        acc = sorted(str(d['date'])[:10] for d in cx['deliveries'] if re.match(r'^(accepted|aceptad)', str(d['acceptance_status'] or ''), re.I))
+        ok_extra &= set(r) == {'id', 'folio', 'client_name', 'purchase_orders', 'project', 'accepted_on'} and r['project'] == cx['requisition']['project'] and r['accepted_on'] == (acc[-1] if acc else None)
+    check('listos para facturar: proyecto y última entrega aceptada = expediente', ok_extra)
     if rq['items']:
         ctx = get(f"{R}/requisitions/{rq['items'][0]['id']}")
         check('contexto de requisición', ctx['requisition']['folio'] == rq['items'][0]['folio'] and ctx['readiness']['ready'] == rq['items'][0]['ready'] and isinstance(ctx['invoices'], list))

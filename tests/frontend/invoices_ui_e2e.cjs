@@ -244,17 +244,46 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     await page.getByTestId('invoice-matrix').waitFor();
     check('"Ver matriz" abre la Matriz de facturas', await page.getByText('Concentrado de facturas relacionadas').isVisible());
 
-    // 3 · Control
+    // 3 · Control de facturación y cierre (diseño): métricas, entregas aceptadas pendientes de factura y FACTURAR
     const cl = page.waitForResponse(r => /\/invoices\/control$/.test(r.url()));
     await page.getByRole('button', { name: /Control de facturación/ }).click();
     check('control consulta MariaDB (200)', (await cl).status() === 200);
     await page.waitForFunction(() => { const t = document.querySelector('[data-testid="metric-ready_to_invoice"]')?.innerText || ''; return t && !t.startsWith('…'); });
-    for (const [k, t] of [['ready_to_invoice', 'Listos para facturar'], ['active', 'Facturas vigentes'], ['pending_payment', 'Pendientes de pago'], ['overdue', 'Vencidas'], ['paid', 'Pagadas']])
-      check(`métrica ${t} = ${ctrl.counters[k]}`, flat(await page.getByTestId(`metric-${k}`).innerText()).startsWith(String(ctrl.counters[k])));
+    const cv = page.getByTestId('invoice-control');
+    const cvt = flat(await cv.innerText());
+    check('diseño: título, regla del 100% y "Ver facturas"', cvt.includes('Control de facturación y cierre') && cvt.includes('El proceso llega al 100% cuando la factura está registrada y no se encuentra cancelada.') && await cv.getByRole('button', { name: /Ver facturas/ }).isEnabled());
+    for (const [k, t, sub] of [['ready_to_invoice', 'Listos para facturar', 'Entregas aceptadas sin factura'], ['active', 'Facturas vigentes', 'Registros no cancelados'], ['pending_payment', 'Pendientes de pago', 'Seguimiento administrativo'], ['overdue', 'Vencidas', 'Fecha de vencimiento superada'], ['paid', 'Pagadas', 'Facturas liquidadas']]) {
+      const mt = flat(await page.getByTestId(`metric-${k}`).innerText());
+      check(`métrica ${t} = ${ctrl.counters[k]} con leyenda "${sub}"`, mt.startsWith(String(ctrl.counters[k])) && mt.includes(t) && mt.includes(sub), mt);
+    }
     const tot = flat(await page.getByTestId('metric-total').innerText());
-    check('total facturado por moneda', ctrl.money.every(m => tot.includes(money(m.invoiced, m.currency))), tot);
+    check('total facturado por moneda y "Suma nominal registrada"', (ctrl.money.length ? ctrl.money.every(m => tot.includes(money(m.invoiced, m.currency))) : tot.includes('$0.00')) && tot.includes('Suma nominal registrada'), tot);
+    check('sección "Entregas aceptadas pendientes de factura"', cvt.includes('Entregas aceptadas pendientes de factura') && cvt.includes('Selecciona FACTURAR para abrir el registro con el expediente relacionado.'));
+    check('una fila por requisición lista para facturar', await cv.locator('tbody tr[data-folio]').count() === ctrl.ready_to_invoice.length);
+    for (const r of ctrl.ready_to_invoice) {
+      const rt = await cv.locator(`tr[data-folio="${r.folio}"]`).innerText();
+      check(`fila ${r.folio}: cliente, proyecto, OC (una por línea) y entrega aceptada`, [r.client_name, r.project || '—', r.accepted_on || 'Aceptada (sin fecha'].every(x => rt.includes(x)) && r.purchase_orders.split(',').map(x => x.trim()).every(x => rt.includes(`${x}\n`) || rt.includes(x)), rt);
+    }
     for (const v of ctrl.overdue) check(`lista de vencidas incluye ${v.folio}`, (await page.getByRole('row').filter({ hasText: v.folio }).count()) === 1);
     await shot(page, 'fac_3_control');
+    const rr = ctrl.ready_to_invoice[0];
+    if (rr) {
+      const ctxR = page.waitForResponse(x => x.url().endsWith(`/api/v1/invoices/requisitions/${rr.id}`));
+      await cv.getByRole('button', { name: `Facturar ${rr.folio}` }).click();
+      check('FACTURAR carga el expediente de la requisición (200)', (await ctxR).status() === 200);
+      await page.getByTestId('invoice-context').waitFor();
+      const fx = flat(await page.getByTestId('invoice-context').innerText());
+      check('FACTURAR abre Registro de factura en nueva captura con la requisición', await page.getByLabel('Requisición entregada y aceptada').inputValue() === rr.id && (await page.getByTestId('invoice-mode').innerText()).includes('Modo nueva captura activo') && fx.includes('Recibida al 100 % y aceptada por el cliente.') && fx.includes(rr.folio), fx.slice(0, 300));
+      check('FACTURAR: receptor = cliente de la requisición', await page.getByTestId('invoice-form').getByLabel('Receptor / razón social', { exact: true }).inputValue() === rr.client_name);
+      await page.getByTestId('invoice-form').getByRole('button', { name: /Guardar factura/ }).click();
+      check('FACTURAR: la requisición lista no se rechaza por estar sin aceptar', !(await page.getByTestId('invoice-save-msg').innerText()).includes('no puede facturarse'));
+      await page.getByRole('button', { name: /Control de facturación/ }).click();
+      await page.getByTestId('metric-ready_to_invoice').waitFor();
+    } else check('sin requisiciones listas: mensaje vacío', cvt.includes('No hay entregas aceptadas pendientes de factura.'));
+    await page.getByTestId('invoice-control').getByRole('button', { name: /Ver facturas/ }).click();
+    await page.getByTestId('invoice-matrix').waitFor();
+    check('"Ver facturas" abre la Matriz de facturas', await page.getByText('Facturas por cliente').isVisible());
+
 
     await page.setViewportSize({ width: 390, height: 900 });
     check('sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
