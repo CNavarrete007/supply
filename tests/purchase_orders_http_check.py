@@ -91,6 +91,13 @@ try:
     today = __import__('datetime').date.today().isoformat()
     check('control: vencidas = compromiso anterior a hoy', all(p['commitment_date'] and str(p['commitment_date'])[:10] < today for p in al['overdue_without_receipt']))
     t = get(R + '/tasks'); check('tareas: forma', isinstance(t['responsible'], list) and isinstance(t['modification_requests'], list))
+    check('flujo: relacionadas, mis tareas, historial, notificaciones y todas las solicitudes', all(isinstance(t[k], list) for k in ('related', 'my_tasks', 'history', 'all_modification_requests')) and isinstance(t['notifications_unread'], int))
+    check('flujo: relacionadas = soy comprador, preparó o autorizó (versión vigente); mis tareas = soy responsable',
+        all(p['me_buyer'] or p['me_preparer'] or p['me_authorizer'] for p in t['related']) and all(p['me_responsible'] for p in t['my_tasks'])
+        and sorted(p['id'] for p in t['my_tasks']) == sorted(p['id'] for p in t['responsible']))
+    check('flujo: cotización vinculada = cotización al cliente vigente aprobada', all(p['client_quote'] is None or p['client_quote']['status_key'] == 'approved' for p in t['related'] + t['my_tasks']))
+    check('flujo: solicitudes asignadas a mí = lista de solicitudes asignadas', sorted(m['folio'] for m in t['all_modification_requests'] if m['assigned_to_me']) == sorted(m['folio'] for m in t['modification_requests']))
+    check('flujo: historial ordenado del más reciente al más antiguo', [h['occurred_at'] for h in t['history']] == sorted([h['occurred_at'] for h in t['history']], reverse=True))
 finally:
     logout(adm)
 w = max(len(n) for n, _, _ in results)

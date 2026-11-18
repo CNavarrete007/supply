@@ -304,13 +304,70 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     check('enmiendas: rango "Mostrando…"', (await page.getByTestId('po-amend-range').innerText()).includes(`de ${curAll.length} familias`));
     await shot(page, 'oc_4_enmiendas');
 
-    // Mis tareas
+    // 5 · Revisión y autorización (diseño): KPI, cuatro vistas, cotización aprobada, historial y solicitudes de modificación
     const tResp = page.waitForResponse(r => /\/api\/v1\/purchase-orders\/tasks$/.test(r.url()));
     await page.getByRole('button', { name: /Revisión y autorización/ }).first().click();
     check('tareas (200)', (await tResp).status() === 200);
-    await page.getByText('MOD-QA-0001').waitFor();
-    check('tareas: OC a cargo y solicitud asignada; aprobar/rechazar bloqueados', (await page.getByText(/Mis órdenes por atender · \d+/).innerText()).match(/· (\d+)/)[1] >= 1 && await page.getByRole('button', { name: /Aprobar/ }).isDisabled());
+    const tk = await api('/api/v1/purchase-orders/tasks');
+    const rv = page.getByTestId('po-review'); await rv.waitFor();
+    await page.getByTestId('po-review-kpi-related').filter({ hasNotText: '…' }).waitFor();
+    const rvt = (await rv.innerText()).replace(/\s+/g, ' ');
+    check('flujo: título, explicación y "Segregación de funciones"', rvt.includes('Flujo de revisión y autorización') && rvt.includes('El comprador envía a Preparó/Revisó') && rvt.includes('Segregación de funciones'));
+    const pendMine = tk.my_tasks.filter(p => !['cancelled', 'superseded'].includes(p.state_key) && !['approved', 'rejected'].includes(p.approval_status)).length;
+    const kv = async k => Number((await page.getByTestId(`po-review-kpi-${k}`).innerText()).trim().split(/\s/)[0]);
+    check('flujo: KPI = MariaDB (pendientes para mí, relacionadas, autorizadas, notificaciones)', await kv('pendingMine') === pendMine && await kv('related') === tk.related.length
+      && await kv('authorized') === tk.related.filter(p => p.approval_status === 'approved' || p.authorized_on).length && await kv('unread') === tk.notifications_unread);
+    check('flujo: cuatro vistas del diseño', JSON.stringify((await rv.getByRole('tab').allInnerTexts()).map(t => t.replace(/\s+/g, ' ').replace(/\s*\d+$/, '').replace('🔐', '').trim())) === JSON.stringify(['Mis tareas pendientes', 'Enviadas por mí', 'Historial', 'Solicitudes de modificación']));
+    if (!pendMine) check('flujo: sin tareas pendientes (mensaje del diseño)', (await page.getByTestId('po-review-empty').innerText()).includes('No tienes tareas pendientes de revisión o autorización.'));
+    await rv.getByRole('tab', { name: /Enviadas por mí/ }).click();
+    check('flujo: una tarjeta por OC relacionada', await rv.getByTestId('po-flow-card').count() === tk.related.length);
+    const rqf = tk.related.find(p => p.client_quote);
+    if (rqf) {
+      const cd = rv.locator(`[data-testid="po-flow-card"][data-folio="${rqf.folio}"]`);
+      const cdt = (await cd.innerText()).replace(/\s+/g, ' ');
+      check('flujo: tarjeta con comprador, preparó, autorizó, cotización aprobada, monto y solo consulta', [rqf.buyer_name, rqf.preparer_name, rqf.authorizer_name].filter(Boolean).every(n => cdt.includes(n.toUpperCase())) && cdt.includes(`${rqf.client_quote.folio} · Rev. ${rqf.client_quote.revision}`) && cdt.includes('Cotización aprobada por el cliente') && cdt.includes(money(rqf.total_amount, rqf.currency)) && cdt.includes('Solo consulta') && cdt.includes('Autorizada'), cdt.slice(0, 400));
+      const popQ = context.waitForEvent('page'); await cd.getByRole('button', { name: /Ver cotización aprobada/ }).click();
+      const pq = await popQ; const qf = rqf.client_quote.folio.replace(/-R\d+$/, '');
+      const qok = await pq.waitForFunction(f => !!document.body && document.body.innerText.includes(f), qf, { timeout: 15000 }).then(() => true).catch(() => false);
+      check('flujo: "Ver cotización aprobada" abre el formato de la cotización al cliente', qok, qf); await pq.close().catch(() => {});
+      const dlq = page.waitForEvent('download', { timeout: 60000 }); await cd.getByRole('button', { name: /Descargar/ }).click();
+      const fq = await dlq; check('flujo: "Descargar" genera el PDF de la cotización', /\.pdf$/.test(fq.suggestedFilename()) && fq.suggestedFilename().includes(rqf.client_quote.folio.replace(/[^\p{L}\p{N}._-]+/gu, '_')), fq.suggestedFilename());
+      await cd.getByRole('button', { name: /Eliminar OC/i }).click();
+      check('flujo: ELIMINAR OC usa las protecciones de la Matriz (no procede con recepciones/facturas)', (await page.getByTestId('po-delete').innerText()).includes('recepción(es)'));
+      await page.getByTestId('po-delete').getByRole('button', { name: 'Cancelar' }).click();
+    }
+    await rv.getByRole('tab', { name: /Historial/ }).click();
+    const hv = (await page.getByTestId('po-review-history').innerText()).replace(/\s+/g, ' ');
+    check('flujo: historial del flujo con fecha, OC, persona y comentario', tk.history.length ? tk.history.every(h => hv.includes(h.legacy_action_text || h.folio) && (!h.actor_name || hv.includes(h.actor_name.toUpperCase())) && (!h.comment_text || hv.includes(h.comment_text))) : hv.includes('Sin movimientos registrados'), hv.slice(0, 300));
+    await rv.getByRole('tab', { name: /Solicitudes de modificación/ }).click();
+    const md = page.getByTestId('po-review-mods'); await md.waitFor();
+    const mdt = (await md.innerText()).replace(/\s+/g, ' ');
+    check('solicitudes: título, explicación y "Control previo obligatorio"', mdt.includes('Solicitudes de modificación de OC') && mdt.includes('Primero se autoriza el derecho a modificar') && mdt.includes('Control previo obligatorio'));
+    const amr = tk.all_modification_requests;
+    const mPend = amr.filter(m => m.status === 'pending'), mMine = mPend.filter(m => m.assigned_to_me);
+    const mkv = async k => Number((await page.getByTestId(`po-mod-kpi-${k}`).innerText()).trim().split(/\s/)[0]);
+    check('solicitudes: KPI = MariaDB', await mkv('pendingMine') === mMine.length && await mkv('pending') === mPend.length && await mkv('approved') === amr.filter(m => m.status === 'approved' && !m.consumed_at).length && await mkv('executed') === amr.filter(m => m.consumed_at).length);
+    check('solicitudes: filtros del diseño', JSON.stringify(await md.getByRole('combobox', { name: 'Filtro de solicitudes' }).locator('option').allInnerTexts()) === JSON.stringify(['Pendientes para mí', 'Todas las pendientes', 'Aprobadas sin ejecutar', 'Rechazadas / devueltas', 'Todo el historial']));
+    check('solicitudes: "Pendientes para mí" lista las asignadas a mí', await md.getByTestId('po-mod').count() === mMine.length);
+    const m1 = mMine.find(m => !m.requested_by_me);
+    if (m1) {
+      const mc = md.locator(`[data-testid="po-mod"][data-folio="${m1.folio}"]`);
+      const mct = (await mc.innerText()).replace(/\s+/g, ' ');
+      check('solicitudes: tarjeta con OC, proveedor, motivo, solicitante y autorizador', [m1.purchase_order_folio, m1.supplier_name, m1.reason, m1.requested_by, m1.approver].filter(Boolean).every(x => mct.includes(x)), mct);
+      await mc.getByRole('button', { name: /Rechazar/ }).click();
+      await mc.getByRole('button', { name: 'Confirmar' }).click();
+      check('solicitudes: rechazar exige motivo', (await mc.getByTestId('po-mod-msg').innerText()).includes('mínimo 10 caracteres'));
+      await mc.getByRole('button', { name: 'Cancelar' }).click();
+      await mc.getByRole('button', { name: /^Aprobar$/ }).click();
+      await mc.getByRole('textbox', { name: 'Comentario de la decisión' }).fill('Procede el cambio (prueba E2E)');
+      await mc.getByRole('button', { name: 'Confirmar' }).click();
+      check('solicitudes: aprobar valida y NO registra (escritura bloqueada)', (await mc.getByTestId('po-mod-msg').innerText()).includes(`Datos validados, pero no se registró la aprobación de ${m1.folio}`));
+    }
+    await md.getByRole('combobox', { name: 'Filtro de solicitudes' }).selectOption('rejected');
+    check('solicitudes: filtro sin resultados muestra el mensaje del diseño', amr.some(m => ['rejected', 'returned'].includes(m.status)) || (await page.getByTestId('po-mods-empty').innerText()).includes('No hay solicitudes en este filtro.'));
+    await md.getByRole('combobox', { name: 'Filtro de solicitudes' }).selectOption('mine');
     await shot(page, 'oc_5_tareas');
+
 
     check('sin escrituras a la API', writes.length === 0, writes.join(', '));
     check('sin errores JavaScript', jsErrors.length === 0, jsErrors.join(' | '));

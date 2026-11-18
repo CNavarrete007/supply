@@ -307,7 +307,76 @@ final class PurchaseOrderReadRepository
             JOIN business_entities e ON e.id=po.id AND e.organization_id=po.organization_id
             WHERE m.organization_id=? AND m.assigned_approver_user_id=? ORDER BY m.requested_at DESC LIMIT 200
             SQL, [$org, $actorId]);
-        return ['responsible' => $mine, 'modification_requests' => $requests];
+        return ['responsible' => $mine, 'modification_requests' => $requests] + $this->reviewFlow($org, $actorId);
+    }
+
+    /**
+     * Card 5 "Flujo de revisión y autorización" (read-only): POs related to the actor (buyer / preparer-reviewer / authorizer)
+     * with the client quote approved for them, the workflow history of those POs, unread PO notifications and every
+     * modification request of the organization (with who requested, who decides and whether it was executed).
+     */
+    private function reviewFlow(int $org, int $me): array
+    {
+        $related = $this->flowRows($org, $me, '(po.buyer_user_id=? OR po.preparer_user_id=? OR po.authorizer_user_id=?)', [$me, $me, $me]);
+        $mine = $this->flowRows($org, $me, 'po.current_responsible_user_id=?', [$me]);
+        $name = static fn (string $col) => "(SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id={$col} AND u.organization_id=m.organization_id)";
+        $history = $this->rows(<<<SQL
+            SELECT we.occurred_at,e.public_id AS purchase_order_id,po.folio,po.version_number,po.legacy_revision_number,we.workflow_code,we.action_code,we.from_state,we.to_state,we.legacy_action_text,we.comment_text,
+              COALESCE((SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=we.actor_user_id AND u.organization_id=we.organization_id),
+                       CASE WHEN JSON_VALID(we.actor_snapshot) THEN JSON_UNQUOTE(JSON_EXTRACT(we.actor_snapshot,'$.name')) END) AS actor_name
+            FROM workflow_events we
+            JOIN purchase_orders po ON po.id=we.entity_id AND po.organization_id=we.organization_id
+            JOIN business_entities e ON e.id=po.id AND e.organization_id=po.organization_id
+            WHERE we.organization_id=? AND (we.actor_user_id=? OR we.target_user_id=? OR po.buyer_user_id=? OR po.preparer_user_id=? OR po.authorizer_user_id=? OR po.current_responsible_user_id=?)
+            ORDER BY we.occurred_at DESC,we.id DESC LIMIT 200
+            SQL, [$org, $me, $me, $me, $me, $me, $me]);
+        $unread = (int) ($this->rows('SELECT COUNT(*) AS n FROM notifications n WHERE n.organization_id=? AND n.recipient_user_id=? AND n.is_read=0'
+            . ' AND EXISTS (SELECT 1 FROM purchase_orders po WHERE po.id=n.entity_id AND po.organization_id=n.organization_id)', [$org, $me])[0]['n'] ?? 0);
+        $all = $this->rows('SELECT m.folio,m.change_type,m.urgency,m.reason,m.reference_text,m.impact_text,m.status_code AS status,m.requested_at,m.decision_code,m.decision_at,m.decision_comment,m.consumed_at,'
+            . 'e.public_id AS purchase_order_id,po.folio AS purchase_order_folio,po.version_number,po.legacy_revision_number,s.legal_name AS supplier_name,'
+            . $name('m.requested_by_user_id') . ' AS requested_by,' . $name('m.assigned_approver_user_id') . ' AS approver,' . $name('m.decided_by_user_id') . ' AS decided_by,'
+            . '(m.assigned_approver_user_id=?) AS assigned_to_me,(m.requested_by_user_id=?) AS requested_by_me,'
+            . '(SELECT ge.public_id FROM business_entities ge WHERE ge.id=m.generated_purchase_order_id AND ge.organization_id=m.organization_id) AS generated_purchase_order_id'
+            . ' FROM purchase_order_modification_requests m JOIN purchase_orders po ON po.id=m.purchase_order_id AND po.organization_id=m.organization_id'
+            . ' JOIN business_entities e ON e.id=po.id AND e.organization_id=po.organization_id JOIN suppliers s ON s.id=po.supplier_id AND s.organization_id=po.organization_id'
+            . ' WHERE m.organization_id=? ORDER BY m.requested_at DESC,m.id DESC LIMIT 500', [$me, $me, $org]);
+        foreach ($all as &$m) {
+            $m['assigned_to_me'] = (bool) $m['assigned_to_me']; $m['requested_by_me'] = (bool) $m['requested_by_me']; $m['version_number'] = (int) $m['version_number'];
+        }
+        unset($m);
+        return ['related' => $related, 'my_tasks' => $mine, 'history' => $history, 'notifications_unread' => $unread, 'all_modification_requests' => $all];
+    }
+
+    /** Current-version POs matching $where, with the actor's role flags and the client quote approved for them. */
+    private function flowRows(int $org, int $me, string $where, array $binds): array
+    {
+        $key = QuoteReadRepository::STATUS_KEY;
+        $cur = 'NOT EXISTS (SELECT 1 FROM customer_quote_versions nx WHERE nx.organization_id=v.organization_id AND nx.customer_quote_id=v.customer_quote_id AND nx.version_number>v.version_number)';
+        $cq = "COALESCE(po.source_customer_quote_version_id,(SELECT v.id FROM purchase_order_requisitions pr JOIN customer_quote_versions v ON v.requisition_id=pr.requisition_id AND v.organization_id=pr.organization_id"
+            . " WHERE pr.organization_id=po.organization_id AND pr.purchase_order_id=po.id AND {$cur} AND ({$key})='approved' ORDER BY pr.is_primary DESC,v.quote_date DESC,v.id DESC LIMIT 1))";
+        $rows = array_map([self::class, 'normalize'], $this->rows('SELECT ' . self::header() . ',e.updated_at,po.authorized_at AS authorized_on,'
+            . '(po.buyer_user_id=?) AS me_buyer,(po.preparer_user_id=?) AS me_preparer,(po.authorizer_user_id=?) AS me_authorizer,(po.current_responsible_user_id=?) AS me_responsible,' . $cq . ' AS cq_db_id'
+            . self::from() . ' WHERE po.organization_id=? AND ' . self::LATEST . " AND {$where} ORDER BY e.updated_at DESC,po.id DESC LIMIT 200", [$me, $me, $me, $me, $org, ...$binds]));
+        $ids = array_values(array_unique(array_filter(array_map(static fn ($r) => (int) $r['cq_db_id'], $rows))));
+        $cqs = [];
+        if ($ids !== []) {
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            foreach ($this->rows("SELECT v.id,ve.public_id,v.folio,COALESCE(v.legacy_revision_number,v.version_number-1) AS revision,v.total_amount,v.currency_code AS currency,({$key}) AS status_key,"
+                . "(SELECT MAX(d.decision_at) FROM customer_quote_decisions d WHERE d.organization_id=v.organization_id AND d.customer_quote_version_id=v.id AND d.decision_code='approved') AS approved_at"
+                . " FROM customer_quote_versions v JOIN business_entities ve ON ve.id=v.id AND ve.organization_id=v.organization_id WHERE v.organization_id=? AND v.id IN ({$in})", [$org, ...$ids]) as $q) {
+                $cqs[(int) $q['id']] = ['id' => $q['public_id'], 'folio' => $q['folio'], 'revision' => (int) $q['revision'], 'total_amount' => $q['total_amount'], 'currency' => $q['currency'],
+                    'status_key' => $q['status_key'], 'approved_at' => $q['approved_at']];
+            }
+        }
+        foreach ($rows as &$r) {
+            foreach (['me_buyer', 'me_preparer', 'me_authorizer', 'me_responsible'] as $k) {
+                $r[$k] = (bool) $r[$k];
+            }
+            $r['client_quote'] = $cqs[(int) $r['cq_db_id']] ?? null;
+            unset($r['cq_db_id']);
+        }
+        unset($r);
+        return $rows;
     }
 
     /**
