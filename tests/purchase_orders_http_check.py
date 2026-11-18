@@ -63,6 +63,8 @@ try:
     if cur:
         det = get(f"{R}/{cur[0]['id']}")
         check('detalle: partidas, versiones de la serie y documentos', {'item', 'items', 'versions', 'receipts', 'invoices', 'modification_requests'} <= set(det) and len(det['versions']) == cur[0]['versions'] and det['item']['folio'] == cur[0]['folio'])
+        fmt = {'buyer_email', 'buyer_position', 'preparer_position', 'authorizer_position', 'supplier_contact', 'supplier_contact_email', 'supplier_contact_phone', 'bill_to', 'invoice_to'}
+        check('detalle: datos del formato de OC (contactos, puestos, facturación) sin rutas de almacenamiento', fmt <= set(det['item']) and not re.search(r'storage_key|password|token', json.dumps(det)))
     iss = get(R + '/issuance'); check('emisión: forma', isinstance(iss['items'], list) and isinstance(iss['losing_quotes'], int))
     reqs, lines = iss['requisitions'], iss['lines']
     check('emisión: requisiciones con forma y tipos', isinstance(reqs, list) and all(set(r) == {'id', 'folio', 'client_reference', 'project', 'client_name', 'client_approved', 'customer_quote', 'quotes_received', 'item_count', 'awarded_items'}

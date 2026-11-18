@@ -3,7 +3,7 @@ import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRigh
 import { listPurchaseOrders, poIssuance, poTasks, poDetail } from './api';
 import { PO_STATES, poState, buyerCardList, filterBuyers, buyersBadge, rangeText, buyerCaption, editBlock, requestBlock, modifyBlock, deleteBlock, folioConfirmed, REQUEST_TYPES, URGENCIES, IMPACTS, emptyRequest, approverOptions, validateRequest, requestLockedText, validateEdit, editForm } from './poMatrix.mjs';
 import { allUsers, authMe } from '../usersRoles/api.js';
-import { buildPoPdf, pdfName } from './poPdf.mjs';
+import { buildPoPdf, pdfName, loadPoLogo } from './poPdf.mjs';
 import { money, opLabel, statusTone, progressOf, poPrintHtml, revLabel } from './model.mjs';
 import { issuanceOptions, winningSuppliers, supplierTotal, toGenerate, validateIssuance, issuanceLockedText } from './poIssuance.mjs';
 
@@ -64,8 +64,8 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     const w = mode === 'view' ? window.open('', '_blank') : null;
     setPdfBusy(`${po.id}:${mode}`);
     try {
-      const [{ jsPDF }, det] = await Promise.all([import('jspdf'), poDetail(po.id)]);
-      const doc = buildPoPdf(jsPDF, det, pdfEn);
+      const [{ jsPDF }, det, logo] = await Promise.all([import('jspdf'), poDetail(po.id), loadPoLogo()]);
+      const doc = buildPoPdf(jsPDF, det, pdfEn, logo);
       if (mode === 'download') doc.save(pdfName(det.item));
       else if (w) { w.location.href = URL.createObjectURL(doc.output('blob')); }
       else { notify(tx('Ver PDF', 'View PDF'), tx('El navegador bloqueó la ventana; se descargará el PDF.', 'The browser blocked the window; the PDF will be downloaded.'), 'warning'); doc.save(pdfName(det.item)); }

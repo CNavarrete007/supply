@@ -266,10 +266,34 @@ final class PurchaseOrderReadRepository
         return ['responsible' => $mine, 'modification_requests' => $requests];
     }
 
+    /**
+     * Extra fields of the formal PO format (Formato de Orden de Compra): contact e-mail and position of the people who
+     * bought / prepared / authorized, the supplier's primary contact, and the "bill to" / "send invoice to" snapshots when
+     * they were stored as plain text. Read-only.
+     */
+    private static function formatFields(): string
+    {
+        $p = static fn (string $col, string $expr) => "(SELECT {$expr} FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id={$col} AND u.organization_id=po.organization_id)";
+        $scalar = static fn (string $col) => "(CASE WHEN {$col} IS NOT NULL AND JSON_VALID({$col}) AND JSON_TYPE({$col})='STRING' THEN NULLIF(TRIM(JSON_UNQUOTE({$col})),'') END)";
+        $contact = "(SELECT pc.%s FROM party_contacts pc WHERE pc.organization_id=s.organization_id AND pc.owner_entity_id=s.id AND pc.active=1 ORDER BY pc.is_primary DESC,pc.source_ordinal,pc.id LIMIT 1)";
+        $channel = "(SELECT cc.value FROM party_contact_channels cc WHERE cc.organization_id=s.organization_id AND cc.owner_entity_id=s.id AND cc.channel_type='%s' ORDER BY cc.is_primary DESC,cc.source_ordinal,cc.id LIMIT 1)";
+        return implode(',', [
+            $p('po.buyer_user_id', 'COALESCE(NULLIF(TRIM(p.email),\'\'),u.login_email)') . ' AS buyer_email',
+            $p('po.buyer_user_id', 'p.position_title') . ' AS buyer_position',
+            $p('po.preparer_user_id', 'p.position_title') . ' AS preparer_position',
+            $p('po.authorizer_user_id', 'p.position_title') . ' AS authorizer_position',
+            sprintf($contact, 'display_name') . ' AS supplier_contact',
+            sprintf($channel, 'email') . ' AS supplier_contact_email',
+            sprintf($channel, 'phone') . ' AS supplier_contact_phone',
+            $scalar('po.bill_to_snapshot') . ' AS bill_to',
+            $scalar('po.invoice_contact_snapshot') . ' AS invoice_to',
+        ]) . ' ';
+    }
+
     public function detail(int $org, string $publicId): ?array
     {
         $head = $this->rows('SELECT ' . self::header() . ',po.id AS db_id,po.terms_text,po.delivery_schedule_text,po.notes,po.delivery_place,po.incoterm_code,po.payment_method_label,po.payment_form_label,po.cfdi_use_label,po.tax_rate_pct,po.amendment_date,po.amendment_type,po.amendment_reason,po.previous_total_amount,'
-            . 's.tax_identifier AS supplier_tax_id,s.credit_type AS supplier_credit_type,s.credit_days AS supplier_credit_days'
+            . 's.tax_identifier AS supplier_tax_id,s.credit_type AS supplier_credit_type,s.credit_days AS supplier_credit_days,' . self::formatFields()
             . self::from() . ' WHERE po.organization_id=? AND e.public_id=? LIMIT 1', [$org, $publicId]);
         if (! $head) {
             return null;

@@ -150,7 +150,7 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     const dl = page.waitForEvent('download');
     await row3.getByRole('button', { name: /Descargar PDF/i }).click();
     const file = await dl; const pdfPath = await file.path(); const pdfRaw = require('fs').readFileSync(pdfPath).toString('latin1');
-    check('DESCARGAR PDF: archivo con folio, revisión, partidas y total', file.suggestedFilename() === `OC-QA-0003-Rev${p3.version_number - 1}.pdf` && pdfRaw.startsWith('%PDF') && ['Orden de Compra OC-QA-0003', 'Instrumento sint', '3,900.00 USD'].every(x => pdfRaw.includes(x)), file.suggestedFilename());
+    check('DESCARGAR PDF: archivo con folio, revisión, partidas y total', file.suggestedFilename() === `OC-QA-0003-Rev${p3.version_number - 1}.pdf` && pdfRaw.startsWith('%PDF') && ['ORDEN DE COMPRA', 'P-COP-01-01', `OC-QA-0003 · Rev. ${p3.version_number - 1}`, 'Instrumento sint', '3,900.00 USD', 'INFORMACI', 'AUTORIZ'].every(x => pdfRaw.includes(x)), file.suggestedFilename());
     const pop = context.waitForEvent('page');
     await row3.getByRole('button', { name: /Ver PDF/i }).click();
     const pv = await pop; await pv.waitForURL(/^blob:|about:blank/, { timeout: 8000 }).catch(() => {});
