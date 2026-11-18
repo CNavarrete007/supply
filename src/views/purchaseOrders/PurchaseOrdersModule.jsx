@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, Eye, X } from 'lucide-react';
 import { listPurchaseOrders, poIssuance, poTasks, poDetail } from './api';
 import { PO_STATES, poState, buyerCardList, filterBuyers, buyersBadge, rangeText, buyerCaption, editBlock, requestBlock, modifyBlock, deleteBlock, folioConfirmed, REQUEST_TYPES, URGENCIES, IMPACTS, emptyRequest, approverOptions, validateRequest, requestLockedText, validateEdit, editForm } from './poMatrix.mjs';
@@ -8,8 +8,10 @@ import { controlAlerts, partialNote, poLine, overdueDays, otherChecks } from './
 import { AMEND_FILTERS, familyRow, amendKpis, filterFamilies, versionLine, familyRange } from './poAmend.mjs';
 import { reviewKpis, flowCard, historyRow, pendingAction, validateTaskDecision, MOD_FILTERS, modKpis, filterMods, modPill, modKind, validateModDecision, stamp } from './poReview.mjs';
 import { getCustomerQuote } from '../quotes/api';
+import { SIGNATURE_SLOTS, poOptionLabel, registeredSignature, signatureStatus, saveSignaturesResult, poFormatHtml } from './poFormat.mjs';
+import { SignaturePad } from './SignaturePad.jsx';
 import { docModel, quoteDocHtml, docFileName } from '../quotes/quoteDocument.mjs';
-import { money, opLabel, statusTone, progressOf, poPrintHtml, revLabel } from './model.mjs';
+import { money, opLabel, statusTone, progressOf, revLabel } from './model.mjs';
 import { issuanceOptions, winningSuppliers, supplierTotal, toGenerate, validateIssuance, issuanceLockedText } from './poIssuance.mjs';
 
 // Órdenes de Compra · diseño Grupo Gerez (6 tarjetas) conectado a MariaDB en modo consulta.
@@ -123,7 +125,7 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     const c = new AbortController();
     if (tab === 1 || tab === 3) { setIss(x => ({ ...x, status: 'loading' })); poIssuance(c.signal).then(v => !c.signal.aborted && setIss({ status: 'ready', data: v, error: null })).catch(e => !c.signal.aborted && setIss({ status: 'error', data: null, error: e })); }
     if (tab === 5) { setTasks(x => ({ ...x, status: 'loading' })); poTasks(c.signal).then(v => !c.signal.aborted && setTasks({ status: 'ready', data: v, error: null })).catch(e => !c.signal.aborted && setTasks({ status: 'error', data: null, error: e })); }
-    if (tab === 4) { // todas las familias: versión vigente de cada serie (páginas de 50)
+    if (tab === 4 || tab === 6) { // todas las familias: versión vigente de cada serie (páginas de 50); la tarjeta 6 las usa en su selector
       setFam(x => ({ ...x, status: 'loading' }));
       (async () => { let items = []; let total = 0; for (let p = 1; p <= 40; p++) { const v = await listPurchaseOrders({ page: p, pageSize: 50, scope: 'current', sort: 'recent' }, c.signal); items = items.concat(v.items || []); total = v.total || 0; if (items.length >= total || !(v.items || []).length) break; } return { items, total }; })()
         .then(v => !c.signal.aborted && setFam({ status: 'ready', data: v, error: null })).catch(e => !c.signal.aborted && setFam({ status: 'error', data: null, error: e }));
@@ -204,11 +206,15 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     return () => c.abort();
   }, [detailId, revision]);
   const openFormat = id => { setDetailId(id); setTab(6); };
-  const print = () => {
-    if (!det.data) return;
-    const w = window.open('', '_blank', 'width=900,height=1000');
-    if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; }
-    w.document.write(poPrintHtml(det.data, pdfEn)); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250);
+  // 6 · Formato: vista previa con el formato Grupo Gerez + firmas manuscritas de esta sesión (no se guardan en la OC).
+  const fmtRef = useRef(null);
+  const [sigs, setSigs] = useState({}); const [sigMsg, setSigMsg] = useState(null);
+  useEffect(() => { setSigs({}); setSigMsg(null); }, [detailId]);
+  const formatDoc = useMemo(() => (det.data ? poFormatHtml(det.data, pdfEn, { logoUrl: typeof window !== 'undefined' ? `${window.location.origin}/image_923273.svg` : '/image_923273.svg', signatures: sigs }) : null), [det.data, pdfEn, sigs]);
+  const printFormat = () => {
+    const w = fmtRef.current?.contentWindow;
+    if (!w) return;
+    try { w.focus(); w.print(); } catch { notify(tx('Imprimir / PDF', 'Print / PDF'), tx('El navegador no permitió imprimir la vista previa.', 'The browser did not allow printing the preview.'), 'warning'); }
   };
 
   const Err = ({ e }) => (e ? <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{e.message}</p> : null);
@@ -548,18 +554,33 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     </div>}
 
     {/* 6 · FORMATO */}
-    {tab === 6 && <div className={box}>
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100"><div><h3 className="text-base font-extrabold text-slate-900">{tx('Formato de Orden de Compra', 'Purchase Order format')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Selecciona una OC desde la matriz ("Ver PDF") o desde esta lista.', 'Pick a PO from the matrix ("View PDF") or from this list.')}</p></div>
-        <div className="flex items-center gap-2"><select aria-label={tx('Orden de compra', 'Purchase order')} value={detailId} onChange={e => setDetailId(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"><option value="">{tx('Seleccionar OC…', 'Select PO…')}</option>{(d?.items || []).map(po => <option key={po.id} value={po.id}>{po.folio} · {revLabel(po)} · {po.supplier_name}</option>)}{detailId && !(d?.items || []).some(po => po.id === detailId) && <option value={detailId}>{det.data?.item?.folio || detailId}</option>}</select>
-          <button type="button" onClick={print} disabled={!det.data} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Printer className="w-3.5 h-3.5" />{tx('Imprimir / Guardar PDF', 'Print / Save PDF')}</button>{detailId && <button type="button" aria-label={tx('Cerrar vista', 'Close view')} onClick={() => setDetailId('')} className="p-2 rounded-xl border border-slate-200"><X className="w-4 h-4" /></button>}</div></div>
-      <Loading on={det.status === 'loading'} /><Err e={det.error} />
-      {!detailId && <div className="p-12 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500">{tx('Selecciona una orden de compra para ver su formato.', 'Select a purchase order to view its format.')}</div>}
-      {det.data && <div data-testid="po-format" className="space-y-3"><iframe title={tx('Formato de OC', 'PO format')} srcDoc={poPrintHtml(det.data, pdfEn)} sandbox="" className="w-full h-[900px] rounded-xl border border-slate-200 bg-white" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-          <div className="p-3 rounded-xl border border-slate-200"><h4 className="font-black mb-1">{tx('Versiones', 'Versions')} · {det.data.versions.length}</h4>{det.data.versions.map(v => <div key={v.id} className="flex justify-between text-[11px]"><span>{revLabel(v)} {v.amendment_type ? `· ${v.amendment_type}` : ''}</span><span>{money(v.total_amount, v.currency, en)}</span></div>)}</div>
-          <div className="p-3 rounded-xl border border-slate-200"><h4 className="font-black mb-1">{tx('Recepciones', 'Receipts')} · {det.data.receipts.length}</h4>{det.data.receipts.map(r => <div key={r.folio} className="flex justify-between text-[11px]"><span>{r.folio} · {ymd(r.date)}</span><span>{r.received_percent !== null ? `${Math.round(Number(r.received_percent))}%` : show(r.status)}</span></div>)}</div>
-          <div className="p-3 rounded-xl border border-slate-200"><h4 className="font-black mb-1">{tx('Facturas', 'Invoices')} · {det.data.invoices.length}</h4>{det.data.invoices.map(i => <div key={i.folio} className="flex justify-between text-[11px]"><span>{i.folio} · {ymd(i.date)}</span><span>{money(i.total_amount, i.currency, en)}</span></div>)}</div>
-        </div></div>}
+    {tab === 6 && <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4" data-testid="po-format-card">
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-3 pb-4 border-b border-slate-100">
+        <div className="min-w-0 flex-1"><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Formato de Orden de Compra', 'Purchase Order format')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Documento formal con información del contratista, cliente, proveedor, requisición y partidas.', 'Formal document with contractor, client, supplier, requisition and line item information.')}</p></div>
+        <span className="text-sm font-black shrink-0"><button type="button" onClick={printFormat} disabled={!formatDoc} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl shadow-2xs flex items-center gap-2 disabled:opacity-40"><Printer className="w-4 h-4" />{tx('Imprimir / PDF', 'Print / PDF')}</button></span>
+      </div>
+      <select aria-label={tx('Orden de compra', 'Purchase order')} value={detailId} onChange={e => setDetailId(e.target.value)} className="w-full px-4 py-3 bg-white border border-blue-300 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+        <option value="">{tx('Seleccionar orden de compra…', 'Select purchase order…')}</option>
+        {detailId && !(fam.data?.items || []).some(po => po.id === detailId) && det.data?.item && <option value={detailId}>{poOptionLabel(det.data.item)}</option>}
+        {(fam.data?.items || []).map(po => <option key={po.id} value={po.id}>{poOptionLabel(po)}</option>)}
+      </select>
+      <span className="text-sm font-black inline-block"><button type="button" disabled={!detailId} onClick={() => setRevision(n => n + 1)} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md disabled:opacity-40">{tx('Actualizar formato', 'Refresh format')}</button></span>
+      <Loading on={det.status === 'loading' || fam.status === 'loading'} /><Err e={det.error || fam.error} />
+      {!detailId && <div className="p-12 border border-dashed border-slate-200 rounded-2xl text-center text-sm text-slate-500">{tx('Selecciona una orden de compra para ver su formato.', 'Select a purchase order to view its format.')}</div>}
+      {det.data && <>
+        <div data-testid="po-signatures" className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row items-start justify-between gap-3 pb-3 border-b border-slate-100"><div><h4 className="text-base font-black text-slate-900">{tx('Firmas digitales manuscritas', 'Handwritten digital signatures')}</h4><p className="text-[11px] text-slate-500 mt-0.5">{tx('Firma directamente con mouse, pluma táctil o dedo. Las firmas se incorporan a la Orden de Compra seleccionada.', 'Sign directly with mouse, touch pen or finger. Signatures are added to the selected Purchase Order.')}</p></div><span className="text-[10.5px] font-black text-purple-800 bg-purple-100/80 border border-purple-200 rounded-full px-3 py-1 shrink-0">{tx('Mouse · Stylus · Touch · Pegar imagen', 'Mouse · Stylus · Touch · Paste image')}</span></div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">{SIGNATURE_SLOTS.map(([role, es, e2, des, dee]) => <SignaturePad key={`${detailId}:${role}`} role={role} en={en} title={en ? e2 : es} description={en ? dee : des} value={sigs[role] || null}
+            status={signatureStatus(!!sigs[role], registeredSignature(det.data, role), en)} onChange={url => { setSigs(x => ({ ...x, [role]: url })); setSigMsg(null); }} onError={text => setSigMsg({ kind: 'error', text })} />)}</div>
+          {sigMsg && <p data-testid="po-sign-msg" role={sigMsg.kind === 'error' ? 'alert' : 'status'} className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${sigMsg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{sigMsg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{sigMsg.text}</span></p>}
+          <div className="flex flex-wrap gap-3 text-sm font-black">
+            <button type="button" onClick={() => { const r = saveSignaturesResult(det.data.item, sigs, en); setSigMsg({ kind: r.kind, text: r.text }); if (r.ok) notify(tx('Firmas no guardadas', 'Signatures not saved'), r.text, 'warning'); }} className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">💾</span>{tx('Guardar firmas digitales', 'Save digital signatures')}</button>
+            <button type="button" onClick={() => { setSigs({}); setSigMsg(null); }} className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl flex items-center gap-2"><span aria-hidden="true">🧹</span>{tx('Limpiar todas las firmas', 'Clear all signatures')}</button>
+          </div>
+          <p className="p-3 rounded-xl border-l-4 border-l-blue-600 bg-blue-50/70 text-xs text-slate-700">{tx('Las firmas se incorporan automáticamente a la vista previa e impresión. Para pegar una firma: selecciona su recuadro y presiona Ctrl+V, o usa “Pegar firma”. También puedes cargar una imagen. Mientras el registro de firmas no esté autorizado, no se guardan en la OC y el documento lo indica.', 'Signatures are automatically added to the preview and print. To paste a signature: select its box and press Ctrl+V, or use “Paste signature”. You can also upload an image. While recording signatures is not authorized, they are not saved in the PO and the document says so.')}</p>
+        </div>
+        <iframe ref={fmtRef} data-testid="po-format" title={tx('Formato de OC', 'PO format')} srcDoc={formatDoc.html} sandbox="allow-same-origin allow-modals" className="w-full h-[1180px] rounded-2xl border border-slate-200 bg-white shadow-sm" />
+      </>}
     </div>}
   </div>;
 }

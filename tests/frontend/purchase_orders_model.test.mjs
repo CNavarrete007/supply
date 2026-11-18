@@ -1,7 +1,7 @@
 // Órdenes de Compra · pruebas de la lógica pura. Uso: node --test tests/frontend/purchase_orders_model.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { opLabel, statusTone, progressOf, buyerCards, issuanceGroups, amendedFamilies, poPrintHtml } from '../../src/views/purchaseOrders/model.mjs';
+import { opLabel, statusTone, progressOf, buyerCards, issuanceGroups, amendedFamilies } from '../../src/views/purchaseOrders/model.mjs';
 
 test('estatus: conocidos traducidos, desconocidos tal cual y tono', () => {
   assert.equal(opLabel('issued'), 'Emitida'); assert.equal(opLabel('cancelled', true), 'Cancelled'); assert.equal(opLabel('Liberada'), 'Liberada'); assert.equal(opLabel(null), '—');
@@ -26,14 +26,6 @@ test('tarjetas por comprador y emisión agrupada por requisición', () => {
   assert.equal(g.groups.length, 2); assert.equal(g.groups[0].suppliers.length, 2);
   assert.deepEqual(g.metrics, { awardedItems: 6, winningSuppliers: 2, toGenerate: 2, losingQuotes: 4 });
   assert.deepEqual(amendedFamilies([{ versions: 2 }, { versions: 1 }, { versions: 1, change_pending: true }]).length, 2);
-});
-
-test('formato de OC: escapado, partidas, totales y firmas', () => {
-  const html = poPrintHtml({ item: { folio: 'OC-<1>', version_number: 2, supplier_name: 'Prov & Cía', currency: 'USD', subtotal_amount: '1500', tax_amount: '240', total_amount: '1740', buyer_name: 'Ana', authorizer_name: null },
-    items: [{ line_number: 1, description: '<b>Placa</b>', quantity: '3.000000', unit_label: 'pza', unit_price: '500', line_subtotal: '1500' }] });
-  assert.ok(html.includes('OC-&lt;1&gt; · Rev. 1') && html.includes('Prov &amp; Cía') && html.includes('&lt;b&gt;Placa&lt;/b&gt;') && !html.includes('<b>Placa'));
-  assert.ok(html.includes('$1,740.00 USD') && html.includes('<strong>Ana</strong>') && html.includes('<strong>—</strong>'));
-  assert.ok(poPrintHtml({ item: { folio: 'X' }, items: [] }).includes('Sin partidas registradas.'));
 });
 
 test('revisión como en el Apps Script: Rev. 0 es la OC original', async () => {

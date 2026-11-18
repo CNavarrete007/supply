@@ -419,6 +419,15 @@ final class PurchaseOrderReadRepository
         $receipts = $this->rows('SELECT gr.folio,gr.receipt_date AS date,gr.status_code AS status,gr.legacy_received_percent AS received_percent FROM goods_receipts gr JOIN purchase_orders s2 ON s2.id=gr.purchase_order_id AND s2.organization_id=gr.organization_id WHERE gr.organization_id=? AND s2.series_public_id=? ORDER BY gr.receipt_date,gr.id', [$org, $po['series_id']]);
         $invoices = $this->rows('SELECT inv.folio,inv.invoice_number,inv.issue_date AS date,inv.status_code AS status,inv.total_amount,inv.currency_code AS currency FROM invoices inv JOIN purchase_orders s2 ON s2.id=inv.primary_purchase_order_id AND s2.organization_id=inv.organization_id WHERE inv.organization_id=? AND s2.series_public_id=? ORDER BY inv.issue_date,inv.id', [$org, $po['series_id']]);
         $requests = $this->rows('SELECT m.folio,m.change_type,m.urgency,m.reason,m.status_code AS status,m.requested_at,m.decision_code,m.decision_at,m.decision_comment FROM purchase_order_modification_requests m WHERE m.organization_id=? AND m.series_public_id=? ORDER BY m.requested_at,m.id', [$org, $po['series_id']]);
-        return ['item' => $po, 'items' => $items, 'versions' => $versions, 'receipts' => $receipts, 'invoices' => $invoices, 'modification_requests' => $requests];
+        // Signatures registered for this PO version (metadata only; signature images are private files without download).
+        $signatures = $this->rows("SELECT s.signature_role AS role,s.method_label AS method,s.signed_at,s.integrity_verification_status AS integrity,(s.signature_file_id IS NOT NULL) AS has_image,
+              COALESCE((SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=s.signer_user_id AND u.organization_id=s.organization_id),
+                       CASE WHEN JSON_VALID(s.signer_snapshot) THEN JSON_UNQUOTE(JSON_EXTRACT(s.signer_snapshot,'$.name')) END) AS signer
+            FROM signature_evidence s WHERE s.organization_id=? AND s.entity_id=? ORDER BY s.signed_at,s.id", [$org, $id]);
+        foreach ($signatures as &$sg) {
+            $sg['has_image'] = (bool) $sg['has_image'];
+        }
+        unset($sg);
+        return ['item' => $po, 'items' => $items, 'versions' => $versions, 'receipts' => $receipts, 'invoices' => $invoices, 'modification_requests' => $requests, 'signatures' => $signatures];
     }
 }

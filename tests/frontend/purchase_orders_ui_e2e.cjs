@@ -164,17 +164,45 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     await page.getByTestId('po-range').filter({ hasText: `de ${b.count} órdenes de compra` }).waitFor();
     check('sin la OC que no tiene comprador', await mx.locator('tr[data-folio="OC-QA-0009"]').count() === 0);
 
-    // Formato (tarjeta 6) desde "Formato PDF"
+    // 6 · Formato de Orden de Compra (diseño) desde "Formato PDF": vista previa Grupo Gerez + firmas manuscritas (sin guardar)
     await mx.locator('tr[data-folio="OC-QA-0003"]').getByRole('button', { name: 'Formato PDF' }).click();
-    const fmt = page.getByTestId('po-format'); await fmt.waitFor();
+    const fc = page.getByTestId('po-format-card'); await page.getByTestId('po-format').waitFor();
+    const fct = (await fc.innerText()).replace(/\s+/g, ' ');
+    check('formato: título, explicación, Imprimir / PDF y Actualizar formato', fct.includes('Formato de Orden de Compra') && fct.includes('Documento formal con información del contratista, cliente, proveedor, requisición y partidas.')
+      && await fc.getByRole('button', { name: /Imprimir \/ PDF/ }).isEnabled() && await fc.getByRole('button', { name: /Actualizar formato/ }).isEnabled());
+    const fsel = fc.getByRole('combobox', { name: 'Orden de compra' });
+    await fsel.locator('option', { hasText: 'OC-QA-0001' }).first().waitFor({ state: 'attached' });
+    check('formato: selector con la OC elegida en la matriz ("OC · PROVEEDOR · $monto")', await fsel.inputValue() === p3.id && (await fsel.locator('option:checked').innerText()).startsWith(`OC-QA-0003 Rev. ${p3.version_number - 1} · ${p3.supplier_name.toUpperCase()} · $`));
     const frame = page.frameLocator('iframe[title="Formato de OC"]');
-    await frame.getByText(`Orden de Compra OC-QA-0003 · Rev. ${p3.version_number - 1}`).waitFor();
-    const ftxt = await frame.locator('body').innerText();
-    check('formato: partidas, total, firmas y referencias', ['Instrumento sintético', '$3,900.00 USD', 'QA Comprador', 'QA02-REQ-2026-SCF210'].every(x => ftxt.includes(x)), ftxt.slice(0, 300));
-    check('formato: versiones (Rev. 0 original) y recepción de la serie', (await fmt.innerText()).includes('Rev. 0') && (await fmt.innerText()).includes('Rev. 1 · Cambio de cantidad') && (await fmt.innerText()).includes('REC-QA-0003'));
-    const [popup] = await Promise.all([page.waitForEvent('popup'), page.getByRole('button', { name: /Imprimir \/ Guardar PDF/ }).click()]);
-    await popup.waitForLoadState(); check('imprimir abre el formato', (await popup.textContent('body')).includes('OC-QA-0003')); await popup.close();
+    await frame.getByText('ORDEN DE COMPRA', { exact: true }).waitFor();
+    const ftxt = (await frame.locator('body').innerText()).replace(/\s+/g, ' ');
+    check('formato: vista previa con el formato Grupo Gerez (encabezado, comprador, partidas, total y firmas)', ['P-COP-01-01', 'Tampico, Tamaulipas', `OC-QA-0003 · Rev. ${p3.version_number - 1}`, 'Instrumento sint', '3,900.00 USD', 'QA Comprador', 'QA02-REQ-2026-SCF210', 'INFORMACIÓN ADICIONAL', '[ Firma ]', 'COMPRÓ:', 'AUTORIZÓ:'].every(x => ftxt.includes(x)), ftxt.slice(0, 400));
+    check('formato: tres recuadros de firma del diseño, sin firma registrada', (await fc.getByTestId('po-signatures').innerText()).includes('Firmas digitales manuscritas') && ['buyer', 'preparer', 'authorizer'].every(Boolean) && (await page.getByTestId('po-sign-status-buyer').innerText()) === 'Sin firma' && (await page.getByTestId('po-sign-status-authorizer').innerText()) === 'Sin firma');
+    const cv = page.getByTestId('po-sign-buyer').locator('canvas'); const bb = await cv.boundingBox();
+    await page.mouse.move(bb.x + 30, bb.y + 90); await page.mouse.down(); for (const [dx, dy] of [[60, 40], [90, 70], [130, 30], [170, 80], [220, 50]]) await page.mouse.move(bb.x + dx, bb.y + dy, { steps: 4 }); await page.mouse.up();
+    await page.getByTestId('po-sign-status-buyer').filter({ hasText: 'Firma capturada' }).waitFor();
+    check('formato: firma dibujada con mouse → "Firma capturada (sin guardar)" y aparece en la vista previa', (await page.getByTestId('po-sign-status-buyer').innerText()) === 'Firma capturada (sin guardar)' && await frame.locator('img[alt="Firma"]').count() === 1);
+    check('formato: el documento indica que las firmas no están registradas', (await frame.locator('body').innerText()).includes('no registradas en SupplyFlow'));
+    await page.getByLabel('Imagen de firma: Autorizó').setInputFiles({ name: 'firma.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64') });
+    await page.getByTestId('po-sign-status-authorizer').filter({ hasText: 'Firma capturada' }).waitFor();
+    check('formato: "Cargar imagen" incorpora la firma (PNG)', await frame.locator('img[alt="Firma"]').count() === 2);
+    await page.getByLabel('Imagen de firma: Preparó').setInputFiles({ name: 'firma.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>') });
+    check('formato: imagen no permitida (SVG) se rechaza', (await page.getByTestId('po-sign-msg').innerText()).includes('PNG o JPG') && (await page.getByTestId('po-sign-status-preparer').innerText()) === 'Sin firma');
+    await fc.getByRole('button', { name: /Guardar firmas digitales/ }).click();
+    check('formato: guardar firmas valida y NO escribe', (await page.getByTestId('po-sign-msg').innerText()).includes('Firmas validadas (Compró / Comprador, Autorizó), pero no se guardaron en OC-QA-0003'));
     await shot(page, 'oc_6_formato');
+    await page.getByTestId('po-sign-buyer').getByRole('button', { name: 'Limpiar' }).click();
+    await page.getByTestId('po-sign-status-buyer').filter({ hasText: 'Sin firma' }).waitFor();
+    check('formato: "Limpiar" quita la firma del documento', await frame.locator('img[alt="Firma"]').count() === 1);
+    await fc.getByRole('button', { name: /Limpiar todas las firmas/ }).click();
+    await page.getByTestId('po-sign-status-authorizer').filter({ hasText: 'Sin firma' }).waitFor();
+    check('formato: "Limpiar todas las firmas"', await frame.locator('img[alt="Firma"]').count() === 0 && !(await frame.locator('body').innerText()).includes('no registradas en SupplyFlow'));
+    await fc.getByRole('button', { name: /Imprimir \/ PDF/ }).click();
+    const p1id = head.items.find(x => x.folio === 'OC-QA-0001').id;
+    await fsel.selectOption(p1id);
+    await frame.getByText('OC-QA-0001', { exact: false }).first().waitFor();
+    check('formato: cambiar de OC actualiza la vista previa', (await frame.locator('body').innerText()).includes('OC-QA-0001') && (await frame.locator('body').innerText()).includes('Material sint'));
+
 
     // 1 · Emisión de orden de compra (diseño): requisición aprobada → proveedores ganadores; crear OC valida y no escribe
     await page.getByRole('button', { name: /Emisión de orden de compra/ }).first().click();

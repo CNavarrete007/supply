@@ -67,6 +67,7 @@ try:
         check('detalle/lista: monto original = Rev. 0 de la serie; factura vigente sin canceladas; CR vinculado',
             abs(float(cur[0]['original_total_amount']) - float(vers[min(vers)]['total_amount'])) < 0.01 and cur[0]['original_currency'] == vers[min(vers)]['currency']
             and isinstance(cur[0]['active_invoice_count'], int) and cur[0]['active_invoice_count'] <= cur[0]['invoice_count'] and 'change_request_folio' in cur[0])
+        check('detalle: firmas registradas de la OC (solo metadatos, sin imagen descargable)', isinstance(det['signatures'], list) and all(set(x) == {'role', 'method', 'signed_at', 'integrity', 'has_image', 'signer'} for x in det['signatures']))
         fmt = {'buyer_email', 'buyer_position', 'preparer_position', 'authorizer_position', 'supplier_contact', 'supplier_contact_email', 'supplier_contact_phone', 'bill_to', 'invoice_to'}
         check('detalle: datos del formato de OC (contactos, puestos, facturación) sin rutas de almacenamiento', fmt <= set(det['item']) and not re.search(r'storage_key|password|token', json.dumps(det)))
     iss = get(R + '/issuance'); check('emisión: forma', isinstance(iss['items'], list) and isinstance(iss['losing_quotes'], int))
