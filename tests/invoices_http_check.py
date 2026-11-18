@@ -4,7 +4,7 @@ Verifica 401/403/422/404, estados derivados, montos por moneda sin canceladas, c
 semáforo de Recepción, que los archivos no expongan rutas de almacenamiento y que no exista ninguna ruta de escritura.
 Uso: SF_API=http://127.0.0.1:8080 SF_USER=<correo admin> SF_QA_PASSWORD=<clave> [SF_NONADMIN_USER=<correo>] python3 tests/invoices_http_check.py
 """
-import datetime, http.cookiejar, json, os, re, sys, urllib.error, urllib.request
+import datetime, http.cookiejar, json, os, re, sys, urllib.error, urllib.parse, urllib.request
 API = os.environ.get('SF_API', 'http://127.0.0.1:8090').rstrip('/'); USER = os.environ.get('SF_USER', 'qa.admin.a@supplyflow.invalid')
 PASSWORD = os.environ.get('SF_QA_PASSWORD', ''); NONADMIN = os.environ.get('SF_NONADMIN_USER', '')
 if not re.match(r'^http://(127\.0\.0\.1|localhost)(:\d+)?$', API) or not PASSWORD: print('BLOCKED: solo API local y SF_QA_PASSWORD.'); sys.exit(2)
@@ -64,6 +64,13 @@ try:
         c0 = cc['items'][0]
         fc = get(f"{R}?client={c0['id']}&page_size=50")
         check('filtro por cliente = su tarjeta; las tarjetas no se reducen al cliente', fc['total'] == c0['invoices'] and all(i['client_name'] == c0['name'] for i in fc['items']) and len(fc['summary']['client_cards']['items']) == len(cc['items']))
+        name = c0['name']; folio = items[0]['folio']
+        acc = status(adm, f"{R}?q={urllib.parse.quote('ÉÑÍ áé')}&page_size=1")
+        check('búsqueda con acentos/ñ: 200 (sin mezcla ilegal de colaciones)', acc == 200, str(acc))
+        a, b = get(f"{R}?q={urllib.parse.quote(name.upper())}&page_size=1"), get(f"{R}?q={urllib.parse.quote(name.lower())}&page_size=1")
+        check('cliente sin distinguir mayúsculas', a['total'] == b['total'] == c0['invoices'])
+        lo = get(f"{R}?q={urllib.parse.quote(folio.lower())}&page_size=50")
+        check('folio en minúsculas encuentra la factura', any(i['folio'] == folio for i in lo['items']))
         nq = get(f'{R}?q=zz-no-existe-qa&page_size=1')['summary']['client_cards']
         check('búsqueda sin coincidencias: 0 tarjetas y mismo clients_total', nq['items'] == [] and nq['clients_total'] == cc['clients_total'])
     check('archivo sin ruta de almacenamiento', not re.search(r'storage_key|storage_backend|sandbox/', json.dumps(items)))

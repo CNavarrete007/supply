@@ -87,8 +87,11 @@ final class InvoiceReadRepository
         $binds = [$org];
         if ($f['q'] !== '') {
             $l = self::like($f['q']);
-            $where[] = "(i.folio LIKE ? ESCAPE '!' OR i.invoice_number LIKE ? ESCAPE '!' OR i.fiscal_uuid LIKE ? ESCAPE '!' OR r.folio LIKE ? ESCAPE '!' OR c.legal_name LIKE ? ESCAPE '!' OR c.tax_identifier LIKE ? ESCAPE '!' OR r.project_reference_snapshot LIKE ? ESCAPE '!'"
-                . " OR EXISTS (SELECT 1 FROM invoice_purchase_orders ip LEFT JOIN purchase_orders po ON po.id=ip.purchase_order_id AND po.organization_id=ip.organization_id WHERE ip.organization_id=i.organization_id AND ip.invoice_id=i.id AND (po.folio LIKE ? ESCAPE '!' OR ip.po_folio_snapshot LIKE ? ESCAPE '!')))";
+            // Folios are binary (case-sensitive) and the UUID is ASCII (an accented term would be an illegal collation
+            // mix → 503): both are compared with the case- and accent-insensitive collation used by the text columns.
+            $ci = ' COLLATE utf8mb4_uca1400_nopad_ai_ci';
+            $where[] = "(i.folio{$ci} LIKE ? ESCAPE '!' OR i.invoice_number LIKE ? ESCAPE '!' OR CONVERT(i.fiscal_uuid USING utf8mb4){$ci} LIKE ? ESCAPE '!' OR r.folio{$ci} LIKE ? ESCAPE '!' OR c.legal_name LIKE ? ESCAPE '!' OR c.tax_identifier LIKE ? ESCAPE '!' OR r.project_reference_snapshot LIKE ? ESCAPE '!'"
+                . " OR EXISTS (SELECT 1 FROM invoice_purchase_orders ip LEFT JOIN purchase_orders po ON po.id=ip.purchase_order_id AND po.organization_id=ip.organization_id WHERE ip.organization_id=i.organization_id AND ip.invoice_id=i.id AND (po.folio{$ci} LIKE ? ESCAPE '!' OR ip.po_folio_snapshot LIKE ? ESCAPE '!')))";
             array_push($binds, $l, $l, $l, $l, $l, $l, $l, $l, $l);
         }
         // Client cards ("Facturas por cliente"): same search, never narrowed by the selected client.
