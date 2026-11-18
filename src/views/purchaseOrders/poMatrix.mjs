@@ -114,21 +114,51 @@ export function deleteBlock(po, en = false) {
 
 export const folioConfirmed = (po, typed) => !!clean(po?.folio) && clean(typed).toUpperCase() === clean(po.folio).toUpperCase();
 
-export const REQUEST_TYPES = [['date', 'Cambio de fecha', 'Date change'], ['quantity', 'Cambio de cantidad', 'Quantity change'], ['price', 'Cambio de precio', 'Price change'],
-  ['terms', 'Cambio de condiciones', 'Terms change'], ['items', 'Agregar o quitar partidas', 'Add or remove items'], ['cancel', 'Cancelación de la OC', 'PO cancellation'], ['other', 'Otro', 'Other']];
+/** Change types of the design (first = default "Cantidad"). Codes are stable for a future write endpoint. */
+export const REQUEST_TYPES = [['quantity', 'Cantidad', 'Quantity'], ['price', 'Precio', 'Price'], ['date', 'Fecha de entrega', 'Delivery date'],
+  ['terms', 'Condiciones comerciales', 'Commercial terms'], ['items', 'Partidas (agregar o quitar)', 'Items (add or remove)'], ['cancel', 'Cancelación de la OC', 'PO cancellation'], ['other', 'Otro', 'Other']];
 export const URGENCIES = [['normal', 'Normal', 'Normal'], ['alta', 'Alta', 'High'], ['urgente', 'Urgente', 'Urgent']];
+export const IMPACTS = [['none', 'Sin impacto económico confirmado', 'No confirmed economic impact'], ['increase', 'Incrementa el monto de la OC', 'Increases the PO amount'],
+  ['decrease', 'Reduce el monto de la OC', 'Reduces the PO amount'], ['schedule', 'Impacto en fechas de entrega', 'Impact on delivery dates'], ['review', 'Por evaluar', 'To be evaluated']];
 
-/** SOLICITAR MODIFICACIÓN form → { ok, errors, first }. */
-export function validateRequest(f = {}, en = false) {
+/** New request form: design defaults (Cantidad, Normal, sin impacto) and the PO's current authorizer when eligible. */
+export const emptyRequest = (approver = '') => ({ type: 'quantity', urgency: 'normal', approver, reference: '', impact: 'none', reason: '' });
+
+/**
+ * "Autoriza la modificación": active users with enabled access, never the requester (independent approval, as in R3B).
+ * The PO's current authorizer goes first. Each option: { id, name, email, current }.
+ */
+export function approverOptions(users = [], me = null, po = null) {
+  const cur = fold(po?.authorizer_name);
+  return users.filter(u => u.status === 'active' && u.access_enabled && u.credential_state === 'local_validated' && u.id !== me?.public_id)
+    .map(u => ({ id: u.id, name: u.name, email: u.email, current: !!cur && fold(u.name) === cur }))
+    .sort((a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name));
+}
+
+/** SOLICITAR MODIFICACIÓN form → { ok, errors, first }. ctx: approvers (options), me (requester). */
+export function validateRequest(f = {}, { approvers = [], me = null } = {}, en = false) {
   const m = (es, e) => (en ? e : es);
   const errors = {};
   if (!REQUEST_TYPES.some(t => t[0] === f.type)) errors.type = m('Selecciona el tipo de modificación.', 'Select the change type.');
   if (!URGENCIES.some(t => t[0] === f.urgency)) errors.urgency = m('Selecciona la urgencia.', 'Select the urgency.');
+  if (!f.approver) errors.approver = m('Selecciona quién autoriza la modificación.', 'Select who authorizes the change.');
+  else if (me && f.approver === me.public_id) errors.approver = m('Quien solicita no puede autorizar su propia modificación.', 'The requester cannot authorize their own change.');
+  else if (!approvers.some(a => a.id === f.approver)) errors.approver = m('El autorizador debe ser un usuario activo con acceso.', 'The approver must be an active user with access.');
+  if (clean(f.reference).length > 255) errors.reference = m('Referencia: máximo 255 caracteres.', 'Reference: maximum 255 characters.');
+  if (!IMPACTS.some(t => t[0] === f.impact)) errors.impact = m('Selecciona el impacto estimado.', 'Select the estimated impact.');
   const r = clean(f.reason);
-  if (r.length < 10) errors.reason = m('Describe el motivo (mínimo 10 caracteres).', 'Describe the reason (minimum 10 characters).');
-  else if (r.length > 1000) errors.reason = m('Máximo 1000 caracteres.', 'Maximum 1000 characters.');
+  if (r.length < 10) errors.reason = m('Describe el motivo / justificación (mínimo 10 caracteres).', 'Describe the reason / justification (minimum 10 characters).');
+  else if (r.length > 1000) errors.reason = m('Motivo: máximo 1000 caracteres.', 'Reason: maximum 1000 characters.');
   const k = Object.keys(errors);
   return { ok: !k.length, errors, first: k.length ? errors[k[0]] : '' };
+}
+
+/** Message after a valid request: nothing is recorded and the PO stays as it is. */
+export function requestLockedText(po, f, approver, en = false) {
+  const t = REQUEST_TYPES.find(x => x[0] === f.type); const label = t ? (en ? t[2] : t[1]) : f.type;
+  return en
+    ? `Data validated, but the change request for ${po.folio} (${label}, to be authorized by ${approver?.name || '—'}) was not recorded: it requires an authorized write endpoint. The PO was not modified.`
+    : `Datos validados, pero no se registró la solicitud de modificación de ${po.folio} (${label}, autoriza ${approver?.name || '—'}): requiere un endpoint de escritura autorizado. La OC no se modificó.`;
 }
 
 /** EDITAR form (header data of a not yet authorized PO) → { ok, errors, first, changed }. */

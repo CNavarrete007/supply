@@ -1,7 +1,7 @@
 // Órdenes de Compra · tarjeta 2 "Matriz de órdenes": lógica pura (node --test).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PO_STATES, poState, revLabel, buyerCardList, filterBuyers, buyersBadge, rangeText, buyerCaption, editBlock, requestBlock, modifyBlock, deleteBlock, folioConfirmed, validateRequest, validateEdit, editForm } from '../../src/views/purchaseOrders/poMatrix.mjs';
+import { PO_STATES, poState, revLabel, buyerCardList, filterBuyers, buyersBadge, rangeText, buyerCaption, editBlock, requestBlock, modifyBlock, deleteBlock, folioConfirmed, validateRequest, validateEdit, editForm, REQUEST_TYPES, IMPACTS, emptyRequest, approverOptions, requestLockedText } from '../../src/views/purchaseOrders/poMatrix.mjs';
 
 // Resumen sintético con la forma de summary del endpoint /purchase-orders.
 const SUM = {
@@ -74,10 +74,46 @@ test('ELIMINAR: protecciones por recepciones, facturas, versiones o cancelada; f
   assert.equal(folioConfirmed(PO(), ' oc-qa-1 '), true); assert.equal(folioConfirmed(PO(), 'OC-QA-2'), false);
 });
 
+// Usuarios sintéticos con la forma de GET /api/v1/users; "yo" = quien solicita (GET /api/v1/auth/me → user).
+const USERS = [
+  { id: 'u1', name: 'QA Admin A', email: 'a@x.invalid', status: 'active', access_enabled: true, credential_state: 'local_validated' },
+  { id: 'u2', name: 'Aime Vega Ibáñez', email: 'aime@x.invalid', status: 'active', access_enabled: true, credential_state: 'local_validated' },
+  { id: 'u3', name: 'Bloqueado', email: 'b@x.invalid', status: 'blocked', access_enabled: true, credential_state: 'local_validated' },
+  { id: 'u4', name: 'Sin credencial', email: 'c@x.invalid', status: 'active', access_enabled: true, credential_state: 'pending' },
+  { id: 'u5', name: 'Beto Ruiz', email: 'beto@x.invalid', status: 'active', access_enabled: true, credential_state: 'local_validated' },
+];
+const ME = { public_id: 'u1' };
+
+test('solicitud: valores del diseño (Cantidad, Normal, sin impacto) y catálogos', () => {
+  assert.deepEqual(emptyRequest('u2'), { type: 'quantity', urgency: 'normal', approver: 'u2', reference: '', impact: 'none', reason: '' });
+  assert.equal(REQUEST_TYPES[0][1], 'Cantidad'); assert.equal(IMPACTS[0][1], 'Sin impacto económico confirmado');
+});
+
+test('autoriza la modificación: activos con acceso, nunca quien solicita; el autorizador actual primero', () => {
+  const a = approverOptions(USERS, ME, { authorizer_name: 'AIME VEGA IBAÑEZ' });
+  assert.deepEqual(a.map(x => [x.id, x.current]), [['u2', true], ['u5', false]]);
+  assert.deepEqual(approverOptions(USERS, null, {}).map(x => x.id), ['u2', 'u5', 'u1'], 'sin autorizador actual: orden alfabético');
+});
+
 test('validación de la solicitud de modificación', () => {
-  assert.match(validateRequest({ type: '', urgency: 'normal', reason: '' }).first, /tipo/);
-  assert.match(validateRequest({ type: 'date', urgency: 'normal', reason: 'corto' }).first, /mínimo 10/);
-  assert.equal(validateRequest({ type: 'date', urgency: 'alta', reason: 'Cambio de fecha pedido por el proveedor' }).ok, true);
+  const ctx = { approvers: approverOptions(USERS, ME, {}), me: ME };
+  const ok = { ...emptyRequest('u2'), reason: 'Cambio de cantidad pedido por el cliente' };
+  assert.equal(validateRequest(ok, ctx).ok, true);
+  assert.match(validateRequest({ ...ok, type: '' }, ctx).first, /tipo/);
+  assert.match(validateRequest({ ...ok, reason: 'corto' }, ctx).first, /mínimo 10/);
+  assert.match(validateRequest({ ...ok, approver: '' }, ctx).first, /quién autoriza/);
+  assert.match(validateRequest({ ...ok, approver: 'u1' }, ctx).first, /no puede autorizar su propia/);
+  assert.match(validateRequest({ ...ok, approver: 'u3' }, ctx).first, /usuario activo con acceso/);
+  assert.match(validateRequest({ ...ok, reference: 'x'.repeat(256) }, ctx).first, /255/);
+  assert.match(validateRequest({ ...ok, impact: 'x' }, ctx).first, /impacto/);
+  assert.match(validateRequest({ ...ok, reason: 'x'.repeat(1001) }, ctx).first, /1000/);
+  assert.equal(validateRequest({ ...ok, approver: '' }, ctx, true).errors.approver, 'Select who authorizes the change.');
+});
+
+test('solicitud validada: mensaje de no registrada con tipo y autorizador', () => {
+  const t = requestLockedText({ folio: 'OC-1' }, emptyRequest('u2'), { name: 'Aime Vega Ibáñez' });
+  assert.match(t, /^Datos validados, pero no se registró la solicitud de modificación de OC-1 \(Cantidad, autoriza Aime Vega Ibáñez\)/);
+  assert.match(t, /La OC no se modificó\.$/);
 });
 
 test('validación de EDITAR (borrador)', () => {

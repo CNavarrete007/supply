@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, Eye, X } from 'lucide-react';
 import { listPurchaseOrders, poIssuance, poTasks, poDetail } from './api';
-import { PO_STATES, poState, buyerCardList, filterBuyers, buyersBadge, rangeText, buyerCaption, editBlock, requestBlock, modifyBlock, deleteBlock, folioConfirmed, REQUEST_TYPES, URGENCIES, validateRequest, validateEdit, editForm } from './poMatrix.mjs';
+import { PO_STATES, poState, buyerCardList, filterBuyers, buyersBadge, rangeText, buyerCaption, editBlock, requestBlock, modifyBlock, deleteBlock, folioConfirmed, REQUEST_TYPES, URGENCIES, IMPACTS, emptyRequest, approverOptions, validateRequest, requestLockedText, validateEdit, editForm } from './poMatrix.mjs';
+import { allUsers, authMe } from '../usersRoles/api.js';
 import { buildPoPdf, pdfName } from './poPdf.mjs';
 import { money, opLabel, statusTone, progressOf, poPrintHtml, revLabel } from './model.mjs';
 import { issuanceOptions, winningSuppliers, supplierTotal, toGenerate, validateIssuance, issuanceLockedText } from './poIssuance.mjs';
@@ -78,8 +79,28 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     catch (e) { setEditDlg(x => x && { ...x, msg: { kind: 'error', text: e.message } }); }
   };
   const saveEdit = () => setEditDlg(x => { const v = validateEdit(x.form, x.det, en); return { ...x, msg: v.ok ? { kind: 'locked', text: tx(`Datos validados, pero no se guardaron los cambios de ${x.po.folio} (${v.changed.join(', ')}): editar órdenes de compra es una escritura comercial bloqueada hasta su autorización.`, `Data validated, but the changes to ${x.po.folio} (${v.changed.join(', ')}) were not saved: editing purchase orders is a commercial write blocked until authorized.`) } : { kind: v.errors.none ? 'info' : 'error', text: v.first } }; });
-  const onRequest = po => { const b = requestBlock(po, en); if (b) { setActMsg({ kind: 'info', folio: po.folio, text: b }); return; } setActMsg(null); setReqDlg({ po, form: { type: '', urgency: 'normal', reason: '' }, msg: null }); };
-  const sendRequest = () => setReqDlg(x => { const v = validateRequest(x.form, en); return { ...x, msg: v.ok ? { kind: 'locked', text: tx(`Datos validados, pero no se registró la solicitud de modificación de ${x.po.folio}: requiere un endpoint autorizado (escritura comercial bloqueada). Al aprobarse se habilitaría MODIFICAR OC.`, `Data validated, but the change request for ${x.po.folio} was not recorded: it requires an authorized endpoint (commercial write blocked). Once approved, MODIFY PO would be enabled.`) } : { kind: 'error', text: v.first } }; });
+  // Autorizadores de la solicitud (usuarios activos con acceso, sin quien solicita): se consultan una vez, al abrir el diálogo.
+  const [people, setPeople] = useState({ status: 'idle', users: [], me: null, error: null });
+  const loadPeople = () => {
+    if (people.status === 'loading' || people.status === 'ready') return;
+    setPeople(x => ({ ...x, status: 'loading', error: null }));
+    Promise.all([allUsers(), authMe()]).then(([u, m]) => setPeople({ status: 'ready', users: u.items || [], me: m?.user || null, error: null }))
+      .catch(e => setPeople({ status: 'error', users: [], me: null, error: e }));
+  };
+  const approvers = useMemo(() => approverOptions(people.users, people.me, reqDlg?.po), [people.users, people.me, reqDlg?.po]);
+  useEffect(() => { // preselect the PO's current authorizer once the users are loaded
+    if (!reqDlg || reqDlg.form.approver || !approvers[0]?.current) return;
+    setReqDlg(x => (x && !x.form.approver ? { ...x, form: { ...x.form, approver: approvers[0].id } } : x));
+  }, [approvers, reqDlg?.po?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onRequest = po => { const b = requestBlock(po, en); if (b) { setActMsg({ kind: 'info', folio: po.folio, text: b }); return; } setActMsg(null); loadPeople(); setReqDlg({ po, form: emptyRequest(), msg: null, tried: false }); };
+  const setReq = (k, v) => setReqDlg(x => ({ ...x, form: { ...x.form, [k]: v }, msg: null }));
+  const sendRequest = () => setReqDlg(x => {
+    const v = validateRequest(x.form, { approvers, me: people.me }, en);
+    if (!v.ok) return { ...x, tried: true, errors: v.errors, msg: { kind: 'error', text: v.first } };
+    const text = requestLockedText(x.po, x.form, approvers.find(a => a.id === x.form.approver), en);
+    notify(tx('Solicitud no registrada', 'Request not recorded'), text, 'warning');
+    return { ...x, tried: true, errors: {}, msg: { kind: 'locked', text } };
+  });
   const onModify = po => { const b = modifyBlock(po, en); setActMsg({ kind: b ? 'info' : 'locked', folio: po.folio, text: b || tx(`Solicitud ${po.mod_approved} aprobada, pero no se generó la nueva revisión de ${po.folio}: modificar OC es una escritura comercial bloqueada (la Rev. N volvería a revisión/autorización).`, `Request ${po.mod_approved} is approved, but the new revision of ${po.folio} was not generated: modifying POs is a commercial write blocked (Rev. N would go back to review/authorization).`) }); };
   const onDelete = po => { setActMsg(null); setDelDlg({ po, folio: '', reason: '', msg: null, block: deleteBlock(po, en) }); };
   const tryDelete = () => setDelDlg(x => {
@@ -286,17 +307,35 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
       </div>}
     </div>}
 
-    {reqDlg && <div role="dialog" aria-modal="true" aria-label={tx('Solicitar modificación', 'Request change')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setReqDlg(null)}>
-      <div data-testid="po-request" className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-4 text-left" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between"><h3 className="text-sm font-black text-purple-800">{tx('Solicitar modificación', 'Request change')} · {reqDlg.po.folio} · {revLabel(reqDlg.po)}</h3><button type="button" aria-label={tx('Cerrar', 'Close')} onClick={() => setReqDlg(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
-        <p className="text-[11px] text-slate-600">{tx('La solicitud requiere aprobación previa; al aprobarse se habilita MODIFICAR OC y la nueva revisión vuelve a revisión/autorización.', 'The request requires prior approval; once approved MODIFY PO is enabled and the new revision goes back to review/authorization.')}</p>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block"><span className="block text-[11px] font-black mb-1">{tx('Tipo de modificación', 'Change type')} *</span><select aria-label={tx('Tipo de modificación', 'Change type')} value={reqDlg.form.type} onChange={e => setReqDlg(x => ({ ...x, form: { ...x.form, type: e.target.value }, msg: null }))} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm"><option value="">{tx('Seleccionar...', 'Select...')}</option>{REQUEST_TYPES.map(([k, es, e2]) => <option key={k} value={k}>{en ? e2 : es}</option>)}</select></label>
-          <label className="block"><span className="block text-[11px] font-black mb-1">{tx('Urgencia', 'Urgency')}</span><select aria-label={tx('Urgencia', 'Urgency')} value={reqDlg.form.urgency} onChange={e => setReqDlg(x => ({ ...x, form: { ...x.form, urgency: e.target.value }, msg: null }))} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm">{URGENCIES.map(([k, es, e2]) => <option key={k} value={k}>{en ? e2 : es}</option>)}</select></label>
+    {reqDlg && <div role="dialog" aria-modal="true" aria-label={tx('Solicitud de modificación de Orden de Compra', 'Purchase Order change request')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-3 sm:p-4" onClick={() => setReqDlg(null)}>
+      <div data-testid="po-request" className="bg-slate-50 rounded-3xl w-full max-w-4xl max-h-[94vh] overflow-auto text-left shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 px-5 sm:px-6 py-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-fuchsia-600 text-white rounded-t-3xl">
+          <div><h3 className="text-base sm:text-lg font-black">{tx('Solicitud de modificación de Orden de Compra', 'Purchase Order change request')}</h3><p className="text-[11px] text-white/85">{tx('La OC permanece bloqueada hasta que la solicitud sea aprobada.', 'The PO stays locked until the request is approved.')}</p></div>
+          <span className="text-xs font-black shrink-0"><button type="button" onClick={() => setReqDlg(null)} className="px-3 py-2 rounded-xl border border-white/40 bg-white/15 hover:bg-white/25 flex items-center gap-1.5"><X className="w-4 h-4" />{tx('Cerrar', 'Close')}</button></span>
         </div>
-        <label className="block"><span className="block text-[11px] font-black mb-1">{tx('Motivo', 'Reason')} *</span><textarea rows={3} aria-label={tx('Motivo de la modificación', 'Change reason')} maxLength={1100} value={reqDlg.form.reason} onChange={e => setReqDlg(x => ({ ...x, form: { ...x.form, reason: e.target.value }, msg: null }))} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" /></label>
-        {reqDlg.msg && <p data-testid="po-request-msg" role={reqDlg.msg.kind === 'error' ? 'alert' : 'status'} className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${reqDlg.msg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{reqDlg.msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{reqDlg.msg.text}</span></p>}
-        <div className="flex justify-end gap-2 text-xs font-black"><button type="button" onClick={() => setReqDlg(null)} className="px-4 py-2 border border-slate-200 rounded-xl">{tx('Cancelar', 'Cancel')}</button><button type="button" onClick={sendRequest} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl">{tx('Enviar solicitud', 'Send request')}</button></div>
+        <div className="p-4 sm:p-6 space-y-4">
+          <div data-testid="po-request-context" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">{[
+            [reqDlg.po.folio, `${revLabel(reqDlg.po)} · ${poState(reqDlg.po, en).text}`],
+            [show(reqDlg.po.requisitions), show(reqDlg.po.clients)],
+            [String(reqDlg.po.supplier_name || DASH).toUpperCase(), `${reqDlg.po.currency || ''} · ${money(reqDlg.po.total_amount, reqDlg.po.currency, en)}`],
+            [String(reqDlg.po.authorizer_name || DASH).toUpperCase(), tx('Autorizador actual de la OC', 'Current PO authorizer')],
+          ].map(([a, b], i) => <div key={i} className="bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 min-w-0"><div className="text-[11px] font-black text-slate-900 truncate" title={a}>{a}</div><div className="text-[9.5px] font-bold text-slate-500 truncate" title={b}>{b}</div></div>)}</div>
+          <div className="p-3 rounded-xl bg-amber-50 border-l-4 border-amber-500 text-[10.5px] text-amber-900 leading-relaxed"><strong>{tx('Control obligatorio:', 'Mandatory control:')}</strong> {tx('enviar esta solicitud', 'sending this request')} <u>{tx('no modifica', 'does not modify')}</u> {tx('la OC. La persona autorizadora primero decide si permite el cambio. Después de aprobarse se habilita MODIFICAR OC y la nueva Rev. N deberá pasar nuevamente por el flujo normal de revisión y autorización.', 'the PO. The approver first decides whether to allow the change. Once approved, MODIFY PO is enabled and the new Rev. N must go through the normal review and authorization flow again.')}</div>
+          {(() => { const err = k => reqDlg.tried && reqDlg.errors?.[k]; const ctl = k => `w-full px-3.5 py-3 bg-white border rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${err(k) ? 'border-rose-400' : 'border-slate-300'}`;
+            const lbl = (t, req, k, child, cls = '') => <label className={`block ${cls}`}><span className="block text-[11px] font-black text-slate-900 mb-1.5">{t}{req ? ' *' : ''}</span>{child}{err(k) && <span role="alert" className="block text-[10.5px] text-rose-600 font-semibold mt-1">{reqDlg.errors[k]}</span>}</label>;
+            return <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {lbl(tx('Tipo de modificación', 'Change type'), true, 'type', <select aria-label={tx('Tipo de modificación', 'Change type')} value={reqDlg.form.type} onChange={e => setReq('type', e.target.value)} className={ctl('type')}>{REQUEST_TYPES.map(([k, es, e2]) => <option key={k} value={k}>{en ? e2 : es}</option>)}</select>)}
+              {lbl(tx('Urgencia', 'Urgency'), true, 'urgency', <select aria-label={tx('Urgencia', 'Urgency')} value={reqDlg.form.urgency} onChange={e => setReq('urgency', e.target.value)} className={ctl('urgency')}>{URGENCIES.map(([k, es, e2]) => <option key={k} value={k}>{en ? e2 : es}</option>)}</select>)}
+              {lbl(tx('Autoriza la modificación', 'Change approved by'), true, 'approver', <select aria-label={tx('Autoriza la modificación', 'Change approved by')} value={reqDlg.form.approver} onChange={e => setReq('approver', e.target.value)} disabled={people.status === 'loading'} className={ctl('approver')}><option value="">{people.status === 'loading' ? tx('Consultando usuarios…', 'Loading users…') : tx('Seleccionar autorizador...', 'Select approver...')}</option>{approvers.map(a => <option key={a.id} value={a.id}>{String(a.name).toUpperCase()} · {a.email}</option>)}</select>)}
+              {lbl(tx('Referencia / evidencia', 'Reference / evidence'), false, 'reference', <input type="text" aria-label={tx('Referencia / evidencia', 'Reference / evidence')} value={reqDlg.form.reference} maxLength={255} placeholder={tx('Correo, Change Request, PO cliente, minuta, ticket...', 'Email, Change Request, client PO, minutes, ticket...')} onChange={e => setReq('reference', e.target.value)} className={ctl('reference')} />, 'md:col-span-2')}
+              {lbl(tx('Impacto estimado', 'Estimated impact'), false, 'impact', <select aria-label={tx('Impacto estimado', 'Estimated impact')} value={reqDlg.form.impact} onChange={e => setReq('impact', e.target.value)} className={ctl('impact')}>{IMPACTS.map(([k, es, e2]) => <option key={k} value={k}>{en ? e2 : es}</option>)}</select>)}
+              {lbl(tx('Motivo / justificación', 'Reason / justification'), true, 'reason', <textarea rows={4} aria-label={tx('Motivo / justificación', 'Reason / justification')} maxLength={1100} value={reqDlg.form.reason} placeholder={tx('Explica por qué se solicita autorización para modificar la OC y qué instrucción o evento originó el cambio.', 'Explain why authorization to modify the PO is requested and which instruction or event caused the change.')} onChange={e => setReq('reason', e.target.value)} className={ctl('reason')} />, 'md:col-span-3')}
+            </div>; })()}
+          {people.status === 'error' && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{tx('No se pudo consultar la lista de autorizadores', 'The approver list could not be loaded')}: {people.error?.message}</p>}
+          {people.status === 'ready' && !approvers.length && <p className="text-xs text-amber-800">{tx('No hay otro usuario activo con acceso que pueda autorizar la modificación.', 'There is no other active user with access who can authorize the change.')}</p>}
+          {reqDlg.msg && <p data-testid="po-request-msg" role={reqDlg.msg.kind === 'error' ? 'alert' : 'status'} className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${reqDlg.msg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{reqDlg.msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{reqDlg.msg.text}</span></p>}
+          <div className="flex flex-wrap justify-end gap-3 text-sm font-black"><button type="button" onClick={() => setReqDlg(null)} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl">{tx('Cancelar', 'Cancel')}</button><button type="button" onClick={sendRequest} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">📨</span>{tx('Enviar para aprobación', 'Send for approval')}</button></div>
+        </div>
       </div>
     </div>}
 
