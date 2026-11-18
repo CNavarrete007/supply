@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { listInvoices, invoiceDetail, invoiceRequisitions, invoiceContext, invoiceControl } from './api';
 import { money, stateLabel, stateTone, statusText, daysOverdue, moneyList, controlCards, acceptLabel } from './model.mjs';
+import { CURRENCIES, STATUSES, FILE_TYPES, emptyInvoice, fromInvoice, contextDefaults, computeTotal, validateInvoice, changedInvoiceFields, previewType, fileSize } from './invoiceForm.mjs';
 
 // Factura · diseño Grupo Gerez (3 tarjetas) conectado a MariaDB en modo consulta.
 // GET /api/v1/invoices* (Master Admin). Registrar, editar, cancelar o eliminar facturas y abrir sus archivos privados
@@ -23,7 +24,7 @@ function useLoad(fn, deps, enabled = true) {
   return st;
 }
 
-export function InvoiceModule({ lang = 'es', language, isEnglish }) {
+export function InvoiceModule({ lang = 'es', language, isEnglish, onNotify }) {
   const en = Boolean(isEnglish || lang === 'en' || language === 'en');
   const tx = (es, e) => (en ? e : es);
   const LOCK = tx('Modo consulta MariaDB: registrar, editar, cancelar o eliminar facturas y abrir sus archivos privados son operaciones bloqueadas hasta su validación integral.', 'MariaDB read mode: recording, editing, cancelling or deleting invoices and opening their private files are blocked until fully validated.');
@@ -75,7 +76,45 @@ export function InvoiceModule({ lang = 'es', language, isEnglish }) {
   </tr>;
   const H = [tx('Factura', 'Invoice'), 'UUID', tx('Requisición', 'Requisition'), 'OC', tx('Cliente / Proyecto', 'Client / Project'), tx('Emisor', 'Issuer'), tx('Receptor', 'Receiver'), tx('Emisión', 'Issued'), tx('Vencimiento', 'Due'), 'Total', tx('Estatus', 'Status'), tx('Archivo', 'File')];
   const pager = st => { const last = Math.max(1, Math.ceil((st.data?.total || 0) / (st.data?.page_size || 25))); return <div className="flex justify-between items-center text-xs text-slate-600"><span>{st.data?.total ?? 0} {tx('facturas', 'invoices')} · {tx('Página', 'Page')} {page} / {last}</span><div className="flex gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => n - 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= last} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div></div>; };
-  const cur = ctx.data?.invoices?.find(v => v.id === invSel) || ctx.data?.invoices?.filter(v => v.state !== 'cancelled').at(-1) || ctx.data?.invoices?.at(-1) || null;
+  const notify = (t, m, k = 'info') => { if (typeof onNotify === 'function') onNotify(t, m, k); };
+  // ---------- Tarjeta 1: registro (se valida; guardar requiere endpoint de escritura autorizado) ----------
+  const cd = ctx.status === 'ready' ? ctx.data : null; // never validate against the previous requisition while loading
+  const cur = cd?.invoices?.find(v => v.id === invSel) || null;
+  const [form, setForm] = useState(() => emptyInvoice(day));
+  const [original, setOriginal] = useState(null);
+  const [tried, setTried] = useState(false); const [saveMsg, setSaveMsg] = useState(null);
+  const fileRef = useRef(null);
+  useEffect(() => { // new capture for the selected requisition, or update mode for the chosen invoice
+    if (cur) { const f = fromInvoice(cur, reqId); setForm(f); setOriginal(f); }
+    else { // from update mode start clean; within a new capture keep what was typed, but context fields come from the new requisition
+      setForm(x => (original ? { ...emptyInvoice(day), requisition: reqId } : { ...x, requisition: reqId, issuer: '', receiver: '', currency: 'MXN' })); setOriginal(null);
+    }
+    setTried(false); setSaveMsg(null); if (fileRef.current) fileRef.current.value = '';
+  }, [reqId, cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { // context defaults (new capture only, empty fields)
+    if (!cd || cur) return;
+    const d = contextDefaults(cd);
+    setForm(f => ({ ...f, receiver: f.receiver || d.receiver, issuer: f.issuer || d.issuer, currency: d.currency && CURRENCIES.includes(d.currency) ? d.currency : f.currency }));
+  }, [cd, cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- also after "+ Nueva factura" (runs after the reset above)
+  const fv = useMemo(() => validateInvoice(form, { readiness: cd?.readiness || null, invoices: cd?.invoices || [], editing: cur, original, today: day }, en), [form, cd, cur, original, day, en]);
+  const setF = (k, v) => { setForm(f => ({ ...f, [k]: v })); setSaveMsg(null); };
+  const clearForm = () => { setReqId(''); setInvSel(''); setForm(emptyInvoice(day)); setOriginal(null); setTried(false); setSaveMsg(null); if (fileRef.current) fileRef.current.value = ''; };
+  const calcTotal = () => { const t = computeTotal(form); if (t === null) { notify(tx('Calcular total', 'Calculate total'), tx('Captura un subtotal válido (y los impuestos, si aplican).', 'Enter a valid subtotal (and taxes, if any).'), 'warning'); setTried(true); return; } setF('total', t); };
+  const viewFile = () => { // local preview only, with a forced safe type (never HTML/SVG in the app origin)
+    const type = previewType(form.file); if (!type) { setTried(true); return; }
+    const u = URL.createObjectURL(new Blob([form.file], { type }));
+    const a = document.createElement('a'); a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.click();
+    setTimeout(() => URL.revokeObjectURL(u), 60000);
+  };
+  const removeFile = () => { setF('file', null); if (fileRef.current) fileRef.current.value = ''; };
+  const saveInvoice = () => {
+    if (cur && !changedInvoiceFields(form, original, en).length) { setTried(false); setSaveMsg({ kind: 'info', text: tx('No hay cambios que guardar.', 'There are no changes to save.') }); return; }
+    setTried(true);
+    if (!fv.ok) { setSaveMsg({ kind: 'error', text: fv.first }); notify(tx('Factura incompleta', 'Incomplete invoice'), fv.first, 'warning'); return; }
+    const what = cur ? tx(`la actualización de ${cur.folio} (${changedInvoiceFields(form, original, en).join(', ')})`, `the update of ${cur.folio} (${changedInvoiceFields(form, original, en).join(', ')})`) : tx(`el registro de la factura ${form.number} por ${money(form.total, form.currency, en)}`, `the recording of invoice ${form.number} for ${money(form.total, form.currency, en)}`);
+    const text = tx(`Datos validados, pero no se guardó ${what}: registrar o modificar facturas y subir su archivo es una escritura comercial bloqueada hasta su autorización. El archivo no se subió.`, `Data validated, but ${what} was not saved: recording or modifying invoices and uploading their file is a commercial write blocked until authorized. The file was not uploaded.`);
+    setSaveMsg({ kind: 'locked', text }); notify(tx('Registro no habilitado', 'Recording not enabled'), text, 'warning');
+  };
 
   return <div className="space-y-6 text-left">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -85,27 +124,63 @@ export function InvoiceModule({ lang = 'es', language, isEnglish }) {
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">{tabs.map(([id, icon, title, desc]) => { const on = tab === id; return <button key={id} type="button" aria-pressed={on} onClick={() => go(id)} className={`p-5 rounded-2xl border text-left transition-all duration-200 cursor-pointer flex flex-col justify-between ${on ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white border-transparent shadow-md' : 'bg-white border-slate-200/80 hover:border-slate-300 text-slate-800 shadow-2xs'}`}><div><div className={`w-9 h-9 rounded-xl flex items-center justify-center text-lg mb-3 ${on ? 'bg-white/20 text-white' : 'bg-blue-50/80 text-blue-600 border border-blue-100'}`}>{icon}</div><h3 className={`text-xs font-bold ${on ? 'text-white' : 'text-slate-900'}`}>{title}</h3><p className={`text-[10px] mt-1 leading-relaxed ${on ? 'text-purple-100' : 'text-slate-400'}`}>{desc}</p></div></button>; })}</div>
     <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 flex items-start gap-2 text-[11px] text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{LOCK}</span></div>
 
-    {tab === 1 && <div className={box}>{head(tx('Datos de la factura', 'Invoice data'), tx('La factura corresponde a la etapa 8 y debe relacionarse con una entrega aceptada por el cliente.', 'The invoice belongs to stage 8 and must relate to a delivery accepted by the client.'), <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 rounded-full px-2.5 py-1">{tx('Paso 8 • Factura', 'Step 8 • Invoice')}</span>)}
+    {tab === 1 && <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 sm:p-6 text-left space-y-5" data-testid="invoice-form">
+      <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-slate-100">
+        <div><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Datos de la factura', 'Invoice data')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('La factura corresponde a la etapa 8 y debe relacionarse con una entrega aceptada por el cliente.', 'The invoice belongs to stage 8 and must relate to a delivery accepted by the client.')}</p></div>
+        <span className="text-[10.5px] font-black text-purple-800 bg-purple-50 border border-purple-100 rounded-full px-3 py-1 shrink-0">{tx('Paso 8 · Factura', 'Step 8 · Invoice')}</span>
+      </div>
+      {cur ? <div data-testid="invoice-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-purple-200 bg-purple-50/60 text-xs font-black text-purple-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 shadow-inner shrink-0" />{tx(`Modo actualización: ${cur.folio} · ${cur.invoice_number} (${statusText(cur, en)}). Modifica la información y presiona Guardar.`, `Update mode: ${cur.folio} · ${cur.invoice_number} (${statusText(cur, en)}). Edit the information and press Save.`)}</div>
+        : <div data-testid="invoice-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-xs font-black text-emerald-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-300 to-emerald-600 shadow-inner shrink-0" />{tx('Modo nueva captura activo. Completa la información y presiona Guardar. Al terminar, el formulario se limpiará y bloqueará.', 'New capture mode active. Fill in the information and press Save. When finished, the form will be cleared and locked.')}</div>}
       <Wait s={reqs} /><Err s={reqs} />
-      <div className="space-y-1"><label htmlFor="inv-req" className="text-[11px] font-bold text-slate-500">{tx('Requisición entregada y aceptada', 'Delivered and accepted requisition')}</label><select id="inv-req" value={reqId} onChange={e => { setReqId(e.target.value); setInvSel(''); }} className="w-full p-2.5 bg-white border border-slate-200 rounded-2xl text-xs font-medium text-slate-700"><option value="">{tx('Seleccionar requisición...', 'Select requisition...')}</option>{(reqs.data?.items || []).map(r => <option key={r.id} value={r.id}>{r.folio} · {r.client_name} · {r.invoiced ? tx('facturada', 'invoiced') : r.ready ? tx('lista para facturar', 'ready to invoice') : tx('entrega/aceptación pendiente', 'delivery/acceptance pending')}</option>)}</select></div>
-      {!reqId && <div className="bg-blue-50/70 border-l-4 border-blue-500 rounded-r-xl p-3 text-xs text-slate-600 font-medium">{tx('Selecciona una requisición entregada y aceptada para cargar su contexto.', 'Select a delivered and accepted requisition to load its context.')}</div>}
+      {(() => { const lbl = (t, req, k, child, cls = '') => <label className={`block ${cls}`}><span className="block text-[11px] font-black text-slate-900 mb-1.5">{t}{req ? ' *' : ''}</span>{child}{tried && fv.errors[k] && <span role="alert" className="block text-[10.5px] text-rose-600 font-semibold mt-1">{fv.errors[k]}</span>}</label>;
+        const ctl = k => `w-full px-3.5 py-3 bg-white border rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${tried && fv.errors[k] ? 'border-rose-400' : 'border-slate-300'}`;
+        return <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {lbl(tx('Requisición entregada y aceptada', 'Delivered and accepted requisition'), true, 'requisition', <select id="inv-req" aria-label={tx('Requisición entregada y aceptada', 'Delivered and accepted requisition')} value={reqId} onChange={e => { setReqId(e.target.value); setInvSel(''); }} className={ctl('requisition')}><option value="">{tx('Seleccionar requisición...', 'Select requisition...')}</option>{(reqs.data?.items || []).map(r => <option key={r.id} value={r.id}>{r.folio} · {r.client_name} · {r.invoiced ? tx('facturada', 'invoiced') : r.ready ? tx('lista para facturar', 'ready to invoice') : tx('entrega/aceptación pendiente', 'delivery/acceptance pending')}</option>)}</select>, 'md:col-span-2')}
+          {lbl(tx('Número de factura', 'Invoice number'), true, 'number', <input type="text" aria-label={tx('Número de factura', 'Invoice number')} value={form.number} maxLength={40} placeholder={tx('Ej. A-1058', 'E.g. A-1058')} onChange={e => setF('number', e.target.value)} className={ctl('number')} />)}
+          {lbl(tx('UUID / Folio fiscal', 'UUID / Tax folio'), false, 'uuid', <input type="text" aria-label={tx('UUID / Folio fiscal', 'UUID / Tax folio')} value={form.uuid} maxLength={36} placeholder={tx('UUID del CFDI', 'CFDI UUID')} onChange={e => setF('uuid', e.target.value)} className={`${ctl('uuid')} font-mono`} />)}
+          {lbl(tx('Fecha de emisión', 'Issue date'), true, 'issue', <input type="date" aria-label={tx('Fecha de emisión', 'Issue date')} value={form.issue} max={day} onChange={e => setF('issue', e.target.value)} className={ctl('issue')} />)}
+          {lbl(tx('Fecha de vencimiento', 'Due date'), false, 'due', <input type="date" aria-label={tx('Fecha de vencimiento', 'Due date')} value={form.due} min={form.issue || undefined} onChange={e => setF('due', e.target.value)} className={ctl('due')} />)}
+          {lbl(tx('Moneda', 'Currency'), false, 'currency', <select aria-label={tx('Moneda', 'Currency')} value={form.currency} onChange={e => setF('currency', e.target.value)} className={ctl('currency')}>{CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}</select>)}
+          {lbl(tx('Estatus', 'Status'), false, 'status', <select aria-label={tx('Estatus', 'Status')} value={form.status} onChange={e => setF('status', e.target.value)} className={ctl('status')}>{STATUSES.map(([v, es, e2]) => <option key={v} value={v}>{en ? e2 : es}</option>)}</select>)}
+          {lbl(tx('Emisor / razón social', 'Issuer / legal name'), false, 'issuer', <input type="text" aria-label={tx('Emisor / razón social', 'Issuer / legal name')} value={form.issuer} maxLength={255} onChange={e => setF('issuer', e.target.value)} className={ctl('issuer')} />, 'md:col-span-2')}
+          {lbl(tx('Receptor / razón social', 'Receiver / legal name'), false, 'receiver', <input type="text" aria-label={tx('Receptor / razón social', 'Receiver / legal name')} value={form.receiver} maxLength={255} onChange={e => setF('receiver', e.target.value)} className={ctl('receiver')} />, 'md:col-span-2')}
+          {lbl('Subtotal', false, 'subtotal', <input type="text" inputMode="decimal" aria-label="Subtotal" value={form.subtotal} onChange={e => setF('subtotal', e.target.value)} className={ctl('subtotal')} />)}
+          {lbl(tx('Impuestos', 'Taxes'), false, 'taxes', <input type="text" inputMode="decimal" aria-label={tx('Impuestos', 'Taxes')} value={form.taxes} onChange={e => setF('taxes', e.target.value)} className={ctl('taxes')} />)}
+          {lbl('Total', true, 'total', <input type="text" inputMode="decimal" aria-label="Total" value={form.total} onChange={e => setF('total', e.target.value)} className={ctl('total')} />)}
+          {lbl(tx('Condiciones / método de pago', 'Terms / payment method'), false, 'terms', <input type="text" aria-label={tx('Condiciones / método de pago', 'Terms / payment method')} value={form.terms} maxLength={255} placeholder={tx('Ej. Transferencia · Crédito 30 días', 'E.g. Transfer · 30-day credit')} onChange={e => setF('terms', e.target.value)} className={ctl('terms')} />)}
+          {lbl(tx('Observaciones', 'Notes'), false, 'notes', <textarea rows={3} aria-label={tx('Observaciones', 'Notes')} value={form.notes} maxLength={2100} placeholder={tx('Notas fiscales, referencias, orden de compra, recepción o aclaraciones.', 'Tax notes, references, purchase order, receipt or clarifications.')} onChange={e => setF('notes', e.target.value)} className={ctl('notes')} />, 'md:col-span-4')}
+        </div>; })()}
+
+      {!reqId && <div className="bg-blue-50/70 border-l-4 border-blue-600 rounded-xl p-3.5 text-xs text-slate-700">{tx('Selecciona una requisición entregada y aceptada para cargar su contexto.', 'Select a delivered and accepted requisition to load its context.')}</div>}
       <Wait s={ctx} /><Err s={ctx} />
-      {ctx.data && <div data-testid="invoice-context" className="space-y-4">
-        <div className={`border-l-4 rounded-r-xl p-3 text-xs font-medium ${ctx.data.readiness?.ready ? 'bg-emerald-50/70 border-emerald-500 text-emerald-800' : 'bg-amber-50/70 border-amber-500 text-amber-800'}`}>
-          {ctx.data.requisition.folio} · {ctx.data.requisition.client_name} · {tx('OC', 'POs')}: {show(ctx.data.readiness?.purchase_orders)} — {ctx.data.readiness?.ready ? tx('Recibida al 100 % y aceptada por el cliente.', 'Received 100% and accepted by the client.') : `${ctx.data.readiness?.received ? '' : tx('Recepción incompleta. ', 'Incomplete receipt. ')}${ctx.data.readiness?.accepted ? '' : tx('Entrega no aceptada.', 'Delivery not accepted.')}`}
-          {ctx.data.deliveries.length > 0 && <div className="text-[11px] mt-1">{tx('Entregas', 'Deliveries')}: {ctx.data.deliveries.map(d => `${d.folio} (${ymd(d.date)} · ${acceptLabel(d.acceptance_status, en)})`).join(' · ')}</div>}
+      {reqId && cd && <div data-testid="invoice-context" className="space-y-3">
+        <div className={`border-l-4 rounded-xl p-3.5 text-xs font-medium ${cd.readiness?.ready ? 'bg-emerald-50/70 border-emerald-500 text-emerald-800' : 'bg-amber-50/70 border-amber-500 text-amber-800'}`}>
+          {cd.requisition.folio} · {cd.requisition.client_name}{cd.requisition.project ? ` · ${cd.requisition.project}` : ''} · {tx('OC', 'POs')}: {show(cd.readiness?.purchase_orders)} — {cd.readiness?.ready ? tx('Recibida al 100 % y aceptada por el cliente.', 'Received 100% and accepted by the client.') : `${cd.readiness?.received ? '' : tx('Recepción incompleta. ', 'Incomplete receipt. ')}${cd.readiness?.accepted ? '' : tx('Entrega no aceptada.', 'Delivery not accepted.')}`}
+          {cd.deliveries.length > 0 && <div className="text-[11px] mt-1">{tx('Entregas', 'Deliveries')}: {cd.deliveries.map(d => `${d.folio} (${ymd(d.date)} · ${acceptLabel(d.acceptance_status, en)})`).join(' · ')}</div>}
         </div>
-        {ctx.data.invoices.length > 1 && <div className="flex flex-wrap gap-2">{ctx.data.invoices.map(v => <button key={v.id} type="button" aria-pressed={cur?.id === v.id} onClick={() => setInvSel(v.id)} className={`px-3 py-2 rounded-xl border text-left text-[11px] ${cur?.id === v.id ? 'border-purple-500 bg-purple-50/50' : 'border-slate-200 hover:border-purple-300'}`}><div className="font-black">{v.folio} · {v.invoice_number}</div><div className="text-slate-500">{money(v.total_amount, v.currency, en)} · {statusText(v, en)}</div></button>)}</div>}
-        {cur ? <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">{[[tx('Número de factura', 'Invoice number'), cur.invoice_number], [tx('UUID / Folio fiscal', 'UUID / Tax folio'), show(cur.fiscal_uuid)], [tx('Estatus', 'Status'), statusText(cur, en)]].map(([k, v]) => field(k, v))}</div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">{[[tx('Fecha de emisión', 'Issue date'), ymd(cur.issue_date)], [tx('Fecha de vencimiento', 'Due date'), ymd(cur.due_date)], [tx('Moneda', 'Currency'), cur.currency], [tx('Folio interno', 'Internal folio'), cur.folio]].map(([k, v]) => field(k, v))}</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{[[tx('Emisor / razón social', 'Issuer / legal name'), show(cur.issuer)], [tx('Receptor / razón social', 'Receiver / legal name'), show(cur.receiver)]].map(([k, v]) => field(k, v))}</div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">{[['Subtotal', money(cur.subtotal_amount, cur.currency, en)], [tx('Impuestos', 'Taxes'), money(cur.tax_amount, cur.currency, en)], ['Total', money(cur.total_amount, cur.currency, en)], [tx('Condiciones / método de pago', 'Terms / payment method'), show(cur.payment_terms)]].map(([k, v]) => field(k, v))}</div>
-          {field(tx('Observaciones', 'Notes'), show(cur.notes))}
-          <div className="border border-slate-200/80 rounded-2xl p-4 bg-slate-50/30 text-xs"><strong>{tx('Archivo de la factura', 'Invoice file')}:</strong> {fileText(cur.file)} · {tx('revisión', 'revision')} {cur.document_revision_number}<div className="text-[10px] text-slate-400 mt-1">{tx('El archivo es privado; su consulta queda bloqueada en este modo.', 'The file is private; viewing it is blocked in this mode.')}</div></div>
-        </> : <p className="text-xs text-amber-700 font-semibold">{tx('Esta requisición aún no tiene factura registrada.', 'This requisition has no invoice yet.')}</p>}
-        <div className="flex flex-wrap gap-2">{lockBtn(tx('Guardar factura', 'Save invoice'))}{lockBtn(tx('Calcular total', 'Calculate total'))}<button type="button" onClick={() => go(2)} className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-2xl">{tx('Ver matriz', 'View matrix')}</button></div>
+        <div className="flex flex-wrap items-center gap-2 text-[11px]"><span className="font-bold text-slate-600">{tx('Facturas registradas', 'Recorded invoices')}:</span>
+          {cd.invoices.map(v => <button key={v.id} type="button" aria-pressed={cur?.id === v.id} onClick={() => setInvSel(v.id)} className={`px-3 py-2 rounded-xl border text-left ${cur?.id === v.id ? 'border-purple-500 bg-purple-50/50' : 'border-slate-200 hover:border-purple-300 bg-white'}`}><span className="block font-black">{v.folio} · {v.invoice_number}</span><span className="block text-slate-500">{money(v.total_amount, v.currency, en)} · {statusText(v, en)}</span></button>)}
+          {!cd.invoices.length && <span className="text-slate-500">{tx('ninguna todavía.', 'none yet.')}</span>}
+          {cur && <span className="font-bold"><button type="button" onClick={() => setInvSel('')} className="px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100">+ {tx('Nueva factura', 'New invoice')}</button></span>}
+        </div>
       </div>}
+
+      <div className="p-4 sm:p-5 border border-dashed border-slate-300 rounded-2xl bg-slate-50/40 space-y-3">
+        <div><span className="block text-xs font-black text-slate-900">{tx('Archivo de la factura', 'Invoice file')}{cur ? '' : ' *'}</span><span className="block text-[10px] text-slate-500 mt-0.5">{tx('Adjunta el archivo de la factura. Se permiten PDF, XML o imagen (máx. 10 MB). Se revisa en tu navegador; no se sube mientras el registro esté bloqueado.', 'Attach the invoice file. PDF, XML or image allowed (max 10 MB). It is checked in your browser; it is not uploaded while recording is blocked.')}</span></div>
+        <input ref={fileRef} type="file" aria-label={tx('Archivo de la factura', 'Invoice file')} accept={[...FILE_TYPES, '.pdf', '.xml', '.png', '.jpg', '.jpeg'].join(',')} onChange={e => setF('file', e.target.files?.[0] || null)} className="block w-full text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-2 py-2 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border file:border-slate-300 file:bg-slate-50 file:text-slate-700 file:font-semibold" />
+        <div data-testid="invoice-file" className="px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-600">{form.file ? `${form.file.name} · ${form.file.type || tx('tipo desconocido', 'unknown type')} · ${fileSize(form.file.size)}` : cur?.file ? tx(`Archivo registrado (privado): ${fileText(cur.file)} · revisión ${cur.document_revision_number}. Su descarga sigue bloqueada; adjunta uno nuevo solo para reemplazarlo.`, `Recorded file (private): ${fileText(cur.file)} · revision ${cur.document_revision_number}. Downloading it stays blocked; attach a new one only to replace it.`) : tx('No se ha cargado ningún archivo de factura.', 'No invoice file has been loaded.')}</div>
+        {tried && fv.errors.file && <p role="alert" className="text-[10.5px] text-rose-600 font-semibold">{fv.errors.file}</p>}
+        <div className="flex flex-wrap gap-2 text-xs font-black"><button type="button" onClick={viewFile} disabled={!previewType(form.file)} title={form.file && !previewType(form.file) ? tx('Tipo de archivo no permitido', 'File type not allowed') : undefined} className="px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed">👁 {tx('Ver archivo', 'View file')}</button><button type="button" onClick={removeFile} disabled={!form.file} className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-sm disabled:opacity-40 disabled:cursor-not-allowed">🗑 {tx('Quitar archivo', 'Remove file')}</button></div>
+      </div>
+
+      {tried && fv.warnings.map(w => <p key={w} className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">{w}</p>)}
+      {saveMsg && <p role={saveMsg.kind === 'error' ? 'alert' : 'status'} data-testid="invoice-save-msg" className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${saveMsg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : saveMsg.kind === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>{saveMsg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{saveMsg.text}</span></p>}
+      <div className="flex flex-wrap gap-3 pt-1 text-sm font-black">
+        <button type="button" onClick={saveInvoice} className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">💾</span>{tx('Guardar factura', 'Save invoice')}</button>
+        <button type="button" onClick={clearForm} className="px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm flex items-center gap-2"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
+        <button type="button" onClick={calcTotal} className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl flex items-center gap-2"><span aria-hidden="true">🧮</span>{tx('Calcular total', 'Calculate total')}</button>
+        <button type="button" onClick={() => go(2)} className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl flex items-center gap-2"><span aria-hidden="true">📋</span>{tx('Ver matriz', 'View matrix')}</button>
+      </div>
     </div>}
 
     {tab === 2 && <div className={box}>{head(tx('Matriz de facturas', 'Invoice matrix'), tx('Concentrado de facturas relacionadas con requisiciones, órdenes de compra y entregas aceptadas.', 'Invoices related to requisitions, purchase orders and accepted deliveries.'), lockBtn(tx('Nueva factura', 'New invoice')))}

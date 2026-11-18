@@ -74,23 +74,99 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     check('sin enlaces de descarga', await page.getByTestId('invoice-detail').locator('a[href]').count() === 0);
     await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
 
-    // 1 · Registro de factura (contexto de la requisición)
+    // 1 · Registro de factura (formulario del diseño; guardar valida y NO escribe)
     await page.getByRole('button', { name: /Registro de factura/ }).click();
     const reqs = await api('/api/v1/invoices/requisitions');
     const r = reqs.items.find(x => x.folio === 'QA01-REQ-2026-SF4EA4');
+    const form = page.getByTestId('invoice-form');
+    await form.waitFor();
+    const ft = flat(await form.innerText());
+    check('encabezado del diseño: datos, etapa 8 y paso', ['Datos de la factura', 'La factura corresponde a la etapa 8', 'Paso 8 · Factura'].every(x => ft.includes(x)), ft.slice(0, 300));
+    check('modo nueva captura activo', (await page.getByTestId('invoice-mode').innerText()).includes('Modo nueva captura activo'));
+    check('aviso para seleccionar requisición', await page.getByText('Selecciona una requisición entregada y aceptada para cargar su contexto.').isVisible());
+    const iv = l => form.getByLabel(l, { exact: true }).inputValue();
+    const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+    check('valores iniciales: emisión hoy, MXN, Registrada', await iv('Fecha de emisión') === today && await iv('Moneda') === 'MXN' && await iv('Estatus') === 'registered');
+    for (const [l, ph] of [['Número de factura', 'Ej. A-1058'], ['UUID / Folio fiscal', 'UUID del CFDI'], ['Condiciones / método de pago', 'Ej. Transferencia · Crédito 30 días']]) check(`placeholder "${ph}"`, await form.getByLabel(l, { exact: true }).getAttribute('placeholder') === ph);
+    check('sin archivo cargado', (await page.getByTestId('invoice-file').innerText()).includes('No se ha cargado ningún archivo de factura.'));
+    check('"Ver archivo" y "Quitar archivo" deshabilitados sin archivo', await form.getByRole('button', { name: /Ver archivo/ }).isDisabled() && await form.getByRole('button', { name: /Quitar archivo/ }).isDisabled());
+    for (const t of ['Guardar factura', 'Limpiar', 'Calcular total', 'Ver matriz']) check(`botón "${t}" habilitado`, await form.getByRole('button', { name: new RegExp(t) }).isEnabled());
+    await form.getByRole('button', { name: /Guardar factura/ }).click();
+    check('guardar vacío: exige la requisición (validación)', (await page.getByTestId('invoice-save-msg').innerText()).includes('Selecciona la requisición entregada y aceptada.'));
+    check('errores por campo visibles', await form.getByRole('alert').filter({ hasText: 'Indica el número de factura.' }).count() === 1 && await form.getByRole('alert').filter({ hasText: /Adjunta el archivo de la factura/ }).count() === 1);
+
+    const ctxRes = page.waitForResponse(x => x.url().endsWith(`/api/v1/invoices/requisitions/${r.id}`));
     await page.getByLabel('Requisición entregada y aceptada').selectOption(r.id);
+    check('contexto de la requisición desde MariaDB (200)', (await ctxRes).status() === 200);
     await page.getByTestId('invoice-context').waitFor();
+    const cx = await api(`/api/v1/invoices/requisitions/${r.id}`);
+    const lastActive = cx.invoices.filter(x => x.state !== 'cancelled').at(-1);
+    check('nueva captura: receptor = cliente; emisor y moneda de la última factura vigente', await iv('Receptor / razón social') === cx.requisition.client_name && await iv('Emisor / razón social') === (lastActive?.issuer || '') && await iv('Moneda') === (lastActive?.currency || 'MXN'));
     const chips = flat(await page.getByTestId('invoice-context').innerText());
     check('requisición con varias facturas permite elegir (FAC-QA-0001/0002/0003)', ['FAC-QA-0001', 'FAC-QA-0002', 'FAC-QA-0003'].every(x => chips.includes(x)), chips.slice(0, 300));
+    check('contexto: recibida y aceptada y entrega con aceptación traducida', chips.includes('Recibida al 100 % y aceptada por el cliente.') && chips.includes('ENT-QA-0001 (2026-10-22 · Aceptada)'), chips.slice(0, 400));
     await page.getByTestId('invoice-context').getByRole('button', { name: /FAC-QA-0001/ }).click();
-    await page.getByTestId('invoice-context').getByText(f1.fiscal_uuid).waitFor();
-    const ct = flat(await page.getByTestId('invoice-context').innerText());
-    check('contexto: recibida y aceptada, entrega y datos de la factura vigente', ['Recibida al 100 % y aceptada por el cliente.', 'ENT-QA-0001', f1.invoice_number, f1.fiscal_uuid, 'Grupo Gerez QA', money(f1.total_amount, 'USD'), 'Transferencia · Crédito 30 días'].every(x => ct.includes(x)), ct.slice(0, 600));
-    check('entrega con aceptación traducida', ct.includes('ENT-QA-0001 (2026-10-22 · Aceptada)'));
-    check('"Guardar factura" bloqueado', await page.getByRole('button', { name: /Guardar factura/ }).isDisabled());
-    const r2 = reqs.items.find(x => !x.ready);
-    if (r2) { await page.getByLabel('Requisición entregada y aceptada').selectOption(r2.id); await page.getByTestId('invoice-context').getByText(r2.folio).first().waitFor(); check('requisición no lista: advierte recepción/aceptación pendiente', flat(await page.getByTestId('invoice-context').innerText()).match(/Recepción incompleta|Entrega no aceptada/)); }
+    await page.getByTestId('invoice-mode').filter({ hasText: 'Modo actualización: FAC-QA-0001' }).waitFor();
+    check('modo actualización con los datos registrados', await iv('Número de factura') === f1.invoice_number && await iv('UUID / Folio fiscal') === f1.fiscal_uuid && await iv('Emisor / razón social') === 'Grupo Gerez QA' && Number(await iv('Total')) === Number(f1.total_amount) && await iv('Moneda') === 'USD' && await iv('Condiciones / método de pago') === 'Transferencia · Crédito 30 días' && await iv('Estatus') === 'pending_payment');
+    check('archivo registrado privado (sin descarga)', (await page.getByTestId('invoice-file').innerText()).includes('Archivo registrado (privado)') && await form.locator('a[href]').count() === 0);
+    await form.getByRole('button', { name: /Guardar factura/ }).click();
+    check('sin cambios: "No hay cambios que guardar."', (await page.getByTestId('invoice-save-msg').innerText()).includes('No hay cambios que guardar.'));
+    await form.getByLabel('Observaciones', { exact: true }).fill('Prueba E2E sintética');
+    await form.getByRole('button', { name: /Guardar factura/ }).click();
+    const um = flat(await page.getByTestId('invoice-save-msg').innerText());
+    check('actualización validada pero NO guardada (bloqueo comercial)', um.includes('Datos validados, pero no se guardó la actualización de FAC-QA-0001 (observaciones)') && um.includes('escritura comercial bloqueada'), um);
+
+    await page.getByRole('button', { name: /Nueva factura/ }).first().click();
+    await page.getByTestId('invoice-mode').filter({ hasText: 'Modo nueva captura activo' }).waitFor();
+    check('nueva factura: formulario limpio en la misma requisición', await iv('Número de factura') === '' && await iv('Observaciones') === '' && await page.getByLabel('Requisición entregada y aceptada').inputValue() === r.id);
+    check('nueva factura: vuelve a tomar receptor/emisor/moneda del contexto', await iv('Receptor / razón social') === cx.requisition.client_name && await iv('Emisor / razón social') === (lastActive?.issuer || '') && await iv('Moneda') === (lastActive?.currency || 'MXN'));
+    await form.getByLabel('Número de factura', { exact: true }).fill(f1.invoice_number);
+    await form.getByLabel('Subtotal', { exact: true }).fill('100');
+    await form.getByLabel('Impuestos', { exact: true }).fill('16');
+    await form.getByRole('button', { name: /Calcular total/ }).click();
+    check('Calcular total = subtotal + impuestos', await iv('Total') === '116.00');
+    await form.getByRole('button', { name: /Guardar factura/ }).click();
+    check('número duplicado entre facturas vigentes', (await page.getByTestId('invoice-save-msg').innerText()).includes('Ya existe una factura vigente con ese número'));
+    await form.getByLabel('Número de factura', { exact: true }).fill('QA-E2E-1058');
+    await form.getByLabel('Total', { exact: true }).fill('120');
+    await form.getByRole('button', { name: /Guardar factura/ }).click();
+    check('total incongruente con subtotal + impuestos', (await page.getByTestId('invoice-save-msg').innerText()).includes('no coincide con subtotal + impuestos (116.00)'));
+    await form.getByLabel('Total', { exact: true }).fill('116');
+    await form.getByLabel('Archivo de la factura').setInputFiles({ name: 'falsa.pdf', mimeType: 'text/html', buffer: Buffer.from('<script>alert(1)</script>') });
+    check('archivo HTML disfrazado: "Ver archivo" deshabilitado', await form.getByRole('button', { name: /Ver archivo/ }).isDisabled());
+    await form.getByRole('button', { name: /Guardar factura/ }).click();
+    check('archivo HTML disfrazado: rechazado', (await page.getByTestId('invoice-save-msg').innerText()).includes('El archivo debe ser PDF, XML o imagen'));
+    await form.getByLabel('Archivo de la factura').setInputFiles({ name: 'factura-qa.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n%sintetico QA\n%%EOF\n') });
+    check('archivo mostrado (nombre, tipo, tamaño)', /factura-qa\.pdf · application\/pdf · \d+ B/.test(await page.getByTestId('invoice-file').innerText()));
+    // Chromium sin interfaz descarga los PDF en lugar de mostrarlos: la vista previa se comprueba con una imagen PNG.
+    await form.getByLabel('Archivo de la factura').setInputFiles({ name: 'factura-qa.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64') });
+    const pop = context.waitForEvent('page', { timeout: 8000 });
+    await form.getByRole('button', { name: /Ver archivo/ }).click();
+    const pv = await pop; await pv.waitForURL(/^blob:/, { timeout: 8000 }).catch(() => {});
+    check('"Ver archivo" abre vista previa local (blob:, mismo archivo, sin red)', pv.url().startsWith('blob:') && await pv.locator('img').count() === 1, pv.url()); await pv.close();
+    await form.getByLabel('Archivo de la factura').setInputFiles({ name: 'factura-qa.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n%sintetico QA\n%%EOF\n') });
+    await form.getByRole('button', { name: /Guardar factura/ }).click();
+    const nm = flat(await page.getByTestId('invoice-save-msg').innerText());
+    check('registro validado pero NO guardado ni archivo subido', nm.includes('Datos validados, pero no se guardó el registro de la factura QA-E2E-1058') && nm.includes('El archivo no se subió.'), nm);
     await shot(page, 'fac_1_registro');
+    await form.getByRole('button', { name: /Quitar archivo/ }).click();
+    check('"Quitar archivo" limpia la selección', (await page.getByTestId('invoice-file').innerText()).includes('No se ha cargado ningún archivo de factura.') && await form.getByLabel('Archivo de la factura').inputValue() === '');
+    const r2 = reqs.items.find(x => !x.ready);
+    if (r2) {
+      await page.getByLabel('Requisición entregada y aceptada').selectOption(r2.id); await page.getByTestId('invoice-context').getByText(r2.folio).first().waitFor();
+      check('requisición no lista: advierte recepción/aceptación pendiente', flat(await page.getByTestId('invoice-context').innerText()).match(/Recepción incompleta|Entrega no aceptada/));
+      check('al cambiar de requisición conserva lo capturado y toma el receptor nuevo', await iv('Número de factura') === 'QA-E2E-1058' && await iv('Receptor / razón social') === r2.client_name);
+      await form.getByRole('button', { name: /Guardar factura/ }).click();
+      check('requisición no lista: no puede facturarse', (await page.getByTestId('invoice-save-msg').innerText()).includes('no puede facturarse'));
+    }
+    await form.getByRole('button', { name: /Limpiar/ }).click();
+    check('Limpiar: requisición y campos vacíos', await page.getByLabel('Requisición entregada y aceptada').inputValue() === '' && await iv('Número de factura') === '' && await iv('Subtotal') === '' && await page.getByText('Selecciona una requisición entregada y aceptada para cargar su contexto.').isVisible());
+    await page.setViewportSize({ width: 390, height: 900 });
+    check('registro sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await form.getByRole('button', { name: /Ver matriz/ }).click();
+    await page.getByRole('row').filter({ hasText: 'FAC-QA-0001' }).waitFor();
+    check('"Ver matriz" abre la Matriz de facturas', await page.getByText('Concentrado de facturas relacionadas').isVisible());
 
     // 3 · Control
     const cl = page.waitForResponse(r => /\/invoices\/control$/.test(r.url()));
