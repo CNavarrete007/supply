@@ -228,10 +228,39 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     } else check('emisión: sin requisiciones listas', ibt.includes('No hay requisiciones aprobadas por el cliente con adjudicación definitiva.'));
     await shot(page, 'oc_2_emision');
 
-    // Control de autorización
+    // 3 · Control de autorización (diseño): cuatro alertas con conteo del servidor y detalle desplegable
+    const iss3 = await api('/api/v1/purchase-orders/issuance');
+    const ctr3 = (await api('/api/v1/purchase-orders?page=1&page_size=1')).summary.counters;
     await page.getByRole('button', { name: /Control de autorización/ }).first().click();
-    const ca = async l => Number((await page.getByText(l, { exact: true }).locator('xpath=preceding-sibling::span[1]').innerText()).trim());
-    check('control: contadores = MariaDB', await ca('adjudicaciones pendientes de OC.') === ctr.awards_without_po && await ca('órdenes generadas automáticamente.') === ctr.auto_generated && await ca('órdenes vencidas sin recepción.') === ctr.overdue_without_receipt);
+    const cv3 = page.getByTestId('po-control'); await cv3.waitFor();
+    const cvt3 = (await cv3.innerText()).replace(/\s+/g, ' ');
+    check('control: título, subtítulo y "Ver órdenes"', cvt3.includes('Control de autorización') && cvt3.includes('Revisiones previas y alertas para la emisión de órdenes.') && await cv3.getByRole('button', { name: /Ver órdenes/ }).isEnabled());
+    const bar = async k => (await page.getByTestId(`po-alert-${k}`).getByRole('button').first().innerText()).replace(/\s+/g, ' ');
+    for (const [k, c, t] of [['preselected', 'preselected_quotes', 'cotizaciones preseleccionadas o adjudicadas.'], ['awards', 'awards_without_po', 'adjudicaciones pendientes de OC.'], ['auto', 'auto_generated', 'órdenes generadas automáticamente con PDF.'], ['overdue', 'overdue_without_receipt', 'órdenes vencidas sin recepción.']])
+      check(`control: "${ctr3[c]} ${t}" = MariaDB`, (await bar(k)).startsWith(`${ctr3[c]} ${t}`), await bar(k));
+    check('control: barras en el orden y colores del diseño', (await cv3.locator('[data-testid^="po-alert-"]:not([data-testid^="po-alert-detail"])').evaluateAll(es => es.map(e => [e.dataset.testid, [...e.classList].find(c => /^border-l-(emerald|amber|blue|rose)/.test(c))]))).map(x => x.join(':')).join() === 'po-alert-preselected:border-l-emerald-600,po-alert-awards:border-l-amber-500,po-alert-auto:border-l-blue-600,po-alert-overdue:border-l-rose-600');
+    check('control: el detalle cuadra con el conteo (cotizaciones, OC automáticas, vencidas, partidas sin OC)', iss3.alerts.preselected_quotes.length === ctr3.preselected_quotes && iss3.alerts.auto_generated.length === ctr3.auto_generated && iss3.alerts.overdue_without_receipt.length === ctr3.overdue_without_receipt
+      && iss3.items.filter(i => !i.active_pos).reduce((n, i) => n + i.items, 0) === ctr3.awards_without_po);
+    await page.getByTestId('po-alert-preselected').getByRole('button').first().click();
+    const dp = (await page.getByTestId('po-alert-detail-preselected').innerText()).replace(/\s+/g, ' ');
+    check('control: detalle de cotizaciones preseleccionadas/adjudicadas (sin "No seleccionada")', iss3.alerts.preselected_quotes.every(q => dp.includes(q.folio) && dp.includes(q.supplier_name)) && !dp.includes('No seleccionada'), dp.slice(0, 300));
+    await page.getByTestId('po-alert-auto').getByRole('button').first().click();
+    const da = (await page.getByTestId('po-alert-detail-auto').innerText()).replace(/\s+/g, ' ');
+    check('control: detalle de OC automáticas con VER PDF', iss3.alerts.auto_generated.every(p => da.includes(p.folio)) && (await page.getByTestId('po-alert-detail-auto').getByRole('button', { name: /Ver PDF/ }).count()) === iss3.alerts.auto_generated.length, da.slice(0, 300));
+    if (iss3.alerts.auto_generated.length) {
+      const popA = context.waitForEvent('page'); await page.getByTestId('po-alert-detail-auto').getByRole('button', { name: /Ver PDF/ }).first().click();
+      const pa = await popA; check('control: VER PDF desde la alerta abre el PDF de la OC', !!pa); await pa.close().catch(() => {});
+    }
+    await page.getByTestId('po-alert-overdue').getByRole('button').first().click();
+    const dov = (await page.getByTestId('po-alert-detail-overdue').innerText()).replace(/\s+/g, ' ');
+    check('control: detalle de vencidas sin recepción (o vacío)', iss3.alerts.overdue_without_receipt.length ? iss3.alerts.overdue_without_receipt.every(p => dov.includes(p.folio) && dov.includes('días')) : dov.includes('Sin documentos en esta alerta.'), dov.slice(0, 200));
+    await page.getByTestId('po-alert-awards').getByRole('button').first().click();
+    const daw = (await page.getByTestId('po-alert-detail-awards').innerText()).replace(/\s+/g, ' ');
+    const pend3 = iss3.items.filter(i => !i.active_pos);
+    check('control: adjudicaciones sin OC con requisición, proveedor y aprobación del cliente', pend3.every(i => daw.includes(i.folio) && daw.includes(i.supplier_name)) && pend3.every(i => iss3.requisitions.find(r => r.id === i.requisition_id)?.client_approved || daw.includes('Espera aprobación del cliente')), daw.slice(0, 300));
+    await shot(page, 'oc_3_control');
+    await cv3.getByRole('button', { name: /Ver órdenes/ }).click();
+    check('control: "Ver órdenes" abre la Matriz de órdenes', await page.getByText('Matriz de órdenes de compra').first().isVisible());
 
     // Enmiendas
     await page.getByRole('button', { name: /Modificaciones \/ Enmiendas/ }).first().click();

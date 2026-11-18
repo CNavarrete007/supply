@@ -4,6 +4,7 @@ import { listPurchaseOrders, poIssuance, poTasks, poDetail } from './api';
 import { PO_STATES, poState, buyerCardList, filterBuyers, buyersBadge, rangeText, buyerCaption, editBlock, requestBlock, modifyBlock, deleteBlock, folioConfirmed, REQUEST_TYPES, URGENCIES, IMPACTS, emptyRequest, approverOptions, validateRequest, requestLockedText, validateEdit, editForm } from './poMatrix.mjs';
 import { allUsers, authMe } from '../usersRoles/api.js';
 import { buildPoPdf, pdfName, loadPoLogo } from './poPdf.mjs';
+import { controlAlerts, partialNote, poLine, overdueDays, otherChecks } from './poControl.mjs';
 import { money, opLabel, statusTone, progressOf, poPrintHtml, revLabel } from './model.mjs';
 import { issuanceOptions, winningSuppliers, supplierTotal, toGenerate, validateIssuance, issuanceLockedText } from './poIssuance.mjs';
 
@@ -121,6 +122,10 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     if (tab === 4) { setFam(x => ({ ...x, status: 'loading' })); listPurchaseOrders({ pageSize: 50, scope: 'all', sort: 'recent' }, c.signal).then(v => !c.signal.aborted && setFam({ status: 'ready', data: v, error: null })).catch(e => !c.signal.aborted && setFam({ status: 'error', data: null, error: e })); }
     return () => c.abort();
   }, [tab, revision]);
+  // 3 · Control de autorización: alertas del servidor; al desplegarlas, los documentos que las originan.
+  const [openAlert, setOpenAlert] = useState('');
+  const alerts = useMemo(() => controlAlerts(ctr, iss.status === 'ready' ? iss.data : null, en), [ctr, iss, en]);
+  const todayLocal = (() => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; })();
   // 1 · Emisión: requisición aprobada → proveedores ganadores (1 OC por proveedor). Crear OC valida y no escribe.
   const [issReq, setIssReq] = useState(''); const [issMsg, setIssMsg] = useState(null);
   const io = useMemo(() => issuanceOptions(iss.data || {}, en), [iss.data, en]);
@@ -364,14 +369,31 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     </div>}
 
     {/* 3 · CONTROL DE AUTORIZACIÓN */}
-    {tab === 3 && <div className={box}>
-      <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-slate-100"><div><h3 className="text-base font-extrabold text-slate-900">{tx('Control de autorización', 'Authorization control')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Revisiones previas y alertas para la emisión de órdenes.', 'Prior reviews and alerts for issuing orders.')}</p></div><button type="button" onClick={() => setTab(2)} className="px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold text-xs rounded-xl">{tx('Ver órdenes', 'View orders')}</button></div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {[[ctr.preselected_quotes, tx('cotizaciones preseleccionadas o adjudicadas.', 'preselected or awarded quotes.'), 'border-l-blue-600 bg-blue-50/40'], [ctr.awards_without_po, tx('adjudicaciones pendientes de OC.', 'awards pending PO.'), 'border-l-amber-500 bg-amber-50/40'], [ctr.auto_generated, tx('órdenes generadas automáticamente.', 'auto-generated orders.'), 'border-l-emerald-500 bg-emerald-50/40'], [ctr.overdue_without_receipt, tx('órdenes vencidas sin recepción.', 'overdue orders without receipt.'), 'border-l-rose-500 bg-rose-50/40']].map(([n, l, cls]) =>
-          <div key={l} className={`p-4 rounded-xl border border-slate-100 border-l-4 ${cls}`}><span className="text-2xl font-black text-slate-900 tabular-nums">{d ? n ?? 0 : '…'}</span><p className="text-xs text-slate-600 font-medium mt-1">{l}</p></div>)}
+    {tab === 3 && <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4" data-testid="po-control">
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-3 pb-4 border-b border-slate-100">
+        <div className="min-w-0 flex-1"><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Control de autorización', 'Authorization control')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Revisiones previas y alertas para la emisión de órdenes.', 'Prior reviews and alerts for issuing orders.')}</p></div>
+        <span className="text-sm font-black shrink-0"><button type="button" onClick={() => setTab(2)} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl shadow-2xs flex items-center gap-2"><span aria-hidden="true">📋</span>{tx('Ver órdenes', 'View orders')}</button></span>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">{[[ctr.without_buyer, tx('OC sin comprador asignado', 'POs without buyer')], [ctr.reconciliation_pending, tx('OC con conciliación pendiente', 'POs pending reconciliation')], [ctr.change_pending, tx('OC con cambio pendiente', 'POs with pending change')]].map(([n, l]) => <div key={l} className="p-3 rounded-xl border border-slate-200 flex justify-between"><span className="text-slate-600 font-medium">{l}</span><strong className="tabular-nums">{d ? n ?? 0 : '…'}</strong></div>)}</div>
-      <p className="text-[11px] text-slate-400">{tx('Conteos sobre la versión vigente de cada OC (las canceladas y sustituidas no cuentan como vencidas).', 'Counts over the current version of each PO (cancelled and superseded are not counted as overdue).')}</p>
+      <Loading on={list.status === 'loading' && !d} /><Err e={list.error} />
+      <div className="space-y-2.5">{alerts.map(a => { const on = openAlert === a.key; const tone = { emerald: 'border-l-emerald-600 bg-emerald-50/80 hover:bg-emerald-50', amber: 'border-l-amber-500 bg-amber-50/80 hover:bg-amber-50', blue: 'border-l-blue-600 bg-blue-50/80 hover:bg-blue-50', rose: 'border-l-rose-600 bg-rose-50/80 hover:bg-rose-50' }[a.tone];
+        return <div key={a.key} data-testid={`po-alert-${a.key}`} className={`rounded-xl border-l-4 ${tone}`}>
+          <button type="button" aria-expanded={on} onClick={() => setOpenAlert(on ? '' : a.key)} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left text-sm text-slate-800">
+            <span><strong className="font-black tabular-nums text-slate-900">{d ? a.count : '…'}</strong> {a.text}</span>
+            <span className="text-[11px] font-bold text-slate-500 shrink-0">{on ? tx('Ocultar', 'Hide') : tx('Ver detalle', 'View details')} {on ? '▴' : '▾'}</span>
+          </button>
+          {on && <div className="px-4 pb-4 space-y-2" data-testid={`po-alert-detail-${a.key}`}>
+            {!a.rows ? <Loading on /> : !a.rows.length ? <p className="text-xs text-slate-500">{tx('Sin documentos en esta alerta.', 'No documents in this alert.')}</p> : <>
+              {a.key === 'preselected' && a.rows.map(q => <div key={q.folio} className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-white border border-slate-100 text-xs"><span><strong className="font-black">{q.folio}</strong> · {q.supplier_name} · {q.requisition}</span><span className="flex items-center gap-2"><span className="text-slate-500">{show(q.status)}</span>{q.awarded && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">{tx('Adjudicada', 'Awarded')}</span>}<strong className="tabular-nums">{money(q.total_amount, q.currency, en)}</strong></span></div>)}
+              {a.key === 'awards' && a.rows.map(r => <div key={r.key} className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-white border border-slate-100 text-xs"><span><strong className="font-black">{r.requisition}</strong> · {r.client} · {r.supplier} · {r.items} {tx('partida(s)', 'item(s)')} · <strong>{money(r.amount, r.currencies, en)}</strong>{r.cancelledPo && <span className="text-slate-500"> · {tx('OC cancelada/sustituida', 'cancelled/superseded PO')}: {r.cancelledPo}</span>}</span>
+                {r.approved ? <span className="text-[11px] font-black"><button type="button" onClick={() => { setIssReq(r.requisitionId); setIssMsg(null); setTab(1); }} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">{tx('Emitir OC →', 'Issue PO →')}</button></span> : <span className="text-[10.5px] font-bold text-amber-800 bg-amber-100 border border-amber-200 rounded-full px-2.5 py-1">{tx('Espera aprobación del cliente', 'Awaiting client approval')}</span>}</div>)}
+              {(a.key === 'auto' || a.key === 'overdue') && a.rows.map(po => { const late = overdueDays(po.commitment_date, todayLocal); const busy = pdfBusy === `${po.id}:view`; return <div key={po.id} className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-white border border-slate-100 text-xs"><span>{poLine(po, en)}{po.buyer_name ? ` · ${po.buyer_name}` : ''}{a.key === 'overdue' ? <span className="text-rose-700 font-bold"> · {tx('Compromiso', 'Commitment')} {ymd(po.commitment_date)} ({late} {tx('días', 'days')})</span> : <span className="text-slate-500"> · {tx('Emisión', 'Issued')} {ymd(po.order_date)}</span>}</span>
+                <span className="text-[11px] font-black"><button type="button" disabled={busy} onClick={() => pdfOf(po, 'view')} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50">{busy ? '…' : tx('Ver PDF', 'View PDF')}</button></span></div>; })}
+              {partialNote(a, en) && <p className="text-[11px] text-amber-700">{partialNote(a, en)}</p>}
+            </>}
+          </div>}
+        </div>; })}</div>
+      {otherChecks(ctr, en).length > 0 && <div className="flex flex-wrap gap-2 text-[11px]">{otherChecks(ctr, en).map(c => <span key={c.text} className="px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-slate-700"><strong className="tabular-nums">{c.count}</strong> {c.text}</span>)}</div>}
+      <p className="text-[10.5px] text-slate-400">{tx('Conteos sobre la versión vigente de cada OC; las canceladas y sustituidas no cuentan como vencidas ni como OC generada. Una adjudicación solo se emite cuando el cliente aprobó la cotización.', 'Counts over the current version of each PO; cancelled and superseded POs count neither as overdue nor as generated. An award is only issued once the client approved the quote.')}</p>
     </div>}
 
     {/* 4 · ENMIENDAS */}

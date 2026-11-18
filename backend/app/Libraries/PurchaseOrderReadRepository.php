@@ -16,6 +16,13 @@ use RuntimeException;
  */
 final class PurchaseOrderReadRepository
 {
+    /**
+     * Supplier quote preselected / selected / awarded: legacy status or code, or an active definitive award. "No seleccionada" /
+     * "No adjudicada" do NOT count (the plain text match used to include them).
+     */
+    private const PRESELECTED = "(sq.status_code IN ('selected','preselected','awarded') OR (sq.legacy_status REGEXP 'seleccionad|adjudicad'"
+        . " AND sq.legacy_status NOT REGEXP '(^|[^[:alpha:]])no[[:space:]]+(pre)?(seleccionad|adjudicad)')"
+        . " OR EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=sq.organization_id AND aw.supplier_quote_id=sq.id AND aw.status_code='active' AND aw.superseded_at IS NULL))";
     private const CANCELLED = "LOWER(COALESCE(po.legacy_status,po.operational_status,'')) IN ('cancelada','sustituida','cancelled','superseded')";
     /**
      * Displayed status of a PO (design list): the original Apps Script status when present (Cancelada, Recibida, Enviada…),
@@ -163,11 +170,12 @@ final class PurchaseOrderReadRepository
         $awards = $this->rows(<<<'SQL'
             SELECT COUNT(*) AS awarded_items,COUNT(DISTINCT aw.supplier_id) AS winning_suppliers,
               COALESCE(SUM(NOT EXISTS (SELECT 1 FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
-                 WHERE pr.organization_id=aw.organization_id AND pr.requisition_id=aw.requisition_id AND po.supplier_id=aw.supplier_id)),0) AS awards_without_po
+                 WHERE pr.organization_id=aw.organization_id AND pr.requisition_id=aw.requisition_id AND po.supplier_id=aw.supplier_id
+                   AND LOWER(COALESCE(po.legacy_status,po.operational_status,'')) NOT IN ('cancelada','sustituida','cancelled','superseded'))),0) AS awards_without_po
             FROM awards aw WHERE aw.organization_id=? AND aw.status_code='active' AND aw.superseded_at IS NULL
             SQL, [$org])[0] ?? [];
         foreach ($awards as $k => $v) { $awards[$k] = (int) $v; }
-        $preselected = (int) ($this->rows("SELECT COUNT(*) AS n FROM supplier_quotes sq WHERE sq.organization_id=? AND (sq.legacy_status REGEXP 'Seleccionada|Preseleccionada|Adjudicada' OR sq.status_code IN ('selected','preselected','awarded'))", [$org])[0]['n'] ?? 0);
+        $preselected = (int) ($this->rows('SELECT COUNT(*) AS n FROM supplier_quotes sq WHERE sq.organization_id=? AND ' . self::PRESELECTED, [$org])[0]['n'] ?? 0);
         return ['statuses' => $statuses, 'states' => $states, 'buyers' => $buyers, 'money' => $money, 'counters' => $c + $awards + ['preselected_quotes' => $preselected]];
     }
 
@@ -195,7 +203,38 @@ final class PurchaseOrderReadRepository
             SQL, [$org]);
         $losing = (int) ($this->rows("SELECT COUNT(*) AS n FROM supplier_quotes sq WHERE sq.organization_id=? AND EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=sq.organization_id AND aw.requisition_id=sq.requisition_id AND aw.status_code='active') AND NOT EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=sq.organization_id AND aw.supplier_quote_id=sq.id AND aw.status_code='active')", [$org])[0]['n'] ?? 0);
         return ['items' => array_map(static function (array $r): array { $r['items'] = (int) $r['items']; return $r; }, $rows), 'losing_quotes' => $losing,
-            'requisitions' => $this->issuanceRequisitions($org), 'lines' => $this->issuanceLines($org)];
+            'requisitions' => $this->issuanceRequisitions($org), 'lines' => $this->issuanceLines($org), 'alerts' => $this->issuanceAlerts($org)];
+    }
+
+    /**
+     * Card 3 "Control de autorización": the documents behind each alert (same rules as summary counters; current version of
+     * each PO; at most 200 per list). Read-only.
+     */
+    private function issuanceAlerts(int $org): array
+    {
+        $noReceipt = 'NOT EXISTS (SELECT 1 FROM goods_receipts gr WHERE gr.organization_id=po.organization_id AND gr.purchase_order_id IN (SELECT s2.id FROM purchase_orders s2 WHERE s2.organization_id=po.organization_id AND s2.series_public_id=po.series_public_id))';
+        $base = 'SELECT e.public_id AS id,po.folio,po.version_number,po.legacy_revision_number,po.order_date,po.commitment_date,po.currency_code AS currency,po.total_amount,s.legal_name AS supplier_name,'
+            . self::person('po.buyer_user_id') . ' AS buyer_name,'
+            . '(SELECT GROUP_CONCAT(DISTINCT r.folio ORDER BY r.folio SEPARATOR \', \') FROM purchase_order_requisitions pr JOIN requisitions r ON r.id=pr.requisition_id AND r.organization_id=pr.organization_id WHERE pr.organization_id=po.organization_id AND pr.purchase_order_id=po.id) AS requisitions'
+            . self::from() . ' WHERE po.organization_id=? AND ' . self::LATEST;
+        $overdue = $this->rows($base . ' AND po.commitment_date<CURDATE() AND NOT ' . self::CANCELLED . ' AND ' . $noReceipt . ' ORDER BY po.commitment_date,po.id LIMIT 200', [$org]);
+        $auto = $this->rows($base . ' AND po.auto_generated=1 ORDER BY po.order_date DESC,po.id DESC LIMIT 200', [$org]);
+        $preselected = <<<'SQL'
+            SELECT sq.folio,s.legal_name AS supplier_name,r.folio AS requisition,COALESCE(NULLIF(TRIM(sq.legacy_status),''),sq.status_code) AS status,
+              sq.quote_date,sq.currency_code AS currency,sq.total_amount,
+              EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=sq.organization_id AND aw.supplier_quote_id=sq.id AND aw.status_code='active' AND aw.superseded_at IS NULL) AS awarded
+            FROM supplier_quotes sq
+            JOIN suppliers s ON s.id=sq.supplier_id AND s.organization_id=sq.organization_id
+            JOIN requisitions r ON r.id=sq.requisition_id AND r.organization_id=sq.organization_id
+            WHERE sq.organization_id=? AND %s
+            ORDER BY sq.quote_date DESC,sq.id DESC LIMIT 200
+            SQL;
+        $preselected = $this->rows(sprintf($preselected, self::PRESELECTED), [$org]);
+        foreach ($preselected as &$q) {
+            $q['awarded'] = (bool) $q['awarded'];
+        }
+        unset($q);
+        return ['overdue_without_receipt' => $overdue, 'auto_generated' => $auto, 'preselected_quotes' => $preselected];
     }
 
     /**

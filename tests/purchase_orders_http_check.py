@@ -77,6 +77,15 @@ try:
         and all(i['items'] == sum(1 for l in lines if l['requisition_id'] == i['requisition_id'] and l['supplier_id'] == i['supplier_id']) for i in iss['items']))
     check('emisión: importe adjudicado = suma de partidas', all(abs(float(i['awarded_amount']) - sum(float(l['subtotal']) for l in lines if l['requisition_id'] == i['requisition_id'] and l['supplier_id'] == i['supplier_id'])) < 0.01 for i in iss['items']))
     check('emisión: OC activa nunca es cancelada/sustituida', all(not i['active_pos'] or i['existing_pos'] for i in iss['items']))
+    al, cc = iss['alerts'], get(R + '?page=1&page_size=1')['summary']['counters']
+    check('control: cada alerta cuadra con su conteo (OC automáticas, vencidas sin recepción, cotizaciones, partidas sin OC vigente)',
+        len(al['auto_generated']) == min(200, cc['auto_generated']) and len(al['overdue_without_receipt']) == min(200, cc['overdue_without_receipt'])
+        and len(al['preselected_quotes']) == min(200, cc['preselected_quotes']) and sum(i['items'] for i in iss['items'] if not i['active_pos']) == cc['awards_without_po'])
+    check('control: "No seleccionada"/"No adjudicada" no cuentan como preseleccionadas; una cotización con adjudicación vigente sí',
+        not any(re.search(r'(^|\W)no\s+(pre)?(seleccionad|adjudicad)', q['status'] or '', re.I) for q in al['preselected_quotes'])
+        and all(any(q['folio'] == l['quote_folio'] for q in al['preselected_quotes']) for l in iss['lines']))
+    today = __import__('datetime').date.today().isoformat()
+    check('control: vencidas = compromiso anterior a hoy', all(p['commitment_date'] and str(p['commitment_date'])[:10] < today for p in al['overdue_without_receipt']))
     t = get(R + '/tasks'); check('tareas: forma', isinstance(t['responsible'], list) and isinstance(t['modification_requests'], list))
 finally:
     logout(adm)
