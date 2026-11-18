@@ -20,6 +20,7 @@ final class PurchaseOrderController extends ReadOnlyModuleController
             $f = $this->query([
                 'q' => [self::TEXT, ''],
                 'status' => [self::CODE_OR_ALL, 'all'],
+                'state' => ['/^(all|issued|sent|accepted|partially_received|received|cancelled|superseded|draft|other)$/D', 'all'],
                 'buyer' => ['/^(all|none|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/D', 'all'],
                 'sort' => ['/^(recent|oldest|amount)$/D', 'recent'],
                 'scope' => ['/^(current|all)$/D', 'current'],

@@ -29,7 +29,7 @@ adm = session(USER)
 try:
     get = lambda p: json.loads(adm.open(API + p).read())
     check('Master Admin: 200', all(status(adm, p) == 200 for p in EPS))
-    for bad in ['?x=1', '?page_size=51', '?sort=price', '?scope=x', '?buyer=abc', '?status=%27or', '/issuance?a=1', '/tasks?a=1']:
+    for bad in ['?x=1', '?page_size=51', '?sort=price', '?scope=x', '?buyer=abc', '?status=%27or', '?state=void', '/issuance?a=1', '/tasks?a=1']:
         check(f'422 con parámetro inválido ({bad})', status(adm, R + bad) == 422)
     check('sin rutas de escritura (POST/PUT/DELETE ≠ 2xx)', all(status(adm, R + s, m) >= 400 for s in ['', '/00000000-0000-4000-8000-000000000000'] for m in ['POST', 'PUT', 'DELETE']))
     cur, page, total = [], 1, None
@@ -43,6 +43,23 @@ try:
     check('resumen: estatus y compradores coherentes', sum(x['count'] for x in s['statuses']) == c['total'] and sum(b['count'] for b in s['buyers']) + c['without_buyer'] == c['total'] and all(0 <= b['received'] <= b['count'] for b in s['buyers']))
     check('montos por moneda excluyen canceladas/sustituidas', sum(m['orders'] for m in s['money']) == len([p for p in cur if (p['legacy_status'] or p['operational_status'] or '').lower() not in ('cancelada', 'sustituida', 'cancelled', 'superseded')]))
     check('detalle con UUID inexistente: 404', status(adm, R + '/00000000-0000-4000-8000-000000000000') == 404)
+    st = {x['code']: x['count'] for x in s['states']}
+    check('estatus efectivo (matriz): resumen = lista y cancelada por estatus original', sum(st.values()) == c['total'] and all(st.get(k, 0) == sum(1 for p in cur if p['state_key'] == k) for k in st)
+        and all(p['state_key'] == 'cancelled' for p in cur if 'cancel' in (p['legacy_status'] or '').lower()))
+    ok_state = True
+    for k, n in st.items():
+        f = get(f'{R}?page_size=50&state={k}'); ok_state &= f['total'] == n and all(p['state_key'] == k for p in f['items'])
+    check('filtro state= en el servidor = resumen', ok_state)
+    check('partidas: conteo y resumen de descripciones', all(isinstance(p['item_count'], int) and ((p['item_count'] == 0) == (p['item_summary'] is None)) for p in cur))
+    mods = {}
+    for p in cur:
+        for m in get(f"{R}/{p['id']}")['modification_requests']:
+            mods.setdefault((p['id'], m['status']), []).append(m['folio'])
+    check('solicitudes de modificación pendientes/aprobadas por serie = detalle', all(sorted((p['mod_pending'] or '').split(', ')) == sorted(mods.get((p['id'], 'pending'), [''])) and sorted((p['mod_approved'] or '').split(', ')) == sorted(mods.get((p['id'], 'approved'), [''])) for p in cur))
+    check('compradores: proveedores, requisiciones y monto por moneda = lista', all(
+        b['suppliers'] == len({p['supplier_id'] for p in cur if p['buyer_id'] == b['id']})
+        and {m['currency']: round(float(m['amount']), 2) for m in b['money']} == {k: round(sum(float(p['total_amount']) for p in cur if p['buyer_id'] == b['id'] and p['currency'] == k and (p['legacy_status'] or p['operational_status'] or '').lower() not in ('cancelada', 'sustituida', 'cancelled', 'superseded')), 2) for k in {p['currency'] for p in cur if p['buyer_id'] == b['id'] and (p['legacy_status'] or p['operational_status'] or '').lower() not in ('cancelada', 'sustituida', 'cancelled', 'superseded')}}
+        and {'phone', 'position', 'requisitions'} <= set(b) for b in s['buyers']))
     if cur:
         det = get(f"{R}/{cur[0]['id']}")
         check('detalle: partidas, versiones de la serie y documentos', {'item', 'items', 'versions', 'receipts', 'invoices', 'modification_requests'} <= set(det) and len(det['versions']) == cur[0]['versions'] and det['item']['folio'] == cur[0]['folio'])

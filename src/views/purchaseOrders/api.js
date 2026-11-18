@@ -8,8 +8,9 @@ async function getJson(path, signal) {
   }
   return body;
 }
-export function listPurchaseOrders({ page = 1, pageSize = 25, q = '', status = 'all', buyer = 'all', sort = 'recent', scope = 'current' } = {}, signal) {
+export function listPurchaseOrders({ page = 1, pageSize = 25, q = '', status = 'all', state = 'all', buyer = 'all', sort = 'recent', scope = 'current' } = {}, signal) {
   const p = new URLSearchParams({ page: String(page), page_size: String(pageSize), q, status, buyer, sort, scope });
+  if (state !== 'all') p.set('state', state);
   return getJson(`/api/v1/purchase-orders?${p}`, signal);
 }
 export const poIssuance = signal => getJson('/api/v1/purchase-orders/issuance', signal);

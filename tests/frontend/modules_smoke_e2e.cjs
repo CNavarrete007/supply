@@ -38,8 +38,10 @@ const MODULES = [
   { label: 'Suministros de proveedores', endpoints: ['catalogs/supplier-offerings\\?'],
     // La matriz muestra primero las tarjetas por proveedor (la tabla se abre desde una tarjeta): se verifica un proveedor real.
     expect: async r => (await r('/api/v1/catalogs/supplier-offerings?page=1&page_size=25&q=&status=all&supplier=all')).summary?.suppliers?.[0]?.name },
+  // Órdenes de Compra: la matriz abre primero las tarjetas por comprador (diseño del 18 nov 2026); se abre "Todas".
   { label: 'Órdenes de Compra', endpoints: ['purchase-orders\\?'],
-    expect: async r => (await r('/api/v1/purchase-orders?page=1&page_size=25')).items?.[0]?.folio },
+    prepare: async page => page.locator('[data-testid="po-buyer-card"][data-buyer="Todas las órdenes de compra"]').click(),
+    expect: async r => (await r('/api/v1/purchase-orders?page=1&page_size=15')).items?.[0]?.folio },
   { label: 'Cotizaciones y Comparativo', endpoints: ['quotes/rfq-contacts$'],
     expect: async r => (await r('/api/v1/quotes/rfq-contacts')).contacts?.find(c => c.name)?.name },
   { label: 'Recepción y Entrega', endpoints: ['reception/matrix\\?'],

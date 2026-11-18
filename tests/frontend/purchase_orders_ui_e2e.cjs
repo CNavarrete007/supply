@@ -1,5 +1,5 @@
 // Órdenes de Compra · E2E de interfaz (Chromium) contra Vite + API + MariaDB SINTÉTICAS. Solo lectura: toda petición /api
-// que no sea GET (salvo login/logout) se aborta. Valores esperados calculados desde la API (OC-QA-0001, OC-QA-0003 Rev. 2,
+// que no sea GET (salvo login/logout) se aborta. Valores esperados calculados desde la API (OC-QA-0001, OC-QA-0003 Rev. 1 = versión 2,
 // OC-QA-0009 cancelada, solicitud MOD-QA-0001 asignada a QA Admin A y la adjudicación sintética sin OC).
 // Uso: SF_UI=http://127.0.0.1:5173 SF_QA_PASSWORD=... [SF_SHOTS=<dir>] node tests/frontend/purchase_orders_ui_e2e.cjs
 const { chromium } = require('playwright');
@@ -35,45 +35,124 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     const head = await api('/api/v1/purchase-orders?page=1&page_size=50');
     const ctr = head.summary.counters;
 
-    const first = page.waitForResponse(r => /\/api\/v1\/purchase-orders\?page=1&page_size=25/.test(r.url()));
+    const first = page.waitForResponse(r => /\/api\/v1\/purchase-orders\?page=1&page_size=1&/.test(r.url()));
     await page.locator('nav button').filter({ hasText: /Órdenes de Compra$/ }).click();
     check('matriz consulta OC (200)', (await first).status() === 200);
     check('sin aviso de "pendiente de integración"', await page.getByText('Módulo pendiente de integración').count() === 0);
     for (const t of ['Emisión de orden de compra', 'Matriz de órdenes', 'Control de autorización', 'Modificaciones / Enmiendas', 'Revisión y autorización', 'Formato de Orden de Compra'])
       check(`tarjeta "${t}" visible`, await page.getByRole('button', { name: new RegExp(t) }).first().isVisible());
-    await page.getByText(`${head.total} órdenes (versión vigente)`).waitFor();
-    const row3 = page.getByRole('row').filter({ hasText: 'OC-QA-0003' });
-    const t3 = (await row3.innerText()).replace(/\s+/g, ' ');
-    check('fila: Rev. 2, requisición, proveedor, comprador, monto, avance de la serie', ['Rev. 2', 'QA02-REQ-2026-SCF210', 'Instrumentos Europa Sintética', 'QA Comprador', '$3,900.00 USD', '50% recibido', 'Emitida'].every(x => t3.includes(x)), t3);
-    check('solo la versión vigente de cada OC', await page.getByRole('row').filter({ hasText: 'OC-QA-0003' }).count() === 1);
-    check('OC cancelada muestra su estatus original', (await page.getByRole('row').filter({ hasText: 'OC-QA-0009' }).innerText()).includes('Cancelada'));
-    check('nueva orden, solicitar modificación y eliminar bloqueados', await page.getByRole('button', { name: /Nueva orden/ }).isDisabled() && await row3.getByRole('button', { name: /Solicitar modificaci/i }).isDisabled() && await row3.getByRole('button', { name: /Eliminar OC/i }).isDisabled());
-    const buyerCard = page.getByRole('button', { name: /QA Comprador/ });
-    const bt = (await buyerCard.innerText()).replace(/\s+/g, ' ');
+    // 2 · Matriz (diseño): compradores → matriz paginada del comprador elegido
+    const mx = page.getByTestId('po-matrix');
+    await mx.getByTestId('po-buyer-card').first().waitFor();
+    const mxt = (await mx.innerText()).replace(/\s+/g, ' ');
+    check('matriz: textos del diseño', ['Matriz de órdenes de compra', 'Organiza las órdenes primero por comprador', 'Idioma de Orden de Compra / Purchase Order language:', 'PDF: 100% en el idioma seleccionado', 'Órdenes de compra por comprador', 'Selecciona un comprador para consultar únicamente sus órdenes de compra.'].every(x => mxt.includes(x)), mxt.slice(0, 300));
+    check('matriz: "+ Nueva orden" y "← Volver a compradores" habilitados', await mx.getByRole('button', { name: /Nueva orden/ }).isEnabled() && await mx.getByRole('button', { name: /Volver a compradores/ }).isEnabled());
+    check('matriz: buscador de compradores del diseño', await mx.getByRole('searchbox', { name: 'Buscar comprador' }).getAttribute('placeholder') === 'Buscar comprador, correo, teléfono o puesto...');
+    const nB = head.summary.buyers.length; const comp = n => `${n} comprador${n === 1 ? '' : 'es'}`;
+    check(`matriz: contador "${comp(nB)} · ${ctr.total} OC"`, (await page.getByTestId('po-buyer-badge').innerText()).trim() === `${comp(nB)} · ${ctr.total} OC`);
+    const allCard = mx.locator('[data-testid="po-buyer-card"][data-buyer="Todas las órdenes de compra"]');
+    const at = (await allCard.innerText()).replace(/\s+/g, ' ');
+    check('tarjeta "Todas": OC, pendientes, recibidas y vista general', at.includes(`${ctr.total} OC ${ctr.total - ctr.received} Pendientes ${ctr.received} Recibidas`) && at.includes('Vista general'), at);
     const b = head.summary.buyers[0];
-    check('tarjeta por comprador: OC, pendientes y recibidas', bt.includes(`${b.count} OC ${b.count - b.received} Pendientes ${b.received} Recibidas`), bt);
-    await shot(page, 'oc_1_matriz');
-    const byBuyer = page.waitForResponse(r => new RegExp(`buyer=${b.id}`).test(r.url()));
-    await buyerCard.click();
-    check('filtro por comprador en el servidor (200)', (await byBuyer).status() === 200);
-    await page.getByText(`${b.count} órdenes (versión vigente)`).waitFor();
-    check('sin la OC que no tiene comprador', await page.getByRole('row').filter({ hasText: 'OC-QA-0009' }).count() === 0);
-    await page.getByRole('button', { name: /Todas las órdenes de compra/ }).click();
+    const buyerCard = mx.locator(`[data-testid="po-buyer-card"][data-buyer="${b.name}"]`);
+    const bt = (await buyerCard.innerText()).replace(/\s+/g, ' ');
+    const bAmount = b.money.length === 1 ? money(b.money[0].amount, b.money[0].currency) : `${b.money.length} monedas`;
+    check('tarjeta por comprador: correo, OC/pendientes/recibidas, proveedores, requisiciones, monto y % recibido', [b.email, `${b.count} OC ${b.count - b.received} Pendientes ${b.received} Recibidas`, `${b.suppliers} proveedores · ${b.requisitions} requisiciones`, bAmount, `${Math.round(b.received / b.count * 100)}% recibido`].every(x => bt.includes(x)), bt);
+    check('tarjeta "Sin comprador asignado" cuando aplica', !ctr.without_buyer || await mx.locator('[data-testid="po-buyer-card"][data-buyer="Sin comprador asignado"]').count() === 1);
+    await mx.getByRole('searchbox', { name: 'Buscar comprador' }).fill('zz-no-existe');
+    check('búsqueda de compradores sin coincidencias', await mx.getByText('Ningún comprador coincide con "zz-no-existe".').isVisible() && await mx.getByTestId('po-buyer-card').count() === 1 + (ctr.without_buyer ? 1 : 0));
+    await mx.getByRole('searchbox', { name: 'Buscar comprador' }).fill(b.email.slice(0, 6));
+    check('búsqueda de compradores por correo', await buyerCard.count() === 1);
+    await mx.getByRole('button', { name: /Volver a compradores/ }).click();
+    check('"Volver a compradores" limpia la búsqueda', await mx.getByRole('searchbox', { name: 'Buscar comprador' }).inputValue() === '');
+    await shot(page, 'oc_2_compradores');
+
+    const allResp = page.waitForResponse(r => /\/purchase-orders\?page=1&page_size=15&.*buyer=all/.test(r.url()));
+    await allCard.click();
+    check('"Todas" abre la matriz paginada (15 filas) en el servidor (200)', (await allResp).status() === 200);
+    await page.getByTestId('po-range').filter({ hasText: `de ${head.total} órdenes de compra` }).waitFor();
+    check('encabezado: "Todas las órdenes de compra" con registros y compradores', (await page.getByTestId('po-buyer-head').innerText()).replace(/\s+/g, ' ').includes(`${head.total} registros de ${comp(nB)}`));
+    check('rango "Mostrando 1–N de N órdenes de compra"', (await page.getByTestId('po-range').innerText()).trim() === `Mostrando 1–${Math.min(15, head.total)} de ${head.total} órdenes de compra`);
+    check('aviso de acciones del diseño', (await mx.innerText()).includes('SOLICITAR MODIFICACIÓN requiere aprobación previa. Solo después se habilita MODIFICAR OC'));
+    const row3 = mx.locator('tr[data-folio="OC-QA-0003"]');
+    const p3 = head.items.find(x => x.folio === 'OC-QA-0003');
+    const t3 = (await row3.innerText()).replace(/\s+/g, ' ');
+    check('fila: Rev. N (Rev. 0 = original), requisición, proveedor, comprador, partidas, monto, avance y solicitud pendiente', [`Rev. ${p3.version_number - 1}`, 'QA02-REQ-2026-SCF210', 'INSTRUMENTOS EUROPA SINTÉTICA', 'QA Comprador', `${p3.item_count}`, 'INSTRUMENTO SINTÉTICO', '$3,900.00 USD', '50% recibido', 'Emitida', 'MOD-QA-0001'].every(x => t3.toUpperCase().includes(x.toUpperCase())), t3);
+    check('solo la versión vigente de cada OC', await mx.locator('tr[data-folio="OC-QA-0003"]').count() === 1);
+    check('OC cancelada (estatus original) con su pill', (await mx.locator('tr[data-folio="OC-QA-0009"]').innerText()).includes('Cancelada'));
+    const byState = page.waitForResponse(r => /\/purchase-orders\?.*state=cancelled/.test(r.url()));
+    await mx.getByRole('combobox', { name: 'Estatus' }).selectOption('cancelled');
+    check('filtro de estatus del diseño en el servidor (200)', (await byState).status() === 200);
+    await page.getByTestId('po-range').filter({ hasText: /de 1 órdenes de compra|No hay/ }).waitFor();
+    check('solo canceladas', await mx.locator('tr[data-folio]').count() === head.summary.states.find(x => x.code === 'cancelled').count && await mx.locator('tr[data-folio="OC-QA-0009"]').count() === 1);
+    const optLabels = await mx.getByRole('combobox', { name: 'Estatus' }).locator('option').allInnerTexts();
+    check('estatus del diseño en el filtro', ['Emitida', 'Enviada al proveedor', 'Aceptada', 'Parcialmente recibida', 'Cancelada', 'Borrador', 'Recibida', 'Sustituida'].every(x => optLabels.some(o => o.startsWith(x))), optLabels.join('|'));
+    await mx.getByRole('combobox', { name: 'Estatus' }).selectOption('all');
     const qResp = page.waitForResponse(r => /q=SCF210/.test(r.url()));
     await page.getByLabel('Buscar órdenes').fill('SCF210');
     check('búsqueda por folio de requisición en el servidor', (await qResp).status() === 200);
-    await page.getByText('1 órdenes (versión vigente)').waitFor();
+    await page.getByTestId('po-range').filter({ hasText: 'de 1 órdenes de compra' }).waitFor();
     await page.getByLabel('Buscar órdenes').fill('');
-    await page.getByText(`${head.total} órdenes (versión vigente)`).waitFor();
+    await page.getByTestId('po-range').filter({ hasText: `de ${head.total} órdenes de compra` }).waitFor();
+    const rowsResp = page.waitForResponse(r => /page_size=25/.test(r.url()));
+    await mx.getByRole('combobox', { name: 'Filas por página' }).selectOption('25');
+    check('filas por página en el servidor (25)', (await rowsResp).status() === 200);
+    await shot(page, 'oc_2_matriz');
 
-    // Formato
+    // Acciones: SOLICITAR MODIFICACIÓN con solicitud pendiente, EDITAR emitida, MODIFICAR sin aprobación, ELIMINAR protegido
+    await row3.getByRole('button', { name: /Solicitar modificación/i }).click();
+    check('solicitar modificación con otra pendiente: no procede', (await page.getByTestId('po-action-msg').innerText()).includes('Ya existe una solicitud pendiente (MOD-QA-0001)'));
+    const row1 = mx.locator('tr[data-folio="OC-QA-0001"]');
+    await row1.getByRole('button', { name: /^Editar$/i }).click();
+    check('EDITAR una OC autorizada remite a SOLICITAR MODIFICACIÓN', (await page.getByTestId('po-action-msg').innerText()).includes('ya fue autorizada/emitida'));
+    check('MODIFICAR OC deshabilitado sin solicitud aprobada', await row1.getByRole('button', { name: /Modificar OC/i }).isDisabled());
+    await row1.getByRole('button', { name: /Solicitar modificación/i }).click();
+    const rq = page.getByTestId('po-request'); await rq.waitFor();
+    await rq.getByRole('button', { name: 'Enviar solicitud' }).click();
+    check('solicitud: exige tipo', (await page.getByTestId('po-request-msg').innerText()).includes('Selecciona el tipo de modificación.'));
+    await rq.getByRole('combobox', { name: 'Tipo de modificación' }).selectOption('date');
+    await rq.getByLabel('Motivo de la modificación').fill('Proveedor solicita nueva fecha de entrega (prueba E2E sintética)');
+    await rq.getByRole('button', { name: 'Enviar solicitud' }).click();
+    check('solicitud validada pero NO registrada', (await page.getByTestId('po-request-msg').innerText()).includes('Datos validados, pero no se registró la solicitud de modificación de OC-QA-0001'));
+    await rq.getByRole('button', { name: 'Cancelar' }).click();
+    await row1.getByRole('button', { name: /^Eliminar$/i }).click();
+    const p1 = head.items.find(x => x.folio === 'OC-QA-0001');
+    check('ELIMINAR con recepciones/facturas: no procede', (await page.getByTestId('po-delete').innerText()).includes(`${p1.receipt_count} recepción(es)`) && await page.getByTestId('po-delete').getByRole('button', { name: 'Eliminar', exact: true }).count() === 0);
+    await page.getByTestId('po-delete').getByRole('button', { name: 'Cancelar' }).click();
+
+    // PDF real (jsPDF) en el idioma elegido
+    const dl = page.waitForEvent('download');
+    await row3.getByRole('button', { name: /Descargar PDF/i }).click();
+    const file = await dl; const pdfPath = await file.path(); const pdfRaw = require('fs').readFileSync(pdfPath).toString('latin1');
+    check('DESCARGAR PDF: archivo con folio, revisión, partidas y total', file.suggestedFilename() === `OC-QA-0003-Rev${p3.version_number - 1}.pdf` && pdfRaw.startsWith('%PDF') && ['Orden de Compra OC-QA-0003', 'Instrumento sint', '3,900.00 USD'].every(x => pdfRaw.includes(x)), file.suggestedFilename());
+    await mx.getByLabel('Idioma de Orden de Compra / Purchase Order language:').selectOption('en');
+    check('idioma del PDF: aviso en inglés', (await mx.innerText()).includes('PDF: 100% in the selected language'));
+    const dl2 = page.waitForEvent('download');
+    await row3.getByRole('button', { name: /Descargar PDF/i }).click();
+    const raw2 = require('fs').readFileSync(await (await dl2).path()).toString('latin1');
+    check('PDF en inglés', raw2.includes('Purchase Order OC-QA-0003') && raw2.includes('UNIT PRICE') && !raw2.includes('Orden de Compra OC-QA-0003'));
+    await mx.getByLabel('Idioma de Orden de Compra / Purchase Order language:').selectOption('es');
+    const pop = context.waitForEvent('page');
     await row3.getByRole('button', { name: /Ver PDF/i }).click();
+    const pv = await pop; await pv.waitForURL(/^blob:|about:blank/, { timeout: 8000 }).catch(() => {});
+    check('VER PDF abre el PDF generado en otra pestaña', !!pv); await pv.close().catch(() => {});
+
+    // Cambiar comprador → tarjeta del comprador filtra en el servidor
+    await mx.getByRole('button', { name: /Cambiar comprador/ }).click();
+    const byBuyer = page.waitForResponse(r => new RegExp(`buyer=${b.id}`).test(r.url()));
+    await buyerCard.click();
+    check('filtro por comprador en el servidor (200)', (await byBuyer).status() === 200);
+    await page.getByTestId('po-range').filter({ hasText: `de ${b.count} órdenes de compra` }).waitFor();
+    check('sin la OC que no tiene comprador', await mx.locator('tr[data-folio="OC-QA-0009"]').count() === 0);
+
+    // Formato (tarjeta 6) desde "Formato PDF"
+    await mx.locator('tr[data-folio="OC-QA-0003"]').getByRole('button', { name: 'Formato PDF' }).click();
     const fmt = page.getByTestId('po-format'); await fmt.waitFor();
     const frame = page.frameLocator('iframe[title="Formato de OC"]');
-    await frame.getByText('Orden de Compra OC-QA-0003 · Rev. 2').waitFor();
+    await frame.getByText(`Orden de Compra OC-QA-0003 · Rev. ${p3.version_number - 1}`).waitFor();
     const ftxt = await frame.locator('body').innerText();
     check('formato: partidas, total, firmas y referencias', ['Instrumento sintético', '$3,900.00 USD', 'QA Comprador', 'QA02-REQ-2026-SCF210'].every(x => ftxt.includes(x)), ftxt.slice(0, 300));
-    check('formato: versiones y recepción de la serie', (await fmt.innerText()).includes('Rev. 1') && (await fmt.innerText()).includes('Rev. 2 · Cambio de cantidad') && (await fmt.innerText()).includes('REC-QA-0003'));
+    check('formato: versiones (Rev. 0 original) y recepción de la serie', (await fmt.innerText()).includes('Rev. 0') && (await fmt.innerText()).includes('Rev. 1 · Cambio de cantidad') && (await fmt.innerText()).includes('REC-QA-0003'));
     const [popup] = await Promise.all([page.waitForEvent('popup'), page.getByRole('button', { name: /Imprimir \/ Guardar PDF/ }).click()]);
     await popup.waitForLoadState(); check('imprimir abre el formato', (await popup.textContent('body')).includes('OC-QA-0003')); await popup.close();
     await shot(page, 'oc_6_formato');
@@ -141,7 +220,7 @@ const money = (v, c) => `$${new Intl.NumberFormat('es-MX', { minimumFractionDigi
     const fam = page.locator('div.rounded-2xl').filter({ has: page.getByText('OC-QA-0003', { exact: true }) }).last();
     await fam.getByRole('button', { name: /Historial/i }).click();
     const ftext = (await fam.innerText()).replace(/\s+/g, ' ');
-    check('enmiendas: familia con Rev. 1 y Rev. 2 y modificar bloqueado', ftext.includes('Rev. 1') && ftext.includes('Rev. 2') && await fam.getByRole('button', { name: /Modificar OC/i }).isDisabled(), ftext);
+    check('enmiendas: familia con Rev. 0 y Rev. 1 y modificar bloqueado', ftext.includes('Rev. 0') && ftext.includes('Rev. 1') && await fam.getByRole('button', { name: /Modificar OC/i }).isDisabled(), ftext);
     await shot(page, 'oc_4_enmiendas');
 
     // Mis tareas

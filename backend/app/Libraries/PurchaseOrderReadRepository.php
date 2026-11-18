@@ -17,6 +17,17 @@ use RuntimeException;
 final class PurchaseOrderReadRepository
 {
     private const CANCELLED = "LOWER(COALESCE(po.legacy_status,po.operational_status,'')) IN ('cancelada','sustituida','cancelled','superseded')";
+    /**
+     * Displayed status of a PO (design list): the original Apps Script status when present (Cancelada, Recibida, Enviada…),
+     * otherwise the operational code. Used by the matrix pill and the `state` filter.
+     */
+    private const STATE = "(CASE WHEN NULLIF(TRIM(po.legacy_status),'') IS NOT NULL THEN (CASE"
+        . " WHEN LOWER(po.legacy_status) LIKE '%cancel%' THEN 'cancelled' WHEN LOWER(po.legacy_status) LIKE '%sustitu%' OR LOWER(po.legacy_status) LIKE '%reemplaz%' THEN 'superseded'"
+        . " WHEN LOWER(po.legacy_status) LIKE '%parcial%' THEN 'partially_received' WHEN LOWER(po.legacy_status) LIKE '%recibid%' OR LOWER(po.legacy_status) LIKE '%cerrad%' THEN 'received'"
+        . " WHEN LOWER(po.legacy_status) LIKE '%acept%' THEN 'accepted' WHEN LOWER(po.legacy_status) LIKE '%enviad%' THEN 'sent' WHEN LOWER(po.legacy_status) LIKE '%borrador%' THEN 'draft'"
+        . " WHEN LOWER(po.legacy_status) LIKE '%emitid%' THEN 'issued' ELSE 'other' END)"
+        . " ELSE (CASE po.operational_status WHEN 'cancelled' THEN 'cancelled' WHEN 'superseded' THEN 'superseded' WHEN 'partially_received' THEN 'partially_received'"
+        . " WHEN 'received' THEN 'received' WHEN 'closed' THEN 'received' WHEN 'accepted' THEN 'accepted' WHEN 'sent' THEN 'sent' WHEN 'draft' THEN 'draft' WHEN 'issued' THEN 'issued' ELSE 'other' END) END)";
     private const LATEST = 'NOT EXISTS (SELECT 1 FROM purchase_orders nx WHERE nx.organization_id=po.organization_id AND nx.series_public_id=po.series_public_id AND nx.version_number>po.version_number)';
 
     private BaseConnection $db;
@@ -52,6 +63,7 @@ final class PurchaseOrderReadRepository
         $prep = self::person('po.preparer_user_id');
         $auth = self::person('po.authorizer_user_id');
         $resp = self::person('po.current_responsible_user_id');
+        $state = self::STATE;
         return <<<SQL
             e.public_id AS id,po.folio,po.series_public_id AS series_id,po.version_number,po.legacy_revision_number,po.order_date,po.commitment_date,
             po.currency_code AS currency,po.subtotal_amount,po.tax_amount,po.total_amount,po.operational_status,po.approval_status,po.legacy_status,
@@ -65,7 +77,11 @@ final class PurchaseOrderReadRepository
             (SELECT MAX(gr.legacy_received_percent) FROM goods_receipts gr WHERE gr.organization_id=po.organization_id AND gr.purchase_order_id IN (SELECT s2.id FROM purchase_orders s2 WHERE s2.organization_id=po.organization_id AND s2.series_public_id=po.series_public_id)) AS received_percent,
             (SELECT COUNT(*) FROM invoices inv WHERE inv.organization_id=po.organization_id AND inv.primary_purchase_order_id IN (SELECT s2.id FROM purchase_orders s2 WHERE s2.organization_id=po.organization_id AND s2.series_public_id=po.series_public_id)) AS invoice_count,
             (SELECT COUNT(*) FROM purchase_orders v WHERE v.organization_id=po.organization_id AND v.series_public_id=po.series_public_id) AS versions,
-            (SELECT COUNT(*) FROM purchase_order_items it WHERE it.organization_id=po.organization_id AND it.purchase_order_id=po.id) AS item_count
+            (SELECT COUNT(*) FROM purchase_order_items it WHERE it.organization_id=po.organization_id AND it.purchase_order_id=po.id) AS item_count,
+            (SELECT SUBSTRING(GROUP_CONCAT(it.description ORDER BY it.line_number,it.id SEPARATOR ' · '),1,240) FROM purchase_order_items it WHERE it.organization_id=po.organization_id AND it.purchase_order_id=po.id) AS item_summary,
+            (SELECT GROUP_CONCAT(m.folio ORDER BY m.requested_at SEPARATOR ', ') FROM purchase_order_modification_requests m WHERE m.organization_id=po.organization_id AND m.series_public_id=po.series_public_id AND m.status_code='pending') AS mod_pending,
+            (SELECT GROUP_CONCAT(m.folio ORDER BY m.requested_at SEPARATOR ', ') FROM purchase_order_modification_requests m WHERE m.organization_id=po.organization_id AND m.series_public_id=po.series_public_id AND m.status_code='approved') AS mod_approved,
+            {$state} AS state_key
             SQL;
     }
 
@@ -96,6 +112,7 @@ final class PurchaseOrderReadRepository
         $binds = [$org];
         if ($f['scope'] === 'current') { $where[] = self::LATEST; }
         if ($f['status'] !== 'all') { $where[] = 'po.operational_status=?'; $binds[] = $f['status']; }
+        if (($f['state'] ?? 'all') !== 'all') { $where[] = self::STATE . '=?'; $binds[] = $f['state']; }
         if ($f['buyer'] === 'none') { $where[] = 'po.buyer_user_id IS NULL'; }
         elseif ($f['buyer'] !== 'all') { $where[] = 'bu.public_id=?'; $binds[] = $f['buyer']; }
         if ($f['q'] !== '') {
@@ -119,7 +136,20 @@ final class PurchaseOrderReadRepository
         $cur = ' FROM purchase_orders po WHERE po.organization_id=? AND ' . self::LATEST;
         $statuses = array_map(static fn ($r) => ['code' => (string) $r['code'], 'count' => (int) $r['count']], $this->rows('SELECT po.operational_status AS code,COUNT(*) AS count' . $cur . ' GROUP BY po.operational_status ORDER BY count DESC', [$org]));
         $received = 'EXISTS (SELECT 1 FROM goods_receipts gr WHERE gr.organization_id=po.organization_id AND gr.purchase_order_id IN (SELECT s2.id FROM purchase_orders s2 WHERE s2.organization_id=po.organization_id AND s2.series_public_id=po.series_public_id))';
-        $buyers = array_map(static fn ($r) => ['id' => $r['id'], 'name' => $r['name'], 'email' => $r['email'], 'count' => (int) $r['count'], 'received' => (int) $r['received']], $this->rows(
+        $states = array_map(static fn ($r) => ['code' => (string) $r['code'], 'count' => (int) $r['count']], $this->rows('SELECT ' . self::STATE . ' AS code,COUNT(*) AS count' . $cur . ' GROUP BY code ORDER BY count DESC', [$org]));
+        $bmoney = [];
+        foreach ($this->rows('SELECT u.public_id AS id,po.currency_code AS currency,SUM(po.total_amount) AS amount FROM purchase_orders po JOIN users u ON u.id=po.buyer_user_id AND u.organization_id=po.organization_id WHERE po.organization_id=? AND ' . self::LATEST . ' AND NOT ' . self::CANCELLED . ' GROUP BY u.public_id,po.currency_code ORDER BY po.currency_code', [$org]) as $m) {
+            $bmoney[$m['id']][] = ['currency' => $m['currency'], 'amount' => $m['amount']];
+        }
+        $bextra = [];
+        foreach ($this->rows('SELECT u.public_id AS id,p.phone,p.position_title AS position,COUNT(DISTINCT po.supplier_id) AS suppliers,'
+            . '(SELECT COUNT(DISTINCT pr.requisition_id) FROM purchase_order_requisitions pr JOIN purchase_orders p2 ON p2.id=pr.purchase_order_id AND p2.organization_id=pr.organization_id WHERE pr.organization_id=u.organization_id AND p2.buyer_user_id=u.id AND NOT EXISTS (SELECT 1 FROM purchase_orders nx WHERE nx.organization_id=p2.organization_id AND nx.series_public_id=p2.series_public_id AND nx.version_number>p2.version_number)) AS requisitions'
+            . ' FROM purchase_orders po JOIN users u ON u.id=po.buyer_user_id AND u.organization_id=po.organization_id JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id'
+            . ' WHERE po.organization_id=? AND ' . self::LATEST . ' GROUP BY u.public_id,u.id,u.organization_id,p.phone,p.position_title', [$org]) as $x) {
+            $bextra[$x['id']] = ['phone' => $x['phone'], 'position' => $x['position'], 'suppliers' => (int) $x['suppliers'], 'requisitions' => (int) $x['requisitions']];
+        }
+        $buyers = array_map(static fn ($r) => ['id' => $r['id'], 'name' => $r['name'], 'email' => $r['email'], 'count' => (int) $r['count'], 'received' => (int) $r['received']]
+            + ($bextra[$r['id']] ?? ['phone' => null, 'position' => null, 'suppliers' => 0, 'requisitions' => 0]) + ['money' => $bmoney[$r['id']] ?? []], $this->rows(
             'SELECT u.public_id AS id,p.display_name AS name,u.login_email AS email,COUNT(*) AS count,COALESCE(SUM(' . $received . '),0) AS received FROM purchase_orders po JOIN users u ON u.id=po.buyer_user_id AND u.organization_id=po.organization_id JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE po.organization_id=? AND ' . self::LATEST . ' GROUP BY u.public_id,p.display_name,u.login_email ORDER BY count DESC,p.display_name', [$org]));
         $money = array_map(static fn ($r) => ['currency' => $r['currency'], 'amount' => $r['amount'], 'orders' => (int) $r['orders']], $this->rows(
             'SELECT po.currency_code AS currency,SUM(po.total_amount) AS amount,COUNT(*) AS orders' . $cur . ' AND NOT ' . self::CANCELLED . ' GROUP BY po.currency_code ORDER BY po.currency_code', [$org]));
@@ -138,7 +168,7 @@ final class PurchaseOrderReadRepository
             SQL, [$org])[0] ?? [];
         foreach ($awards as $k => $v) { $awards[$k] = (int) $v; }
         $preselected = (int) ($this->rows("SELECT COUNT(*) AS n FROM supplier_quotes sq WHERE sq.organization_id=? AND (sq.legacy_status REGEXP 'Seleccionada|Preseleccionada|Adjudicada' OR sq.status_code IN ('selected','preselected','awarded'))", [$org])[0]['n'] ?? 0);
-        return ['statuses' => $statuses, 'buyers' => $buyers, 'money' => $money, 'counters' => $c + $awards + ['preselected_quotes' => $preselected]];
+        return ['statuses' => $statuses, 'states' => $states, 'buyers' => $buyers, 'money' => $money, 'counters' => $c + $awards + ['preselected_quotes' => $preselected]];
     }
 
     /** Requisitions with an active award: winners grouped by supplier and whether a PO already exists (read-only "Emisión"). */
@@ -248,7 +278,7 @@ final class PurchaseOrderReadRepository
         $id = (int) $po['db_id'];
         unset($po['db_id']);
         $items = $this->rows('SELECT line_number,description,category_snapshot AS category,unit_label,quantity,unit_price,line_subtotal,line_status FROM purchase_order_items WHERE organization_id=? AND purchase_order_id=? ORDER BY line_number,id LIMIT 500', [$org, $id]);
-        $versions = $this->rows('SELECT e.public_id AS id,v.folio,v.version_number,v.order_date,v.total_amount,v.currency_code AS currency,v.operational_status,v.legacy_status,v.amendment_type,v.amendment_reason,v.amendment_date FROM purchase_orders v JOIN business_entities e ON e.id=v.id AND e.organization_id=v.organization_id WHERE v.organization_id=? AND v.series_public_id=? ORDER BY v.version_number', [$org, $po['series_id']]);
+        $versions = $this->rows('SELECT e.public_id AS id,v.folio,v.version_number,v.legacy_revision_number,v.order_date,v.total_amount,v.currency_code AS currency,v.operational_status,v.legacy_status,v.amendment_type,v.amendment_reason,v.amendment_date FROM purchase_orders v JOIN business_entities e ON e.id=v.id AND e.organization_id=v.organization_id WHERE v.organization_id=? AND v.series_public_id=? ORDER BY v.version_number', [$org, $po['series_id']]);
         $receipts = $this->rows('SELECT gr.folio,gr.receipt_date AS date,gr.status_code AS status,gr.legacy_received_percent AS received_percent FROM goods_receipts gr JOIN purchase_orders s2 ON s2.id=gr.purchase_order_id AND s2.organization_id=gr.organization_id WHERE gr.organization_id=? AND s2.series_public_id=? ORDER BY gr.receipt_date,gr.id', [$org, $po['series_id']]);
         $invoices = $this->rows('SELECT inv.folio,inv.invoice_number,inv.issue_date AS date,inv.status_code AS status,inv.total_amount,inv.currency_code AS currency FROM invoices inv JOIN purchase_orders s2 ON s2.id=inv.primary_purchase_order_id AND s2.organization_id=inv.organization_id WHERE inv.organization_id=? AND s2.series_public_id=? ORDER BY inv.issue_date,inv.id', [$org, $po['series_id']]);
         $requests = $this->rows('SELECT m.folio,m.change_type,m.urgency,m.reason,m.status_code AS status,m.requested_at,m.decision_code,m.decision_at,m.decision_comment FROM purchase_order_modification_requests m WHERE m.organization_id=? AND m.series_public_id=? ORDER BY m.requested_at,m.id', [$org, $po['series_id']]);

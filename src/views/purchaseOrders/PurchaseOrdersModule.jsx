@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, Eye, X } from 'lucide-react';
 import { listPurchaseOrders, poIssuance, poTasks, poDetail } from './api';
-import { money, opLabel, statusTone, progressOf, buyerCards, poPrintHtml } from './model.mjs';
+import { PO_STATES, poState, buyerCardList, filterBuyers, buyersBadge, rangeText, buyerCaption, editBlock, requestBlock, modifyBlock, deleteBlock, folioConfirmed, REQUEST_TYPES, URGENCIES, validateRequest, validateEdit, editForm } from './poMatrix.mjs';
+import { buildPoPdf, pdfName } from './poPdf.mjs';
+import { money, opLabel, statusTone, progressOf, poPrintHtml, revLabel } from './model.mjs';
 import { issuanceOptions, winningSuppliers, supplierTotal, toGenerate, validateIssuance, issuanceLockedText } from './poIssuance.mjs';
 
 // Órdenes de Compra · diseño Grupo Gerez (6 tarjetas) conectado a MariaDB en modo consulta.
 // GET /api/v1/purchase-orders[/issuance|/tasks|/{id}] (Master Admin). Emitir, autorizar, modificar y eliminar OC siguen
 // bloqueados: son escrituras comerciales que requieren validación integral (regla del proyecto).
 const DASH = '—';
-const PAGE = 25;
 const show = v => (v === null || v === undefined || String(v).trim() === '' ? DASH : String(v));
 const ymd = v => (v ? String(v).slice(0, 10) : DASH);
 
@@ -28,26 +29,66 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
   const [tab, setTab] = useState(2);
   const [revision, setRevision] = useState(0);
 
-  // Matriz (servidor)
-  const [buyer, setBuyer] = useState('all');
+  // Matriz (servidor): tarjetas por comprador → matriz paginada del comprador elegido
+  const [buyerSel, setBuyerSel] = useState(null);
+  const [bInput, setBInput] = useState('');
   const [input, setInput] = useState('');
   const [q, setQ] = useState('');
-  const [status, setStatus] = useState('all');
+  const [stF, setStF] = useState('all');
   const [sort, setSort] = useState('recent');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+  const [pdfLang, setPdfLang] = useState(en ? 'en' : 'es');
+  const pdfEn = pdfLang === 'en';
   const [list, setList] = useState({ status: 'loading', error: null, data: null });
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const c = new AbortController();
     setList(x => ({ ...x, status: 'loading', error: null }));
-    listPurchaseOrders({ page, pageSize: PAGE, q, status, buyer, sort }, c.signal)
+    listPurchaseOrders(buyerSel ? { page, pageSize, q, state: stF, buyer: buyerSel.id, sort } : { page: 1, pageSize: 1 }, c.signal)
       .then(d => { if (!c.signal.aborted) setList({ status: 'ready', error: null, data: d }); })
       .catch(e => { if (!c.signal.aborted) setList(x => ({ ...x, status: 'error', error: e })); });
     return () => c.abort();
-  }, [page, q, status, buyer, sort, revision]);
+  }, [page, q, stF, buyerSel?.id, sort, pageSize, revision]);
   const d = list.data; const sum = d?.summary; const ctr = sum?.counters || {};
-  const bc = useMemo(() => buyerCards(sum), [sum]);
-  const lastPage = Math.max(1, Math.ceil((d?.total || 0) / PAGE));
+  const lastPage = Math.max(1, Math.ceil((d?.total || 0) / pageSize));
+  const bCards = useMemo(() => buyerCardList(sum, en), [sum, en]);
+  const shownCards = useMemo(() => filterBuyers(bCards, bInput), [bCards, bInput]);
+  const openBuyer = c => { setBuyerSel(c); setInput(''); setQ(''); setStF('all'); setPage(1); setActMsg(null); };
+  const backToBuyers = () => { if (!buyerSel) setBInput(''); setBuyerSel(null); setInput(''); setQ(''); setStF('all'); setPage(1); setActMsg(null); };
+
+  // Acciones por OC: PDF real en el navegador; editar/solicitar/modificar/eliminar se validan y no escriben.
+  const [actMsg, setActMsg] = useState(null); const [pdfBusy, setPdfBusy] = useState('');
+  const [reqDlg, setReqDlg] = useState(null); const [editDlg, setEditDlg] = useState(null); const [delDlg, setDelDlg] = useState(null);
+  const pdfOf = async (po, mode) => {
+    const w = mode === 'view' ? window.open('', '_blank') : null;
+    setPdfBusy(`${po.id}:${mode}`);
+    try {
+      const [{ jsPDF }, det] = await Promise.all([import('jspdf'), poDetail(po.id)]);
+      const doc = buildPoPdf(jsPDF, det, pdfEn);
+      if (mode === 'download') doc.save(pdfName(det.item));
+      else if (w) { w.location.href = URL.createObjectURL(doc.output('blob')); }
+      else { notify(tx('Ver PDF', 'View PDF'), tx('El navegador bloqueó la ventana; se descargará el PDF.', 'The browser blocked the window; the PDF will be downloaded.'), 'warning'); doc.save(pdfName(det.item)); }
+    } catch (e) { if (w) w.close(); setActMsg({ kind: 'error', text: e.message || tx('No se pudo generar el PDF.', 'The PDF could not be generated.') }); }
+    finally { setPdfBusy(''); }
+  };
+  const onEdit = async po => {
+    const b = editBlock(po, en); if (b) { setActMsg({ kind: 'info', folio: po.folio, text: b }); return; }
+    setActMsg(null); setEditDlg({ po, det: null, form: null, msg: null });
+    try { const det = await poDetail(po.id); setEditDlg(x => x && x.po.id === po.id ? { ...x, det: det.item, form: editForm(det.item) } : x); }
+    catch (e) { setEditDlg(x => x && { ...x, msg: { kind: 'error', text: e.message } }); }
+  };
+  const saveEdit = () => setEditDlg(x => { const v = validateEdit(x.form, x.det, en); return { ...x, msg: v.ok ? { kind: 'locked', text: tx(`Datos validados, pero no se guardaron los cambios de ${x.po.folio} (${v.changed.join(', ')}): editar órdenes de compra es una escritura comercial bloqueada hasta su autorización.`, `Data validated, but the changes to ${x.po.folio} (${v.changed.join(', ')}) were not saved: editing purchase orders is a commercial write blocked until authorized.`) } : { kind: v.errors.none ? 'info' : 'error', text: v.first } }; });
+  const onRequest = po => { const b = requestBlock(po, en); if (b) { setActMsg({ kind: 'info', folio: po.folio, text: b }); return; } setActMsg(null); setReqDlg({ po, form: { type: '', urgency: 'normal', reason: '' }, msg: null }); };
+  const sendRequest = () => setReqDlg(x => { const v = validateRequest(x.form, en); return { ...x, msg: v.ok ? { kind: 'locked', text: tx(`Datos validados, pero no se registró la solicitud de modificación de ${x.po.folio}: requiere un endpoint autorizado (escritura comercial bloqueada). Al aprobarse se habilitaría MODIFICAR OC.`, `Data validated, but the change request for ${x.po.folio} was not recorded: it requires an authorized endpoint (commercial write blocked). Once approved, MODIFY PO would be enabled.`) } : { kind: 'error', text: v.first } }; });
+  const onModify = po => { const b = modifyBlock(po, en); setActMsg({ kind: b ? 'info' : 'locked', folio: po.folio, text: b || tx(`Solicitud ${po.mod_approved} aprobada, pero no se generó la nueva revisión de ${po.folio}: modificar OC es una escritura comercial bloqueada (la Rev. N volvería a revisión/autorización).`, `Request ${po.mod_approved} is approved, but the new revision of ${po.folio} was not generated: modifying POs is a commercial write blocked (Rev. N would go back to review/authorization).`) }); };
+  const onDelete = po => { setActMsg(null); setDelDlg({ po, folio: '', reason: '', msg: null, block: deleteBlock(po, en) }); };
+  const tryDelete = () => setDelDlg(x => {
+    if (x.block) return { ...x, msg: { kind: 'error', text: x.block } };
+    if (!folioConfirmed(x.po, x.folio)) return { ...x, msg: { kind: 'error', text: tx(`Escribe exactamente el folio (${x.po.folio}) para confirmar.`, `Type the exact folio (${x.po.folio}) to confirm.`) } };
+    if (String(x.reason).trim().length < 10) return { ...x, msg: { kind: 'error', text: tx('Describe el motivo (mínimo 10 caracteres).', 'Describe the reason (minimum 10 characters).') } };
+    return { ...x, msg: { kind: 'locked', text: tx(`Datos validados, pero no se eliminó ${x.po.folio}: eliminar órdenes de compra es una escritura comercial bloqueada hasta su autorización.`, `Data validated, but ${x.po.folio} was not deleted: deleting purchase orders is a commercial write blocked until authorized.`) } };
+  });
 
   // Emisión, tareas y enmiendas (bajo demanda)
   const [iss, setIss] = useState({ status: 'idle', data: null, error: null });
@@ -93,7 +134,7 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     if (!det.data) return;
     const w = window.open('', '_blank', 'width=900,height=1000');
     if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; }
-    w.document.write(poPrintHtml(det.data, en)); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250);
+    w.document.write(poPrintHtml(det.data, pdfEn)); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250);
   };
 
   const Err = ({ e }) => (e ? <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{e.message}</p> : null);
@@ -166,42 +207,127 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     </div>}
 
     {/* 2 · MATRIZ */}
-    {tab === 2 && <div className={box}>
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-extrabold text-slate-900">{tx('Matriz de órdenes de compra', 'Purchase orders matrix')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Monto, compromiso, estatus y avance de recepción; el formato de cada OC se genera aquí.', 'Amount, commitment, status and receipt progress; each PO format is generated here.')}</p></div>{lockBtn(tx('Nueva orden', 'New order'), 'px-4 py-2 text-xs normal-case')}</div>
-      <div><h4 className="text-xs font-black text-slate-800">{tx('Órdenes de compra por comprador', 'Purchase orders by buyer')}</h4><p className="text-[10px] text-slate-400">{tx('Selecciona un comprador para consultar únicamente sus órdenes.', 'Select a buyer to view only their orders.')}</p></div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        {[{ id: 'all', name: tx('Todas las órdenes de compra', 'All purchase orders'), sub: tx(`${bc.items.length} comprador(es)`, `${bc.items.length} buyer(s)`), count: ctr.total || 0, received: ctr.received || 0 }, ...bc.items.map(b => ({ ...b, sub: b.email })), ...(bc.none.count ? [{ id: 'none', name: tx('Sin comprador asignado', 'No buyer assigned'), sub: '', count: bc.none.count, received: null }] : [])].map(c => { const on = buyer === c.id; return <button key={c.id} type="button" aria-pressed={on} onClick={() => { setBuyer(c.id); setPage(1); }} className={`text-left bg-white rounded-2xl p-3 border relative overflow-hidden ${on ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-md' : 'border-slate-200 hover:border-slate-300'}`}>
-          <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-amber-500 via-rose-500 to-purple-600" /><div className="pl-1.5"><div className="text-[11px] font-bold text-slate-900 truncate" title={c.name}>{c.name}</div><div className="text-[10px] text-slate-500 truncate">{c.sub || ' '}</div>
-            <div className="grid grid-cols-3 gap-1 my-2">{[[c.count, 'OC'], [c.received === null ? DASH : c.count - c.received, tx('Pendientes', 'Pending')], [c.received === null ? DASH : c.received, tx('Recibidas', 'Received')]].map(([n, l]) => <div key={l} className="bg-slate-50 border border-slate-100 rounded-xl p-1.5 text-center"><span className="text-xs font-bold text-slate-900 block">{n}</span><span className="text-[9px] text-slate-500">{l}</span></div>)}</div></div></button>; })}
+    {tab === 2 && <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5" data-testid="po-matrix">
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-3 pb-4 border-b border-slate-100">
+        <div className="min-w-0 flex-1"><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Matriz de órdenes de compra', 'Purchase orders matrix')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Organiza las órdenes primero por comprador y abre después la matriz paginada del responsable seleccionado.', 'Organizes orders first by buyer and then opens the paginated matrix of the selected owner.')}</p></div>
+        <span className="text-sm font-black shrink-0"><button type="button" onClick={() => setTab(1)} title={tx('Las nuevas OC se generan desde la adjudicación definitiva (Emisión de orden de compra).', 'New POs are generated from the definitive award (Purchase Order Issuance).')} className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl shadow-md">+ {tx('Nueva orden', 'New order')}</button></span>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-        <div className="md:col-span-6 relative"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input type="search" aria-label={tx('Buscar órdenes', 'Search orders')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={tx('Buscar OC, requisición, referencia, proveedor o responsable...', 'Search PO, requisition, reference, vendor or responsible...')} className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" /></div>
-        <select aria-label={tx('Estatus', 'Status')} value={status} onChange={e => { setStatus(e.target.value); setPage(1); }} className="md:col-span-3 px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"><option value="all">{tx('Todos los estatus', 'All statuses')}</option>{(sum?.statuses || []).map(s => <option key={s.code} value={s.code}>{opLabel(s.code, en)} ({s.count})</option>)}</select>
-        <select aria-label={tx('Orden', 'Sort')} value={sort} onChange={e => { setSort(e.target.value); setPage(1); }} className="md:col-span-3 px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"><option value="recent">{tx('Más recientes primero', 'Most recent first')}</option><option value="oldest">{tx('Más antiguas primero', 'Oldest first')}</option><option value="amount">{tx('Mayor monto primero', 'Highest amount first')}</option></select>
+      <div className="flex flex-wrap items-center gap-3 p-4 rounded-2xl border border-blue-100 bg-blue-50/40">
+        <label htmlFor="po-pdf-lang" className="text-xs font-black text-slate-800 flex items-center gap-1.5"><span aria-hidden="true">🌐</span>Idioma de Orden de Compra / Purchase Order language:</label>
+        <select id="po-pdf-lang" value={pdfLang} onChange={e => setPdfLang(e.target.value)} className="px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-800"><option value="es">Español</option><option value="en">English</option></select>
+        <span className="text-[10px] font-black text-blue-900 bg-blue-100/80 rounded-full px-3 py-1" title={tx('Etiquetas y textos del formato en el idioma elegido; los datos capturados (descripciones, nombres) se imprimen como se registraron.', 'Form labels and texts in the chosen language; captured data (descriptions, names) print as recorded.')}>{pdfEn ? 'PDF: 100% in the selected language' : 'PDF: 100% en el idioma seleccionado'}</span>
+      </div>
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-3">
+        <div><h4 className="text-sm sm:text-base font-black text-slate-900">{tx('Órdenes de compra por comprador', 'Purchase orders by buyer')}</h4><p className="text-[11px] text-slate-500 mt-0.5">{tx('Selecciona un comprador para consultar únicamente sus órdenes de compra.', 'Select a buyer to view only their purchase orders.')}</p></div>
+        <span className="text-xs font-black self-start"><button type="button" onClick={backToBuyers} className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl shadow-2xs">← {tx('Volver a compradores', 'Back to buyers')}</button></span>
       </div>
       <Loading on={list.status === 'loading'} /><Err e={list.error} />
-      <div className="flex justify-between text-[11px] text-slate-500"><span>{d?.total ?? 0} {tx('órdenes (versión vigente)', 'orders (current version)')}</span><span>{(sum?.money || []).map(m => `${money(m.amount, m.currency, en)} · ${m.orders} OC`).join('  |  ') || DASH}</span></div>
-      <div className="overflow-x-auto rounded-2xl border border-slate-200/80"><table className="w-full text-left border-collapse min-w-[1250px]">
-        <thead><tr className="bg-slate-50 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-200">{[tx('OC', 'PO'), tx('Requisición', 'Requisition'), tx('Referencia interna', 'Internal ref.'), tx('Proveedor', 'Vendor'), tx('Comprador', 'Buyer'), tx('Preparó / Revisó', 'Prepared'), tx('Autorizó', 'Authorized'), tx('Monto', 'Amount'), tx('Emisión', 'Issued'), tx('Estatus', 'Status'), tx('Avance', 'Progress'), tx('Flujo de aprobación', 'Approval flow')].map(h => <th key={h} className="py-3 px-3">{h}</th>)}<th className="py-3 px-3 text-center sticky right-0 bg-slate-50 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]">{tx('Acciones', 'Actions')}</th></tr></thead>
-        <tbody className="divide-y divide-slate-100 text-[11px] text-slate-700">
-          {(d?.items || []).map(po => { const pr = progressOf(po); return <tr key={po.id} className="align-top hover:bg-slate-50/70">
-            <td className="py-3 px-3 whitespace-nowrap"><div className="font-black text-slate-900">{po.folio}</div>{po.version_number > 1 && <div className="text-[10px] text-purple-700 font-bold">Rev. {po.version_number}</div>}{po.auto_generated && <div className="text-[10px] text-slate-400">{tx('Generada automáticamente', 'Auto-generated')}</div>}</td>
-            <td className="py-3 px-3 min-w-[140px]"><div>{show(po.requisitions)}</div><div className="text-[10px] text-slate-400">{show(po.clients)}</div></td>
-            <td className="py-3 px-3">{show(po.internal_reference)}</td>
-            <td className="py-3 px-3 min-w-[160px]"><div className="font-semibold text-slate-800">{po.supplier_name}</div><div className="text-[10px] text-slate-400">{po.supplier_code}</div></td>
-            <td className="py-3 px-3">{show(po.buyer_name)}</td><td className="py-3 px-3">{show(po.preparer_name)}</td><td className="py-3 px-3">{show(po.authorizer_name)}</td>
-            <td className="py-3 px-3 font-bold whitespace-nowrap">{money(po.total_amount, po.currency, en)}</td>
-            <td className="py-3 px-3 whitespace-nowrap">{ymd(po.order_date)}{po.commitment_date && <div className="text-[10px] text-slate-400">{tx('Compromiso', 'Commit')}: {ymd(po.commitment_date)}</div>}</td>
-            <td className="py-3 px-3">{pill(po.operational_status)}{po.legacy_status && <div className="text-[10px] text-slate-500 mt-0.5">{po.legacy_status}</div>}</td>
-            <td className="py-3 px-3 min-w-[90px]">{pr.pct === null ? <span className="text-[10px] text-slate-500">{po.receipt_count} {tx('recepción(es)', 'receipt(s)')}</span> : <><div className="h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${pr.pct}%` }} /></div><div className="text-[10px] text-slate-500 mt-0.5">{Math.round(pr.pct)}% {tx('recibido', 'received')}</div></>}</td>
-            <td className="py-3 px-3"><div>{opLabel(po.approval_status, en)}</div>{po.responsible_name && <div className="text-[10px] text-slate-400">{tx('Responsable', 'Owner')}: {po.responsible_name}</div>}</td>
-            <td className="py-3 px-3 sticky right-0 bg-white shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]"><div className="flex flex-col gap-1 min-w-[110px]">
-              <button type="button" onClick={() => openFormat(po.id)} className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-100 text-[10px] font-black rounded-lg uppercase flex items-center justify-center gap-1"><Eye className="w-3 h-3" />{tx('Ver PDF', 'View PDF')}</button>
-              {lockBtn(tx('Solicitar modificación', 'Request change'))}{lockBtn(tx('Eliminar OC', 'Delete PO'))}</div></td>
-          </tr>; })}
-          {list.status === 'ready' && !d?.items?.length && <tr><td colSpan={13} className="py-12 text-center text-xs text-slate-400 font-semibold">{tx('No hay órdenes de compra para el filtro.', 'No purchase orders for the filter.')}</td></tr>}
-        </tbody></table></div>
-      <div className="flex justify-between items-center text-xs text-slate-600"><span>{tx('Página', 'Page')} {page} / {lastPage}</span><div className="flex gap-2"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => n - 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= lastPage} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div></div>
+
+      {!buyerSel && <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <input type="search" aria-label={tx('Buscar comprador', 'Search buyer')} value={bInput} onChange={e => setBInput(e.target.value)} maxLength={120} placeholder={tx('Buscar comprador, correo, teléfono o puesto...', 'Search buyer, email, phone or position...')} className="flex-1 min-w-0 px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
+          <span data-testid="po-buyer-badge" className="px-3 py-1 bg-amber-50 text-amber-900 font-black text-[11px] rounded-full border border-amber-200 self-start sm:self-auto whitespace-nowrap">{sum ? buyersBadge(sum, en) : '…'}</span>
+        </div>
+        {sum && <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+          {shownCards.map(c => <button key={c.id} type="button" data-testid="po-buyer-card" data-buyer={c.name} aria-label={`${tx('Abrir órdenes de', 'Open orders of')} ${c.name}`} onClick={() => openBuyer(c)} className={`relative text-left bg-white rounded-2xl border border-slate-200/90 p-3.5 pl-4 shadow-2xs hover:shadow-md transition-all overflow-hidden flex flex-col justify-between ${c.isAll && !c.isNone ? 'bg-gradient-to-br from-white to-purple-50/60' : ''}`}>
+            <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b from-amber-500 via-orange-500 to-purple-600" />
+            <div>
+              <div className="flex items-start gap-3 mb-3"><div className="w-10 h-10 rounded-xl text-white font-black text-xs flex items-center justify-center shrink-0 shadow-sm bg-gradient-to-br from-amber-500 to-orange-600">{c.tag}</div>
+                <div className="min-w-0"><div className={`text-xs font-black text-slate-900 leading-tight ${c.isAll ? '' : 'uppercase'}`}>{c.name}</div><div className="text-[10px] text-slate-500 truncate" title={c.sub}>{c.sub || ' '}</div></div></div>
+              <div className="grid grid-cols-3 gap-1.5">{[[c.count, 'OC'], [c.pending ?? DASH, tx('Pendientes', 'Pending')], [c.received ?? DASH, tx('Recibidas', 'Received')]].map(([n, l]) => <div key={l} className="bg-white border border-slate-200 rounded-xl px-2 py-1.5"><span className="block text-sm font-black text-slate-900 tabular-nums">{n}</span><span className="block text-[9px] text-slate-500">{l}</span></div>)}</div>
+            </div>
+            {c.isAll ? <div className="flex justify-between text-[10px] text-slate-600 mt-3 pt-2"><span>{c.isNone ? tx('Órdenes sin comprador', 'Orders without buyer') : tx('Vista general', 'Overview')}</span><span aria-hidden="true">→</span></div>
+              : <div className="mt-3 space-y-1.5"><div className="flex justify-between gap-2 text-[10px] text-slate-600"><span>{c.meta}</span><span className="font-bold text-slate-800 whitespace-nowrap">{c.amount}</span></div>
+                <div className="flex items-center gap-2"><div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-amber-500 to-purple-600" style={{ width: `${c.pct}%` }} /></div><span className="text-[10px] font-black text-slate-700 whitespace-nowrap">{c.pct}% {tx('recibido', 'received')}</span></div></div>}
+          </button>)}
+          {shownCards.every(c => c.isAll) && bInput.trim() && <div className="col-span-full p-6 border border-dashed border-slate-300 rounded-2xl text-center text-sm text-slate-600">{tx(`Ningún comprador coincide con "${bInput.trim()}".`, `No buyer matches "${bInput.trim()}".`)}</div>}
+        </div>}
+      </div>}
+
+      {buyerSel && <div className="space-y-4">
+        <div data-testid="po-buyer-head" className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50/80 via-white to-purple-50/50">
+          <div><h4 className="text-sm font-black text-slate-900">{buyerSel.name}</h4><p className="text-[10.5px] text-slate-600">{buyerCaption(buyerSel, d?.total ?? 0, sum?.buyers?.length ?? 0, en)}</p></div>
+          <span className="text-xs font-black"><button type="button" onClick={backToBuyers} className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl shadow-2xs">← {tx('Cambiar comprador', 'Change buyer')}</button></span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+          <input type="search" aria-label={tx('Buscar órdenes', 'Search orders')} value={input} onChange={e => setInput(e.target.value)} maxLength={120} placeholder={tx('Buscar OC, requisición, referencia, proveedor o responsable...', 'Search PO, requisition, reference, vendor or responsible...')} className="md:col-span-5 px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
+          <select aria-label={tx('Estatus', 'Status')} value={stF} onChange={e => { setStF(e.target.value); setPage(1); }} className="md:col-span-3 px-3 py-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-800"><option value="all">{tx('Todos los estatus', 'All statuses')}</option>{PO_STATES.map(([k, es, e2]) => <option key={k} value={k}>{en ? e2 : es} ({sum?.states?.find(x => x.code === k)?.count ?? 0})</option>)}</select>
+          <select aria-label={tx('Orden', 'Sort')} value={sort} onChange={e => { setSort(e.target.value); setPage(1); }} className="md:col-span-3 px-3 py-3 bg-white border border-slate-300 rounded-xl text-sm text-slate-800"><option value="recent">{tx('Más recientes primero', 'Most recent first')}</option><option value="oldest">{tx('Más antiguas primero', 'Oldest first')}</option><option value="amount">{tx('Mayor monto primero', 'Highest amount first')}</option></select>
+          <label className="md:col-span-1 flex items-center gap-2 text-[10px] font-black text-slate-700">{tx('Filas', 'Rows')}<select aria-label={tx('Filas por página', 'Rows per page')} value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} className="flex-1 px-2 py-3 bg-white border border-slate-300 rounded-xl text-xs">{[15, 25, 50].map(n => <option key={n} value={n}>{n}</option>)}</select></label>
+        </div>
+        <div className="p-3.5 rounded-xl border border-blue-100 bg-blue-50/50 text-[10.5px] text-slate-700 leading-relaxed">
+          <strong>{tx('Vista por comprador:', 'Buyer view:')}</strong> <strong>{tx('VER PDF', 'VIEW PDF')}</strong> {tx('genera el formato de la Orden de Compra.', 'generates the Purchase Order format.')} <strong>{tx('EDITAR', 'EDIT')}</strong> {tx('abre la orden para modificarla.', 'opens the order to modify it.')} <strong>{tx('AVANCE', 'PROGRESS')}</strong> {tx('refleja el porcentaje recibido de la OC.', 'reflects the received percentage of the PO.')} <strong>{tx('ELIMINAR', 'DELETE')}</strong> {tx('borra la orden después de confirmar.', 'deletes the order after confirming.')}<br />
+          <strong>{tx('SOLICITAR MODIFICACIÓN', 'REQUEST CHANGE')}</strong> {tx('requiere aprobación previa. Solo después se habilita', 'requires prior approval. Only then is')} <strong>{tx('MODIFICAR OC', 'MODIFY PO')}</strong>{tx('; la Rev. N vuelve a revisión/autorización.', ' enabled; Rev. N goes back to review/authorization.')}
+        </div>
+        {actMsg && <div data-testid="po-action-msg" role={actMsg.kind === 'error' ? 'alert' : 'status'} className={`flex items-start justify-between gap-3 p-3 rounded-xl border text-xs ${actMsg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : actMsg.kind === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-blue-50 border-blue-200 text-blue-900'}`}><span className="flex items-start gap-2">{actMsg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{actMsg.folio ? <strong>{actMsg.folio}: </strong> : null}{actMsg.text}</span></span><button type="button" aria-label={tx('Cerrar aviso', 'Close notice')} onClick={() => setActMsg(null)} className="p-1 rounded hover:bg-white/60"><X className="w-3.5 h-3.5" /></button></div>}
+        <div className="overflow-auto max-h-[70vh] rounded-2xl border border-slate-200/80"><table className="w-full text-left border-collapse min-w-[1700px]">
+          <thead className="sticky top-0 z-10"><tr className="bg-slate-50 text-[10px] font-extrabold text-slate-600 uppercase tracking-wider border-b border-slate-200">{[tx('OC', 'PO'), tx('Requisición', 'Requisition'), tx('Referencia interna', 'Internal ref.'), tx('Proveedor', 'Vendor'), tx('Comprador', 'Buyer'), tx('Preparó / Revisó', 'Prepared / Reviewed'), tx('Autorizó', 'Authorized'), tx('Partidas', 'Items'), tx('Monto', 'Amount'), tx('Emisión', 'Issued'), tx('Compromiso', 'Commitment'), tx('Estatus', 'Status'), tx('PDF automático', 'Automatic PDF'), tx('Avance', 'Progress')].map(h => <th key={h} className="py-3 px-3 bg-slate-50">{h}</th>)}<th className="py-3 px-3 text-center sticky right-0 bg-slate-50 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]">{tx('Acciones', 'Actions')}</th></tr></thead>
+          <tbody className="divide-y divide-slate-100 text-[11px] text-slate-700">
+            {(d?.items || []).map(po => { const pr = progressOf(po); const st = poState(po, en); const busy = k => pdfBusy === `${po.id}:${k}`; return <tr key={po.id} data-folio={po.folio} className="align-top hover:bg-slate-50/70">
+              <td className="py-3 px-3 whitespace-nowrap"><div className="font-black text-slate-900">{po.folio}</div><span className="inline-block mt-1 text-[9px] font-black text-purple-700 bg-purple-50 border border-purple-100 rounded-full px-1.5 py-0.5">{revLabel(po)}</span>{po.auto_generated && <div className="text-[10px] text-slate-400">{tx('Generada automáticamente', 'Auto-generated')}</div>}</td>
+              <td className="py-3 px-3 min-w-[130px]"><div>{show(po.requisitions)}</div><div className="text-[10px] text-slate-400">{show(po.clients)}</div></td>
+              <td className="py-3 px-3">{show(po.internal_reference)}</td>
+              <td className="py-3 px-3 min-w-[150px] uppercase">{po.supplier_name}</td>
+              <td className="py-3 px-3 font-bold min-w-[120px]">{show(po.buyer_name)}</td><td className="py-3 px-3 font-bold min-w-[120px]">{show(po.preparer_name)}</td><td className="py-3 px-3 font-bold min-w-[120px]">{show(po.authorizer_name)}</td>
+              <td className="py-3 px-3 min-w-[130px]"><div className="font-black text-slate-900">{po.item_count}</div><div className="text-[9.5px] text-slate-500 uppercase leading-snug">{show(po.item_summary)}</div></td>
+              <td className="py-3 px-3 whitespace-nowrap font-bold">{money(po.total_amount, po.currency, en)}</td>
+              <td className="py-3 px-3 whitespace-nowrap">{ymd(po.order_date)}</td><td className="py-3 px-3 whitespace-nowrap">{ymd(po.commitment_date)}</td>
+              <td className="py-3 px-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${st.tone}`}>{st.text}</span>{po.mod_pending && <div className="text-[9.5px] text-amber-700 font-bold mt-1">{tx('Modificación pendiente', 'Change pending')}: {po.mod_pending}</div>}</td>
+              <td className="py-3 px-3"><div className="flex flex-col gap-1.5 min-w-[118px] text-[10px] font-black">
+                <span className="text-[9.5px]"><button type="button" onClick={() => openFormat(po.id)} className="px-2 py-0.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-100 rounded-full">{tx('Formato PDF', 'PDF format')}</button></span>
+                <button type="button" disabled={!!pdfBusy} onClick={() => pdfOf(po, 'view')} className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg uppercase flex items-center justify-center gap-1 disabled:opacity-60">{busy('view') ? <Loader2 className="w-3 h-3 animate-spin" /> : <Eye className="w-3 h-3" />}{tx('Ver PDF', 'View PDF')}</button>
+                <button type="button" disabled={!!pdfBusy} onClick={() => pdfOf(po, 'download')} className="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-lg uppercase whitespace-nowrap disabled:opacity-60">{busy('download') ? '…' : '↓'} {tx('Descargar PDF', 'Download PDF')}</button></div></td>
+              <td className="py-3 px-3 min-w-[100px]">{pr.pct === null ? <span className="text-[10px] text-slate-500">{po.receipt_count} {tx('recepción(es)', 'receipt(s)')}</span> : <><div className="h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${pr.pct}%` }} /></div><div className="text-[10px] text-slate-500 mt-0.5">{Math.round(pr.pct)}% {tx('recibido', 'received')}</div></>}</td>
+              <td className="py-3 px-3 sticky right-0 bg-white shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.15)]"><div className="flex flex-col gap-1 min-w-[150px] text-[9.5px] font-black uppercase">
+                <button type="button" onClick={() => onEdit(po)} className="uppercase px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg">{tx('Editar', 'Edit')}</button>
+                <button type="button" onClick={() => onRequest(po)} className="uppercase px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg">{tx('Solicitar modificación', 'Request change')}</button>
+                <button type="button" onClick={() => onModify(po)} disabled={!!modifyBlock(po, en)} title={modifyBlock(po, en) || ''} className="uppercase px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed">{tx('Modificar OC', 'Modify PO')}</button>
+                <button type="button" onClick={() => onDelete(po)} className="uppercase px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg">{tx('Eliminar', 'Delete')}</button></div></td>
+            </tr>; })}
+            {list.status === 'ready' && !d?.items?.length && <tr><td colSpan={15} className="py-12 text-center text-xs text-slate-400 font-semibold">{tx('No hay órdenes de compra para el filtro.', 'No purchase orders for the filter.')}</td></tr>}
+          </tbody></table></div>
+        <div className="flex flex-wrap justify-between items-center gap-2 text-xs text-slate-600"><span data-testid="po-range" className="font-bold text-blue-900">{rangeText(page, pageSize, d?.total ?? 0, en)}</span>
+          <div className="flex items-center gap-2"><span>{tx('Página', 'Page')} {page} / {lastPage}</span><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(n => n - 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft size={16} /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= lastPage} onClick={() => setPage(n => n + 1)} className="p-2 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight size={16} /></button></div></div>
+        <p className="text-[10.5px] text-slate-500">{tx('Monto vigente por moneda', 'Current amount per currency')}: {(sum?.money || []).map(m => `${money(m.amount, m.currency, en)} · ${m.orders} OC`).join('  |  ') || DASH}</p>
+      </div>}
+    </div>}
+
+    {reqDlg && <div role="dialog" aria-modal="true" aria-label={tx('Solicitar modificación', 'Request change')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setReqDlg(null)}>
+      <div data-testid="po-request" className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-4 text-left" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between"><h3 className="text-sm font-black text-purple-800">{tx('Solicitar modificación', 'Request change')} · {reqDlg.po.folio} · {revLabel(reqDlg.po)}</h3><button type="button" aria-label={tx('Cerrar', 'Close')} onClick={() => setReqDlg(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
+        <p className="text-[11px] text-slate-600">{tx('La solicitud requiere aprobación previa; al aprobarse se habilita MODIFICAR OC y la nueva revisión vuelve a revisión/autorización.', 'The request requires prior approval; once approved MODIFY PO is enabled and the new revision goes back to review/authorization.')}</p>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block"><span className="block text-[11px] font-black mb-1">{tx('Tipo de modificación', 'Change type')} *</span><select aria-label={tx('Tipo de modificación', 'Change type')} value={reqDlg.form.type} onChange={e => setReqDlg(x => ({ ...x, form: { ...x.form, type: e.target.value }, msg: null }))} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm"><option value="">{tx('Seleccionar...', 'Select...')}</option>{REQUEST_TYPES.map(([k, es, e2]) => <option key={k} value={k}>{en ? e2 : es}</option>)}</select></label>
+          <label className="block"><span className="block text-[11px] font-black mb-1">{tx('Urgencia', 'Urgency')}</span><select aria-label={tx('Urgencia', 'Urgency')} value={reqDlg.form.urgency} onChange={e => setReqDlg(x => ({ ...x, form: { ...x.form, urgency: e.target.value }, msg: null }))} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm">{URGENCIES.map(([k, es, e2]) => <option key={k} value={k}>{en ? e2 : es}</option>)}</select></label>
+        </div>
+        <label className="block"><span className="block text-[11px] font-black mb-1">{tx('Motivo', 'Reason')} *</span><textarea rows={3} aria-label={tx('Motivo de la modificación', 'Change reason')} maxLength={1100} value={reqDlg.form.reason} onChange={e => setReqDlg(x => ({ ...x, form: { ...x.form, reason: e.target.value }, msg: null }))} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" /></label>
+        {reqDlg.msg && <p data-testid="po-request-msg" role={reqDlg.msg.kind === 'error' ? 'alert' : 'status'} className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${reqDlg.msg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{reqDlg.msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{reqDlg.msg.text}</span></p>}
+        <div className="flex justify-end gap-2 text-xs font-black"><button type="button" onClick={() => setReqDlg(null)} className="px-4 py-2 border border-slate-200 rounded-xl">{tx('Cancelar', 'Cancel')}</button><button type="button" onClick={sendRequest} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl">{tx('Enviar solicitud', 'Send request')}</button></div>
+      </div>
+    </div>}
+
+    {editDlg && <div role="dialog" aria-modal="true" aria-label={tx('Editar orden de compra', 'Edit purchase order')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditDlg(null)}>
+      <div data-testid="po-edit" className="bg-white rounded-2xl w-full max-w-xl p-5 space-y-4 text-left" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between"><h3 className="text-sm font-black text-amber-700">{tx('Editar', 'Edit')} {editDlg.po.folio} · {revLabel(editDlg.po)}</h3><button type="button" aria-label={tx('Cerrar', 'Close')} onClick={() => setEditDlg(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
+        {!editDlg.form ? <Loading on={!editDlg.msg} /> : <div className="grid grid-cols-2 gap-3">
+          {[['commitment', tx('Fecha compromiso', 'Commitment date'), 'date'], ['reference', tx('Referencia interna', 'Internal reference'), 'text'], ['place', tx('Lugar de entrega', 'Delivery place'), 'text']].map(([k, l, t]) => <label key={k} className={`block ${k === 'place' ? 'col-span-2' : ''}`}><span className="block text-[11px] font-black mb-1">{l}</span><input type={t} aria-label={l} value={editDlg.form[k]} onChange={e => { const v = e.target.value; setEditDlg(x => ({ ...x, form: { ...x.form, [k]: v }, msg: null })); }} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" /></label>)}
+          {[['terms', tx('Condiciones', 'Terms')], ['notes', tx('Notas', 'Notes')]].map(([k, l]) => <label key={k} className="block col-span-2"><span className="block text-[11px] font-black mb-1">{l}</span><textarea rows={2} aria-label={l} value={editDlg.form[k]} onChange={e => { const v = e.target.value; setEditDlg(x => ({ ...x, form: { ...x.form, [k]: v }, msg: null })); }} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" /></label>)}
+        </div>}
+        {editDlg.msg && <p data-testid="po-edit-msg" role={editDlg.msg.kind === 'error' ? 'alert' : 'status'} className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${editDlg.msg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : editDlg.msg.kind === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>{editDlg.msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{editDlg.msg.text}</span></p>}
+        <div className="flex justify-end gap-2 text-xs font-black"><button type="button" onClick={() => setEditDlg(null)} className="px-4 py-2 border border-slate-200 rounded-xl">{tx('Cancelar', 'Cancel')}</button><button type="button" disabled={!editDlg.form} onClick={saveEdit} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl disabled:opacity-50">{tx('Guardar cambios', 'Save changes')}</button></div>
+      </div>
+    </div>}
+
+    {delDlg && <div role="dialog" aria-modal="true" aria-label={tx('Eliminar orden de compra', 'Delete purchase order')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setDelDlg(null)}>
+      <div data-testid="po-delete" className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-4 text-left" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between"><h3 className="text-sm font-black text-rose-700">{tx('Eliminar', 'Delete')} {delDlg.po.folio} · {revLabel(delDlg.po)}</h3><button type="button" aria-label={tx('Cerrar', 'Close')} onClick={() => setDelDlg(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
+        <p className="text-xs text-slate-600">{delDlg.po.supplier_name} · {money(delDlg.po.total_amount, delDlg.po.currency, en)} · {poState(delDlg.po, en).text}</p>
+        {delDlg.block ? <p role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">{delDlg.block}</p> : <>
+          <label className="block"><span className="block text-[11px] font-black mb-1">{tx(`Escribe el folio (${delDlg.po.folio}) para confirmar`, `Type the folio (${delDlg.po.folio}) to confirm`)}</span><input type="text" aria-label={tx('Folio a eliminar', 'Folio to delete')} value={delDlg.folio} onChange={e => { const v = e.target.value; setDelDlg(x => ({ ...x, folio: v, msg: null })); }} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" /></label>
+          <label className="block"><span className="block text-[11px] font-black mb-1">{tx('Motivo', 'Reason')} *</span><textarea rows={3} aria-label={tx('Motivo de la eliminación', 'Deletion reason')} value={delDlg.reason} onChange={e => { const v = e.target.value; setDelDlg(x => ({ ...x, reason: v, msg: null })); }} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" /></label></>}
+        {delDlg.msg && <p data-testid="po-delete-msg" role={delDlg.msg.kind === 'error' ? 'alert' : 'status'} className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${delDlg.msg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{delDlg.msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{delDlg.msg.text}</span></p>}
+        <div className="flex justify-end gap-2 text-xs font-black"><button type="button" onClick={() => setDelDlg(null)} className="px-4 py-2 border border-slate-200 rounded-xl">{tx('Cancelar', 'Cancel')}</button>{!delDlg.block && <button type="button" onClick={tryDelete} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl">{tx('Eliminar', 'Delete')}</button>}</div>
+      </div>
     </div>}
 
     {/* 3 · CONTROL DE AUTORIZACIÓN */}
@@ -221,9 +347,9 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
       <Loading on={fam.status === 'loading'} /><Err e={fam.error} />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[[families.length, tx('Familias de OC', 'PO families')], [families.filter(f => f.versions.length > 1).length, tx('Con revisión / enmienda', 'With revision / amendment')], [ctr.change_pending ?? 0, tx('Cambios pendientes', 'Pending changes')], [ctr.reconciliation_pending ?? 0, tx('Conciliación requerida', 'Reconciliation required')]].map(([n, l]) => <div key={l} className="p-4 rounded-xl border border-slate-200 bg-white"><div className="text-2xl font-black text-slate-900 tabular-nums">{n}</div><div className="text-[11px] text-slate-500 font-bold">{l}</div></div>)}</div>
       {(fam.data?.total || 0) > 50 && <p className="text-[11px] text-amber-700">{tx('Se muestran las 50 versiones más recientes.', 'Showing the 50 most recent versions.')}</p>}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">{families.map(f => { const last = f.versions[f.versions.length - 1]; const on = openFamily === f.id; return <div key={f.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-2"><div className="flex justify-between gap-2"><span className="text-sm font-black text-slate-900">{f.folio}</span><span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 rounded-full px-2 py-0.5">Rev. {last.version_number}</span></div><div className="text-[11px] text-slate-500">{last.supplier_name}</div><div className="text-xs font-bold">{money(last.total_amount, last.currency, en)}</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">{families.map(f => { const last = f.versions[f.versions.length - 1]; const on = openFamily === f.id; return <div key={f.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-2"><div className="flex justify-between gap-2"><span className="text-sm font-black text-slate-900">{f.folio}</span><span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 rounded-full px-2 py-0.5">{revLabel(last)}</span></div><div className="text-[11px] text-slate-500">{last.supplier_name}</div><div className="text-xs font-bold">{money(last.total_amount, last.currency, en)}</div>
         <div className="flex gap-1.5"><button type="button" onClick={() => setOpenFamily(on ? '' : f.id)} className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black rounded-lg uppercase">{on ? tx('Ocultar', 'Hide') : tx('Historial', 'History')}</button>{lockBtn(tx('Modificar OC', 'Modify PO'))}</div>
-        {on && <ul className="space-y-1 pt-2 border-t border-slate-100">{f.versions.map(v => <li key={v.id} className="text-[10px] text-slate-600 flex justify-between gap-2"><span>Rev. {v.version_number} · {ymd(v.order_date)}</span><span className="font-bold">{money(v.total_amount, v.currency, en)}</span><button type="button" onClick={() => openFormat(v.id)} className="text-blue-700 font-bold">{tx('Ver', 'View')}</button></li>)}</ul>}</div>; })}</div>
+        {on && <ul className="space-y-1 pt-2 border-t border-slate-100">{f.versions.map(v => <li key={v.id} className="text-[10px] text-slate-600 flex justify-between gap-2"><span>{revLabel(v)} · {ymd(v.order_date)}</span><span className="font-bold">{money(v.total_amount, v.currency, en)}</span><button type="button" onClick={() => openFormat(v.id)} className="text-blue-700 font-bold">{tx('Ver', 'View')}</button></li>)}</ul>}</div>; })}</div>
       {fam.status === 'ready' && !families.length && <p className="text-xs text-slate-400 text-center py-8">{tx('No hay órdenes de compra registradas.', 'No purchase orders recorded.')}</p>}
     </div>}
 
@@ -232,7 +358,7 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
       <div className="pb-3 border-b border-slate-100"><h3 className="text-base font-extrabold text-slate-900">{tx('Revisión y autorización', 'Review & authorization')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Órdenes en las que eres el responsable actual y solicitudes de modificación asignadas a ti.', 'Orders where you are the current owner and modification requests assigned to you.')}</p></div>
       <Loading on={tasks.status === 'loading'} /><Err e={tasks.error} />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="space-y-2"><h4 className="text-xs font-black text-slate-800">{tx('Mis órdenes por atender', 'My orders to handle')} · {tasks.data?.responsible?.length ?? 0}</h4>{(tasks.data?.responsible || []).map(po => <div key={po.id} className="p-3 rounded-xl border border-slate-200 flex justify-between gap-2 text-xs"><div><div className="font-black">{po.folio}{po.version_number > 1 ? ` · Rev. ${po.version_number}` : ''}</div><div className="text-[10px] text-slate-500">{po.supplier_name} · {opLabel(po.approval_status, en)}</div></div><div className="flex flex-col items-end gap-1"><strong>{money(po.total_amount, po.currency, en)}</strong><button type="button" onClick={() => openFormat(po.id)} className="text-[10px] text-blue-700 font-bold">{tx('Ver formato', 'View format')}</button></div></div>)}{tasks.status === 'ready' && !tasks.data?.responsible?.length && <p className="text-[11px] text-slate-400">{tx('Sin órdenes asignadas.', 'No orders assigned.')}</p>}</div>
+        <div className="space-y-2"><h4 className="text-xs font-black text-slate-800">{tx('Mis órdenes por atender', 'My orders to handle')} · {tasks.data?.responsible?.length ?? 0}</h4>{(tasks.data?.responsible || []).map(po => <div key={po.id} className="p-3 rounded-xl border border-slate-200 flex justify-between gap-2 text-xs"><div><div className="font-black">{po.folio} · {revLabel(po)}</div><div className="text-[10px] text-slate-500">{po.supplier_name} · {opLabel(po.approval_status, en)}</div></div><div className="flex flex-col items-end gap-1"><strong>{money(po.total_amount, po.currency, en)}</strong><button type="button" onClick={() => openFormat(po.id)} className="text-[10px] text-blue-700 font-bold">{tx('Ver formato', 'View format')}</button></div></div>)}{tasks.status === 'ready' && !tasks.data?.responsible?.length && <p className="text-[11px] text-slate-400">{tx('Sin órdenes asignadas.', 'No orders assigned.')}</p>}</div>
         <div className="space-y-2"><h4 className="text-xs font-black text-slate-800">{tx('Solicitudes de modificación asignadas', 'Assigned modification requests')} · {tasks.data?.modification_requests?.length ?? 0}</h4>{(tasks.data?.modification_requests || []).map(m => <div key={m.folio} className="p-3 rounded-xl border border-slate-200 text-xs space-y-1"><div className="flex justify-between"><strong>{m.folio}</strong><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusTone(m.status)}`}>{opLabel(m.status, en)}</span></div><div className="text-[11px] text-slate-600">{m.purchase_order_folio} · {show(m.change_type)} · {tx('urgencia', 'urgency')} {show(m.urgency)}</div><div className="text-[10px] text-slate-500">{m.reason}</div><div className="flex gap-1.5 pt-1">{lockBtn(tx('Aprobar', 'Approve'))}{lockBtn(tx('Rechazar', 'Reject'))}</div></div>)}{tasks.status === 'ready' && !tasks.data?.modification_requests?.length && <p className="text-[11px] text-slate-400">{tx('Sin solicitudes asignadas.', 'No requests assigned.')}</p>}</div>
       </div>
     </div>}
@@ -240,13 +366,13 @@ export function PurchaseOrdersModule({ lang = 'es', language, isEnglish, onNotif
     {/* 6 · FORMATO */}
     {tab === 6 && <div className={box}>
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100"><div><h3 className="text-base font-extrabold text-slate-900">{tx('Formato de Orden de Compra', 'Purchase Order format')}</h3><p className="text-xs text-slate-500 mt-0.5">{tx('Selecciona una OC desde la matriz ("Ver PDF") o desde esta lista.', 'Pick a PO from the matrix ("View PDF") or from this list.')}</p></div>
-        <div className="flex items-center gap-2"><select aria-label={tx('Orden de compra', 'Purchase order')} value={detailId} onChange={e => setDetailId(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"><option value="">{tx('Seleccionar OC…', 'Select PO…')}</option>{(d?.items || []).map(po => <option key={po.id} value={po.id}>{po.folio}{po.version_number > 1 ? ` · Rev. ${po.version_number}` : ''} · {po.supplier_name}</option>)}{detailId && !(d?.items || []).some(po => po.id === detailId) && <option value={detailId}>{det.data?.item?.folio || detailId}</option>}</select>
+        <div className="flex items-center gap-2"><select aria-label={tx('Orden de compra', 'Purchase order')} value={detailId} onChange={e => setDetailId(e.target.value)} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"><option value="">{tx('Seleccionar OC…', 'Select PO…')}</option>{(d?.items || []).map(po => <option key={po.id} value={po.id}>{po.folio} · {revLabel(po)} · {po.supplier_name}</option>)}{detailId && !(d?.items || []).some(po => po.id === detailId) && <option value={detailId}>{det.data?.item?.folio || detailId}</option>}</select>
           <button type="button" onClick={print} disabled={!det.data} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center gap-1.5"><Printer className="w-3.5 h-3.5" />{tx('Imprimir / Guardar PDF', 'Print / Save PDF')}</button>{detailId && <button type="button" aria-label={tx('Cerrar vista', 'Close view')} onClick={() => setDetailId('')} className="p-2 rounded-xl border border-slate-200"><X className="w-4 h-4" /></button>}</div></div>
       <Loading on={det.status === 'loading'} /><Err e={det.error} />
       {!detailId && <div className="p-12 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500">{tx('Selecciona una orden de compra para ver su formato.', 'Select a purchase order to view its format.')}</div>}
-      {det.data && <div data-testid="po-format" className="space-y-3"><iframe title={tx('Formato de OC', 'PO format')} srcDoc={poPrintHtml(det.data, en)} sandbox="" className="w-full h-[900px] rounded-xl border border-slate-200 bg-white" />
+      {det.data && <div data-testid="po-format" className="space-y-3"><iframe title={tx('Formato de OC', 'PO format')} srcDoc={poPrintHtml(det.data, pdfEn)} sandbox="" className="w-full h-[900px] rounded-xl border border-slate-200 bg-white" />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-          <div className="p-3 rounded-xl border border-slate-200"><h4 className="font-black mb-1">{tx('Versiones', 'Versions')} · {det.data.versions.length}</h4>{det.data.versions.map(v => <div key={v.id} className="flex justify-between text-[11px]"><span>Rev. {v.version_number} {v.amendment_type ? `· ${v.amendment_type}` : ''}</span><span>{money(v.total_amount, v.currency, en)}</span></div>)}</div>
+          <div className="p-3 rounded-xl border border-slate-200"><h4 className="font-black mb-1">{tx('Versiones', 'Versions')} · {det.data.versions.length}</h4>{det.data.versions.map(v => <div key={v.id} className="flex justify-between text-[11px]"><span>{revLabel(v)} {v.amendment_type ? `· ${v.amendment_type}` : ''}</span><span>{money(v.total_amount, v.currency, en)}</span></div>)}</div>
           <div className="p-3 rounded-xl border border-slate-200"><h4 className="font-black mb-1">{tx('Recepciones', 'Receipts')} · {det.data.receipts.length}</h4>{det.data.receipts.map(r => <div key={r.folio} className="flex justify-between text-[11px]"><span>{r.folio} · {ymd(r.date)}</span><span>{r.received_percent !== null ? `${Math.round(Number(r.received_percent))}%` : show(r.status)}</span></div>)}</div>
           <div className="p-3 rounded-xl border border-slate-200"><h4 className="font-black mb-1">{tx('Facturas', 'Invoices')} · {det.data.invoices.length}</h4>{det.data.invoices.map(i => <div key={i.folio} className="flex justify-between text-[11px]"><span>{i.folio} · {ymd(i.date)}</span><span>{money(i.total_amount, i.currency, en)}</span></div>)}</div>
         </div></div>}

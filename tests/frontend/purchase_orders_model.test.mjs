@@ -31,7 +31,13 @@ test('tarjetas por comprador y emisión agrupada por requisición', () => {
 test('formato de OC: escapado, partidas, totales y firmas', () => {
   const html = poPrintHtml({ item: { folio: 'OC-<1>', version_number: 2, supplier_name: 'Prov & Cía', currency: 'USD', subtotal_amount: '1500', tax_amount: '240', total_amount: '1740', buyer_name: 'Ana', authorizer_name: null },
     items: [{ line_number: 1, description: '<b>Placa</b>', quantity: '3.000000', unit_label: 'pza', unit_price: '500', line_subtotal: '1500' }] });
-  assert.ok(html.includes('OC-&lt;1&gt; · Rev. 2') && html.includes('Prov &amp; Cía') && html.includes('&lt;b&gt;Placa&lt;/b&gt;') && !html.includes('<b>Placa'));
+  assert.ok(html.includes('OC-&lt;1&gt; · Rev. 1') && html.includes('Prov &amp; Cía') && html.includes('&lt;b&gt;Placa&lt;/b&gt;') && !html.includes('<b>Placa'));
   assert.ok(html.includes('$1,740.00 USD') && html.includes('<strong>Ana</strong>') && html.includes('<strong>—</strong>'));
   assert.ok(poPrintHtml({ item: { folio: 'X' }, items: [] }).includes('Sin partidas registradas.'));
+});
+
+test('revisión como en el Apps Script: Rev. 0 es la OC original', async () => {
+  const { revOf, revLabel } = await import('../../src/views/purchaseOrders/model.mjs');
+  assert.equal(revLabel({ version_number: 1 }), 'Rev. 0'); assert.equal(revOf({ version_number: 3 }), 2);
+  assert.equal(revOf({ version_number: 3, legacy_revision_number: 5 }), 5, 'número de revisión importado'); assert.equal(revOf({}), 0);
 });

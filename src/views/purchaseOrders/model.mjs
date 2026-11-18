@@ -2,6 +2,14 @@
 import { money, escapeHtml } from '../generalMatrix/model.mjs';
 
 export { money };
+
+/** Revision as in the Apps Script: Rev. 0 is the original order (imported revision number when present). */
+export function revOf(po) {
+  const legacy = po?.legacy_revision_number;
+  if (legacy !== null && legacy !== undefined && legacy !== '' && Number.isFinite(Number(legacy))) return Number(legacy);
+  return Math.max(0, (Number(po?.version_number) || 1) - 1);
+}
+export const revLabel = po => `Rev. ${revOf(po)}`;
 const fold = v => String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const OP = {
   draft: ['Borrador', 'Draft'], issued: ['Emitida', 'Issued'], sent: ['Enviada', 'Sent'], approved: ['Aprobada', 'Approved'], pending: ['Pendiente', 'Pending'],
@@ -66,7 +74,7 @@ table { width:100%; border-collapse:collapse; margin-top:8px; } th { background:
 .sigs { display:flex; gap:20px; margin-top:40px; } .sig { flex:1; text-align:center; display:flex; flex-direction:column; gap:2px; } .sig .line { border-top:1px solid #0f172a; margin-bottom:4px; } .sig span { color:#64748b; font-size:9px; }
 .note { color:#64748b; font-size:8px; margin-top:16px; }
 </style></head><body>
-<div class="banner"><div><h1>${L('Orden de Compra', 'Purchase Order')} ${escapeHtml(po.folio)}${po.version_number > 1 ? ` · Rev. ${escapeHtml(po.version_number)}` : ''}</h1><div>Grupo Gerez · ${L('Compras', 'Purchasing')}</div></div><div style="text-align:right">${L('Fecha', 'Date')}: <strong>${escapeHtml(po.order_date || '—')}</strong><br>${L('Compromiso', 'Commitment')}: ${escapeHtml(po.commitment_date || '—')}</div></div>
+<div class="banner"><div><h1>${L('Orden de Compra', 'Purchase Order')} ${escapeHtml(po.folio)} · ${escapeHtml(revLabel(po))}</h1><div>Grupo Gerez · ${L('Compras', 'Purchasing')}</div></div><div style="text-align:right">${L('Fecha', 'Date')}: <strong>${escapeHtml(po.order_date || '—')}</strong><br>${L('Compromiso', 'Commitment')}: ${escapeHtml(po.commitment_date || '—')}</div></div>
 <div class="grid"><div class="box"><h3>${L('Proveedor', 'Supplier')}</h3><strong>${escapeHtml(po.supplier_name)}</strong><br>${escapeHtml(po.supplier_code || '')} · RFC ${escapeHtml(po.supplier_tax_id || '—')}</div>
 <div class="box"><h3>${L('Referencias', 'References')}</h3>${L('Requisición', 'Requisition')}: ${escapeHtml(po.requisitions || '—')}<br>${L('Cliente', 'Client')}: ${escapeHtml(po.clients || '—')}<br>${L('Ref. interna', 'Internal ref.')}: ${escapeHtml(po.internal_reference || '—')}</div>
 <div class="box"><h3>${L('Entrega', 'Delivery')}</h3>${escapeHtml(po.delivery_place || '—')}${po.incoterm_code ? ` · ${escapeHtml(po.incoterm_code)}` : ''}</div>
