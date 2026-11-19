@@ -12,3 +12,5 @@ export const validationSetup = signal => getJson('/api/v1/contractor-management/
 export const validationRequisition = (id, signal) => (/^[0-9a-f-]{36}$/i.test(String(id)) ? getJson(`/api/v1/contractor-management/requisitions/${encodeURIComponent(id)}`, signal) : Promise.reject(new Error('Identificador inválido.')));
 export const strategySetup = signal => getJson('/api/v1/contractor-management/strategy-setup', signal);
 export const strategyRequisition = (id, signal) => (/^[0-9a-f-]{36}$/i.test(String(id)) ? getJson(`/api/v1/contractor-management/strategy/${encodeURIComponent(id)}`, signal) : Promise.reject(new Error('Identificador inválido.')));
+const qs = o => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]));
+export const validationsMatrix = (o = {}, signal) => getJson(`/api/v1/contractor-management/validations?${qs({ page: 1, page_size: 10, buyer: 'all', ...o })}`, signal);

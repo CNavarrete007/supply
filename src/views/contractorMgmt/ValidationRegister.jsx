@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Lock, Loader2, AlertCircle } from 'lucide-react';
 import { validationSetup, validationRequisition } from './api';
-import { TECH_RESULTS, CONTRACT_RESULTS, BUDGET_RESULTS, STRATEGIES, emptyValidation, clearKeepingRequisition, canQuote, blockReasons, requisitionOptions, buyerOptions, validateValidation, validationLockedText, nextStepBlock } from './validationForm.mjs';
+import { TECH_RESULTS, CONTRACT_RESULTS, BUDGET_RESULTS, STRATEGIES, emptyValidation, clearKeepingRequisition, canQuote, blockReasons, requisitionOptions, buyerOptions, validateValidation, validationLockedText, nextStepBlock, fromPreset, editLockedText } from './validationForm.mjs';
 import { useLoad } from '../reception/useLoad.js';
 
 // Gestión del Contratista · tarjeta 1 "Registro de validación" (diseño Grupo Gerez) conectada a MariaDB en modo lectura.
@@ -11,16 +11,16 @@ const DASH = '—';
 const ymd = v => (v ? String(v).slice(0, 10) : DASH);
 const money = (v, cur) => (v === null || v === undefined ? DASH : `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur || ''}`.trim());
 
-export function ValidationRegister({ en = false, notify = () => {}, onGo }) {
+export function ValidationRegister({ en = false, notify = () => {}, onGo, edit = null, onExitEdit }) {
   const tx = (es, e) => (en ? e : es);
   const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
-  const [f, setF] = useState(emptyValidation);
+  const [f, setF] = useState(() => (edit ? fromPreset(edit) : emptyValidation()));
   const [tried, setTried] = useState(false); const [msg, setMsg] = useState(null);
   const setup = useLoad(s => validationSetup(s), []);
   const detail = useLoad(s => validationRequisition(f.requisition, s), [f.requisition], !!f.requisition);
   const d = detail.status === 'ready' && detail.data?.item?.id === f.requisition ? detail.data : null;
   const buyers = setup.data?.buyers || [];
-  const v = useMemo(() => validateValidation(f, { req: d?.item || null, reviews: d?.reviews || [], today, buyers }, en), [f, d, today, buyers, en]);
+  const v = useMemo(() => validateValidation(f, { req: d?.item || null, reviews: d?.reviews || [], today, buyers, edit }, en), [f, d, today, buyers, edit, en]);
   const err = k => (tried ? v.errors[k] : '');
   const set = (k, val) => { setF(x => ({ ...x, [k]: val })); setMsg(null); };
 
@@ -28,8 +28,8 @@ export function ValidationRegister({ en = false, notify = () => {}, onGo }) {
     setTried(true);
     if (!v.ok) { setMsg({ kind: 'error', text: v.first }); return; }
     const b = buyers.find(x => x.id === f.buyer);
-    const text = validationLockedText(f, d?.item || setup.data?.requisitions?.find(r => r.id === f.requisition), b?.name || DASH, en);
-    setMsg({ kind: 'locked', text }); notify(tx('Validación no registrada', 'Validation not recorded'), text, 'warning');
+    const text = edit ? editLockedText(f, edit, en) : validationLockedText(f, d?.item || setup.data?.requisitions?.find(r => r.id === f.requisition), b?.name || DASH, en);
+    setMsg({ kind: 'locked', text }); notify(edit ? tx('Cambios no registrados', 'Changes not recorded') : tx('Validación no registrada', 'Validation not recorded'), text, 'warning');
   };
   const next = () => {
     const block = nextStepBlock(f, en);
@@ -49,13 +49,14 @@ export function ValidationRegister({ en = false, notify = () => {}, onGo }) {
       <div className="min-w-0"><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Gestión interna del contratista', 'Internal contractor management')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Este es el paso intermedio antes de cotizar y emitir la orden de compra.', 'This is the intermediate step before quoting and issuing the purchase order.')}</p></div>
       <span className="text-[10.5px] font-black text-blue-900 bg-blue-100/80 border border-blue-200 rounded-full px-3 py-1 shrink-0">{tx('Paso 2 · Validación interna', 'Step 2 · Internal validation')}</span>
     </div>
-    <div className="flex items-center gap-3 p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-xs font-black text-emerald-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-300 to-emerald-600 shadow-inner shrink-0" />{tx('Modo nueva captura activo. Completa la información y presiona Guardar. Al terminar, el formulario se limpiará y bloqueará.', 'New capture mode active. Fill in the information and press Save. When finished, the form will be cleared and locked.')}</div>
+    {edit ? <div data-testid="validation-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-purple-200 bg-purple-50/60 text-xs font-black text-purple-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-purple-300 to-purple-600 shadow-inner shrink-0" />{tx(`Modo edición activo: ${edit.folio}. Modifica la información y presiona Guardar; "+ Nueva validación" sale de la edición.`, `Edit mode active: ${edit.folio}. Change the information and press Save; "+ New validation" leaves edit mode.`)}{!edit.buyer && edit.buyerName && <span className="font-semibold text-purple-800"> {tx('Responsable registrado', 'Recorded manager')}: {edit.buyerName}.</span>}</div>
+      : <div data-testid="validation-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-xs font-black text-emerald-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-300 to-emerald-600 shadow-inner shrink-0" />{tx('Modo nueva captura activo. Completa la información y presiona Guardar. Al terminar, el formulario se limpiará y bloqueará.', 'New capture mode active. Fill in the information and press Save. When finished, the form will be cleared and locked.')}</div>}
     {setup.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p>}
     {setup.error && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{setup.error.message}</p>}
 
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-      {lbl(tx('Requisición', 'Requisition'), true, 'requisition', <select aria-label={tx('Requisición', 'Requisition')} value={f.requisition} onChange={e => { set('requisition', e.target.value); }} className={ctl('requisition')}><option value="">{tx('Seleccionar...', 'Select...')}</option>{requisitionOptions(setup.data?.requisitions || [], en).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select>, 'md:col-span-2')}
-      {lbl(tx('Folio interno', 'Internal folio'), false, 'folio', <input type="text" readOnly aria-label={tx('Folio interno', 'Internal folio')} value={tx('Automático', 'Automatic')} className={ro} />)}
+      {lbl(tx('Requisición', 'Requisition'), true, 'requisition', <select aria-label={tx('Requisición', 'Requisition')} value={f.requisition} disabled={!!edit} onChange={e => { set('requisition', e.target.value); }} className={`${ctl('requisition')} disabled:bg-slate-100`}><option value="">{tx('Seleccionar...', 'Select...')}</option>{requisitionOptions(setup.data?.requisitions || [], en).map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select>, 'md:col-span-2')}
+      {lbl(tx('Folio interno', 'Internal folio'), false, 'folio', <input type="text" readOnly aria-label={tx('Folio interno', 'Internal folio')} value={edit ? edit.folio : tx('Automático', 'Automatic')} className={`${ro} ${edit ? 'font-black text-slate-800' : ''}`} />)}
       {lbl(tx('Referencia interna', 'Internal reference'), false, 'ref', <input type="text" readOnly aria-label={tx('Referencia interna', 'Internal reference')} value={!f.requisition ? '' : d ? (d.item.internal_reference || tx('Sin referencia interna registrada', 'No internal reference recorded')) : '…'} placeholder={tx('Automática desde la requisición', 'Automatic from the requisition')} className={`${ro} font-black placeholder:text-slate-500`} />)}
       {lbl(tx('Responsable de compras', 'Purchasing manager'), true, 'buyer', <select aria-label={tx('Responsable de compras', 'Purchasing manager')} value={f.buyer} onChange={e => set('buyer', e.target.value)} className={ctl('buyer')}><option value="">{tx('Selecciona responsable de compras...', 'Select purchasing manager...')}</option>{buyerOptions(buyers, en).map(o => <option key={o.id} value={o.id} disabled={o.disabled}>{o.label}</option>)}</select>, '', tx('Personal del contratista activo registrado en Contratista → Personal / contactos.', 'Personnel of the active contractor recorded in Contractor → Personnel / contacts.'))}
       {sel('technical', tx('Validación técnica', 'Technical validation'), TECH_RESULTS)}
@@ -91,10 +92,10 @@ export function ValidationRegister({ en = false, notify = () => {}, onGo }) {
     {tried && v.ok && v.warnings.map(w => <p key={w} className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">⚠ {w}</p>)}
     {msg && <p role={msg.kind === 'error' ? 'alert' : 'status'} data-testid="validation-save-msg" className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${msg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{msg.text}</span></p>}
     <div className="flex flex-wrap gap-3 pt-1 text-sm font-black">
-      <button type="button" onClick={() => { setF(emptyValidation()); setTried(false); setMsg(null); }} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2">+ {tx('Nueva validación', 'New validation')}</button>
-      <button type="button" onClick={save} className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">💾</span>{tx('Guardar validación', 'Save validation')}</button>
+      <button type="button" onClick={() => { if (edit) { onExitEdit?.(); return; } setF(emptyValidation()); setTried(false); setMsg(null); }} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2">+ {tx('Nueva validación', 'New validation')}</button>
+      <button type="button" onClick={save} className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">💾</span>{edit ? tx('Guardar cambios', 'Save changes') : tx('Guardar validación', 'Save validation')}</button>
       <button type="button" onClick={next} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">➡</span>{tx('Siguiente paso', 'Next step')}</button>
-      <button type="button" onClick={() => { setF(x => clearKeepingRequisition(x)); setTried(false); setMsg(null); }} className="px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm flex items-center gap-2"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
+      <button type="button" onClick={() => { setF(x => (edit ? fromPreset(edit) : clearKeepingRequisition(x))); setTried(false); setMsg(null); }} className="px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm flex items-center gap-2"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
       <button type="button" onClick={() => onGo?.('matrix', tx('Matriz de validaciones', 'Validation Matrix'))} className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl flex items-center gap-2"><span aria-hidden="true">📋</span>{tx('Ver matriz', 'View matrix')}</button>
     </div>
   </div>;

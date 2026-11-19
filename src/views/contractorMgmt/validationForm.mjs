@@ -59,13 +59,27 @@ export function buyerOptions(buyers = [], en = false) {
   });
 }
 
-/** { ok, errors, warnings, first, canQuote }. ctx: { req (detail item), reviews, today, buyers }. */
-export function validateValidation(f, { req = null, reviews = [], today = '', buyers = [] } = {}, en = false) {
+/** Edit mode ("Editar" from the matrix): the form starts from the registered validation. */
+export const fromPreset = p => ({ ...emptyValidation(), requisition: p.requisition || '', buyer: p.buyer || '', technical: p.technical || 'Pendiente', contract: p.contract || 'Pendiente', budget: p.budget || 'Pendiente',
+  strategy: p.strategy || 'Competencia abierta', minQuotes: p.minQuotes || DEFAULT_MIN_QUOTES, deadline: p.deadline || '', criteria: p.criteria || '', notes: p.notes || '' });
+
+const FIELDS = [['requisition', 'requisición', 'requisition'], ['buyer', 'responsable', 'manager'], ['technical', 'técnica', 'technical'], ['contract', 'contractual', 'contractual'], ['budget', 'presupuesto', 'budget'],
+  ['strategy', 'estrategia', 'strategy'], ['minQuotes', 'mínimo de cotizaciones', 'minimum of quotes'], ['deadline', 'fecha límite', 'deadline'], ['criteria', 'criterios', 'criteria'], ['notes', 'observaciones', 'notes']];
+/** Fields changed against the registered validation (labels). */
+export const changedFields = (f, p, en = false) => FIELDS.filter(([k]) => clean(f[k]) !== clean(fromPreset(p)[k])).map(([, es, e]) => (en ? e : es));
+
+/** Message after a valid edit: nothing is written. */
+export const editLockedText = (f, p, en = false) => (en
+  ? `Data validated, but the changes to ${clean(p.folio)} were not saved (${changedFields(f, p, en).join(', ')}): editing internal validations is a write blocked until authorized.`
+  : `Datos validados, pero no se guardaron los cambios de ${clean(p.folio)} (${changedFields(f, p, en).join(', ')}): editar validaciones internas es una escritura bloqueada hasta su autorización.`);
+
+/** { ok, errors, warnings, first, canQuote }. ctx: { req (detail item), reviews, today, buyers, edit (preset of the registered validation) }. */
+export function validateValidation(f, { req = null, reviews = [], today = '', buyers = [], edit = null } = {}, en = false) {
   const m = (es, e) => (en ? e : es);
   const errors = {}; const warnings = [];
   if (!f.requisition) errors.requisition = m('Selecciona la requisición.', 'Select the requisition.');
   if (!f.buyer) errors.buyer = m('Selecciona el responsable de compras.', 'Select the purchasing manager.');
-  else { const b = buyers.find(x => x.id === f.buyer); if (buyers.length && (!b || !b.has_user || !b.with_access)) errors.buyer = m('El responsable de compras debe tener usuario activo en SupplyFlow.', 'The purchasing manager must have an active SupplyFlow user.'); }
+  else if (!(edit && f.buyer === edit.buyer)) { const b = buyers.find(x => x.id === f.buyer); if (buyers.length && (!b || !b.has_user || !b.with_access)) errors.buyer = m('El responsable de compras debe tener usuario activo en SupplyFlow.', 'The purchasing manager must have an active SupplyFlow user.'); }
   if (!TECH_RESULTS.some(x => x[0] === f.technical)) errors.technical = m('Selecciona la validación técnica.', 'Select the technical validation.');
   if (!CONTRACT_RESULTS.some(x => x[0] === f.contract)) errors.contract = m('Selecciona la validación contractual.', 'Select the contractual validation.');
   if (!BUDGET_RESULTS.some(x => x[0] === f.budget)) errors.budget = m('Selecciona la disponibilidad presupuestal.', 'Select the budget availability.');
@@ -75,7 +89,7 @@ export function validateValidation(f, { req = null, reviews = [], today = '', bu
   else if (f.strategy === 'Competencia abierta' && n < 2) warnings.push(m('Competencia abierta con una sola cotización: considera solicitar al menos 2.', 'Open competition with a single quote: consider requesting at least 2.'));
   if (clean(f.deadline)) {
     if (!validDate(f.deadline)) errors.deadline = m('Fecha inválida.', 'Invalid date.');
-    else if (today && f.deadline < today) errors.deadline = m('La fecha límite de cotización no puede ser anterior a hoy.', 'The quotation deadline cannot be earlier than today.');
+    else if (today && f.deadline < today && !(edit && f.deadline === clean(edit.deadline))) errors.deadline = m('La fecha límite de cotización no puede ser anterior a hoy.', 'The quotation deadline cannot be earlier than today.');
     else if (req?.need_date && f.deadline > clean(req.need_date).slice(0, 10)) warnings.push(m(`La fecha límite de cotización es posterior a la fecha requerida de la requisición (${clean(req.need_date).slice(0, 10)}).`, `The quotation deadline is after the requisition need date (${clean(req.need_date).slice(0, 10)}).`));
   } else warnings.push(m('Sin fecha límite de cotización.', 'No quotation deadline.'));
   if (!clean(f.criteria)) errors.criteria = m('Indica los criterios de evaluación.', 'Enter the evaluation criteria.');
@@ -87,7 +101,8 @@ export function validateValidation(f, { req = null, reviews = [], today = '', bu
   if (f.strategy === 'Fuente única justificada' && n !== null && n > 1) warnings.push(m('Fuente única: normalmente se solicita una sola cotización.', 'Sole source: usually a single quote is requested.'));
   const ok = canQuote(f);
   if (!ok) warnings.push(m(`La requisición no podrá pasar a cotización (${blockReasons(f, en)}).`, `The requisition cannot move to quoting (${blockReasons(f, en)}).`));
-  if (reviews.length) warnings.push(m(`La requisición ya tiene ${reviews.length} validación(es) registrada(s); esta generaría un nuevo folio interno y la anterior se conserva como historial.`, `The requisition already has ${reviews.length} recorded validation(s); this one would get a new internal folio and the previous one is kept as history.`));
+  if (edit && !changedFields(f, edit, en).length) errors.changes = m('Sin cambios por guardar.', 'No changes to save.');
+  if (reviews.length && !edit) warnings.push(m(`La requisición ya tiene ${reviews.length} validación(es) registrada(s); esta generaría un nuevo folio interno y la anterior se conserva como historial.`, `The requisition already has ${reviews.length} recorded validation(s); this one would get a new internal folio and the previous one is kept as history.`));
   const down = [[req?.rfq_count, 'RFQ'], [req?.quote_count, m('cotización(es)', 'quote(s)')], [req?.po_count, 'OC']].filter(([x]) => Number(x) > 0).map(([x, t]) => `${x} ${t}`);
   if (down.length) warnings.push(m(`La requisición ya avanzó (${down.join(', ')}): la validación quedaría como actualización posterior.`, `The requisition already moved forward (${down.join(', ')}): the validation would be a later update.`));
   const keys = Object.keys(errors);

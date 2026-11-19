@@ -24,8 +24,8 @@ def logout(op):
     try:
         tok = json.loads(op.open(API + '/api/v1/auth/csrf').read())['csrf_token']; op.open(urllib.request.Request(API + '/api/v1/auth/logout', b'{}', {'Content-Type': 'application/json', 'X-SF-CSRF': tok}))
     except Exception: pass
-T = f'{R}/strategy-setup'
-anon = session(); check('sin sesión: 401', all(status(anon, p) == 401 for p in [S, f'{R}/requisitions/{ZERO}', T, f'{R}/strategy/{ZERO}']))
+T = f'{R}/strategy-setup'; M = f'{R}/validations'
+anon = session(); check('sin sesión: 401', all(status(anon, p) == 401 for p in [S, f'{R}/requisitions/{ZERO}', T, f'{R}/strategy/{ZERO}', M]))
 if NONADMIN:
     o = session(NONADMIN); check('sin Master Admin: 403', status(o, S) == 403 and status(o, T) == 403); logout(o)
 adm = session(USER)
@@ -34,7 +34,7 @@ try:
     check('Master Admin: 200', status(adm, S) == 200)
     check('422 con parámetros', status(adm, S + '?x=1') == 422 and status(adm, f'{R}/requisitions/{ZERO}?a=1') == 422)
     check('requisición inexistente o id inválido → 404', status(adm, f'{R}/requisitions/{ZERO}') == 404 and status(adm, f'{R}/requisitions/abc') == 404)
-    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [S, f'{R}/requisitions/{ZERO}', f'{R}/validations', f'{R}/requisitions/{ZERO}/validations', T, f'{R}/strategy/{ZERO}', f'{R}/strategy/{ZERO}/lots'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
+    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [S, f'{R}/requisitions/{ZERO}', f'{R}/validations', f'{R}/requisitions/{ZERO}/validations', T, f'{R}/strategy/{ZERO}', f'{R}/strategy/{ZERO}/lots', M, f'{M}/{ZERO}'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
     d = get(S); reqs = d['requisitions']; buyers = d['buyers']
     check('estructura de requisiciones', all({'id', 'folio', 'project', 'client_name', 'internal_reference', 'item_count', 'review_count', 'last_review', 'rfq_count', 'quote_count', 'po_count'} <= set(r) for r in reqs) and d['summary']['requisitions'] == len(reqs))
     check('validación más reciente presente solo si hay validaciones', all((r['last_review'] is None) == (r['review_count'] == 0) for r in reqs) and d['summary']['with_review'] == sum(1 for r in reqs if r['review_count']))
@@ -65,6 +65,25 @@ try:
         ok = ok and sum(len(l['rfqs']) for l in lots) + len(x['rfqs_without_lot']) == r['rfq_count']
         check(f"estrategia {r['folio']}: partidas, plan, proveedores y RFQ por lote coherentes", ok)
     check('estrategia: sin ids internos', not re.search(r'"(db_id|sourcing_lot_id|supplier_id_db|requisition_item_id)"', json.dumps([get(f"{R}/strategy/{r['id']}") for r in sreqs[:3]])))
+    # Tarjeta 3 · matriz de validaciones
+    check('matriz: 200 / 422', status(adm, M) == 200 and all(status(adm, M + b) == 422 for b in ['?x=1', '?buyer=nadie', '?page_size=51', '?page=0', '?q=%01']))
+    mx = get(M + '?page_size=50'); sm = mx['summary']
+    check('matriz: total = validaciones registradas', mx['total'] == sm['validations'] == sum(r['review_count'] for r in reqs) and len(mx['items']) == min(50, mx['total']))
+    check('matriz: tarjetas por responsable suman el total; bloqueadas = total − puede cotizar', sum(b['total'] for b in sm['buyers']) == sm['validations'] and all(b['blocked'] == b['total'] - b['can_quote'] for b in sm['buyers']) and sm['blocked'] == sm['validations'] - sm['can_quote'])
+    rule = lambda x: x['technical'].lower() in ('conforme', 'con observaciones') and x['contract'].lower() in ('conforme', 'con observaciones') and x['budget'].lower() in ('disponible', 'parcial')
+    check('matriz: ¿puede cotizar? = regla de Reglas inteligentes', all(x['can_quote'] == rule(x) for x in mx['items']))
+    check('matriz: vigente = la más reciente por requisición', all(x['latest'] == (x['folio'] == next(r['last_review']['folio'] for r in reqs if r['id'] == x['requisition_id'])) for x in mx['items']))
+    ok_b = True
+    for b in sm['buyers']:
+        bb = get(M + f"?buyer={b['key']}&page_size=50")
+        ok_b = ok_b and bb['total'] == b['total'] and all(x['buyer_key'] == b['key'] for x in bb['items']) and sum(1 for x in bb['items'] if x['can_quote']) == b['can_quote']
+    check('matriz: filtro por responsable en el servidor', ok_b)
+    if mx['items']:
+        f0 = mx['items'][0]
+        check('matriz: búsqueda por folio', any(x['folio'] == f0['folio'] for x in get(M + '?q=' + urllib.request.quote(f0['folio']))['items']) and get(M + '?q=zzz-no-existe')['total'] == 0)
+        p1 = get(M + '?page_size=1&page=1'); p2 = get(M + '?page_size=1&page=2') if mx['total'] > 1 else {'items': []}
+        check('matriz: paginación', len(p1['items']) == 1 and (mx['total'] < 2 or p1['items'][0]['id'] != p2['items'][0]['id']))
+    check('matriz: sin ids internos', not re.search(r'"(db_id|rv_id|buyer_user_id|requisition_db_id)"', json.dumps(mx)))
 finally:
     logout(adm)
 w = max(len(n) for n, _, _ in results)

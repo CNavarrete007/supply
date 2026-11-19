@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Lock } from 'lucide-react';
 import { ValidationRegister } from './contractorMgmt/ValidationRegister.jsx';
 import { StrategyLots } from './contractorMgmt/StrategyLots.jsx';
+import { ValidationMatrix } from './contractorMgmt/ValidationMatrix.jsx';
 import { 
   ClipboardCheck, 
   Layers, 
@@ -285,6 +286,7 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
   const t = translations[lang] || translations.es;
 
   const [activeTab, setActiveTab] = useState('register');
+  const [valEdit, setValEdit] = useState(null); // tarjeta 3 → "Editar" abre la tarjeta 1 en modo edición
   const [selectedReq, setSelectedReq] = useState('REQ-001');
   const [showMatrixTable, setShowMatrixTable] = useState(false);
   const [activeCard, setActiveCard] = useState(null);
@@ -513,10 +515,12 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
       </div>
 
       {/* Aviso propio del módulo: solo la tarjeta 1 está conectada a MariaDB */}
-      <div data-testid="contractor-mgmt-notice" className={`rounded-xl border px-4 py-3 flex items-start gap-2 text-[11px] ${['register', 'strategy'].includes(activeTab) ? 'border-amber-200 bg-amber-50/70 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-900 font-semibold'}`}>
+      <div data-testid="contractor-mgmt-notice" className={`rounded-xl border px-4 py-3 flex items-start gap-2 text-[11px] ${['register', 'strategy', 'matrix'].includes(activeTab) ? 'border-amber-200 bg-amber-50/70 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-900 font-semibold'}`}>
         <Lock className="w-4 h-4 shrink-0 mt-0.5" />
         <span>{activeTab === 'register'
           ? (lang === 'en' ? 'Validation register connected to MariaDB (read-only): requisitions, purchasing managers and recorded validations are real data. Saving validates the capture but does not store it: recording internal validations is a write blocked until authorized.' : 'Registro de validación conectado a MariaDB (solo lectura): requisiciones, responsables de compras y validaciones registradas son datos reales. Guardar valida la captura pero no la almacena: registrar validaciones internas es una escritura bloqueada hasta su autorización.')
+          : activeTab === 'matrix'
+          ? (lang === 'en' ? 'Validation matrix connected to MariaDB (read-only): every internal validation with its requisition, manager, results and the "can quote" verdict. Editing, deleting and recording the cost source validate the capture but do not store it: they are writes blocked until authorized.' : 'Matriz de validaciones conectada a MariaDB (solo lectura): cada validación interna con su requisición, responsable, resultados y "¿puede cotizar?". Editar, eliminar y registrar la fuente de costo validan la captura pero no la almacenan: son escrituras bloqueadas hasta su autorización.')
           : activeTab === 'strategy'
           ? (lang === 'en' ? 'Strategy and lotting connected to MariaDB (read-only): validated requisitions, lines, recorded lot plan, RFQs per lot and the supplier catalog are real data. Saving the strategy or opening an RFQ validates the capture but does not store it: they are writes blocked until authorized.' : 'Estrategia y lotificación conectada a MariaDB (solo lectura): requisiciones validadas, partidas, plan de lotes registrado, RFQ por lote y catálogo de proveedores son datos reales. Guardar la estrategia o abrir una RFQ valida la captura pero no la almacena: son escrituras bloqueadas hasta su autorización.')
           : (lang === 'en' ? 'Card pending integration: it may show demo data and its forms do not save operations in MariaDB.' : 'Tarjeta pendiente de integración: puede mostrar datos de demostración y sus formularios no guardan operaciones en MariaDB.')}</span>
@@ -527,7 +531,7 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
 
         {/* TARJETA 1: Registro de validación (MariaDB, solo lectura; guardar valida y no escribe) */}
         {activeTab === 'register' && (
-          <ValidationRegister en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} />
+          <ValidationRegister key={valEdit ? valEdit.id : 'new'} edit={valEdit} onExitEdit={() => setValEdit(null)} en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} />
         )}
 
         {/* TARJETA 2: Estrategia y lotificación (MariaDB, solo lectura; guardar valida y no escribe) */}
@@ -535,236 +539,13 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
           <StrategyLots en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} onNavigate={onNavigate} />
         )}
 
-       {/* TARJETA 3: Matriz de validaciones internas */}
-{activeTab === 'matrix' && (
-  <div className="bg-slate-50 min-h-screen font-sans -m-4 p-4 sm:p-6">
-    
-    {/* 1. CABECERA PRINCIPAL */}
-    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-      <div>
-        <h3 className="text-xl sm:text-2xl font-black text-slate-900">{t.matrixTab.title}</h3>
-        <p className="text-sm text-slate-500 mt-1">
-          {t.matrixTab.subtitle}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-        <button
-          type="button"
-          onClick={() => handleTabChange('register', t.tabs.register.title)}
-          className="flex-1 sm:flex-none px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
-        >
-          <span className="text-lg leading-none"></span>
-          <span>{t.matrixTab.btnNewValidation}</span>
-        </button>
-      </div>
-    </div>
+        {/* TARJETA 3: Matriz de validaciones internas (MariaDB, solo lectura; editar/eliminar validan y no escriben) */}
+        {activeTab === 'matrix' && (
+          <ValidationMatrix en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)}
+            onEdit={preset => { setValEdit(preset); handleTabChange('register', t.tabs.register.title); }}
+            onNew={() => { setValEdit(null); handleTabChange('register', t.tabs.register.title); }} />
+        )}
 
-    {/* 2. SECCIÓN DE TARJETAS (FILTROS) */}
-    <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 mb-6">
-      <h2 className="text-sm font-bold text-slate-800 mb-1">Validaciones por módulo</h2>
-      <p className="text-xs text-slate-500 mb-5">Selecciona "Abrir" en cualquiera de las tarjetas para desplegar su matriz abajo.</p>
-      
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <input
-          type="text"
-          placeholder={t.matrixTab.searchPlaceholder}
-          className="flex-1 px-4 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 shadow-sm placeholder:text-slate-400"
-        />
-        <div className="bg-blue-50 text-blue-700 border border-blue-100 rounded-xl px-4 py-2.5 text-sm font-bold flex items-center justify-center whitespace-nowrap">
-          0 de 0 módulos
-        </div>
-      </div>
-
-      <div className="flex space-x-4 overflow-x-auto pb-2 items-stretch custom-scrollbar">
-        
-        {/* TARJETA 1: TODAS LAS VALIDACIONES (AZUL) */}
-        <div 
-          onClick={() => setActiveCard('all')}
-          className={`rounded-xl p-4 w-72 flex-shrink-0 transition-all bg-white flex flex-col justify-between cursor-pointer relative overflow-hidden ${
-            activeCard === 'all' 
-              ? 'border-2 border-blue-500 shadow-md ring-2 ring-blue-100' 
-              : 'border border-slate-200 hover:shadow-md'
-          }`}
-        >
-          {activeCard === 'all' && (
-            <div className="absolute inset-0 bg-blue-50 opacity-30 pointer-events-none"></div>
-          )}
-
-          <div className="relative z-10">
-            <div className="flex items-center mb-4">
-              <div className="bg-blue-600 text-white rounded-full w-10 h-10 flex items-center justify-center font-bold text-xs mr-3">ALL</div>
-              <div>
-                <h3 className="font-bold text-sm text-slate-800">Todas las validaciones</h3>
-                <p className="text-xs text-slate-400">0 módulos</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-center mb-4">
-              <div><p className="font-bold text-lg text-slate-800">0</p><p className="text-[10px] font-semibold text-slate-500 uppercase">Total</p></div>
-              <div><p className="font-bold text-lg text-slate-800">0</p><p className="text-[10px] font-semibold text-slate-500 uppercase">Pendientes</p></div>
-              <div><p className="font-bold text-lg text-slate-800">0%</p><p className="text-[10px] font-semibold text-slate-500 uppercase">Éxito</p></div>
-            </div>
-          </div>
-          <div className="flex justify-between items-center text-xs mt-2 pt-3 border-t border-slate-100 relative z-10">
-            <span className="text-slate-400">Vista completa</span>
-            <button 
-              type="button" 
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveCard('all');
-              }}
-              className="text-blue-600 font-bold hover:underline cursor-pointer"
-            >
-              Abrir todas →
-            </button>
-          </div>
-        </div>
-
-        {/* TARJETA 2: MÓDULO ACTUAL (MORADO) */}
-        <div 
-          onClick={() => setActiveCard('module')}
-          className={`rounded-xl p-4 w-72 flex-shrink-0 transition-all bg-white flex flex-col justify-between cursor-pointer relative overflow-hidden ${
-            activeCard === 'module' 
-              ? 'border-2 border-purple-500 shadow-md ring-2 ring-purple-100' 
-              : 'border border-slate-200 hover:shadow-md'
-          }`}
-        >
-          {activeCard === 'module' && (
-            <div className="absolute inset-0 bg-purple-50 opacity-30 pointer-events-none"></div>
-          )}
-
-          <div className="relative z-10">
-            <div className="flex items-center mb-4">
-              <div className="bg-purple-600 text-white rounded-full w-10 h-10 flex items-center justify-center font-bold text-xs mr-3">MOD</div>
-              <div>
-                <h3 className="font-bold text-sm text-slate-800">Módulo de Contratos</h3>
-                <p className="text-xs text-slate-400">ID: 001 · Activo</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-center mb-4">
-              <div><p className="font-bold text-lg text-slate-800">{validationsData.length}</p><p className="text-[10px] font-semibold text-slate-500 uppercase">Reglas</p></div>
-              <div><p className="font-bold text-lg text-slate-800">0</p><p className="text-[10px] font-semibold text-slate-500 uppercase">Fallos</p></div>
-              <div><p className="font-bold text-lg text-slate-800">0%</p><p className="text-[10px] font-semibold text-slate-500 uppercase">Avance</p></div>
-            </div>
-          </div>
-          <div className="flex justify-between items-center text-xs mt-2 pt-3 border-t border-slate-100 relative z-10">
-            <span className="text-slate-400">{validationsData.length} registros</span>
-            <button 
-              type="button" 
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveCard('module');
-              }}
-              className="text-purple-600 font-bold hover:underline cursor-pointer"
-            >
-              Módulo actual →
-            </button>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-    {/* 3. MATRIZ DE DATOS */}
-    {activeCard !== null && (
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mt-6 animate-fade-in">
-        
-        {/* Cabecera de la tabla */}
-        <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-white">
-          <div>
-            <h2 className="text-base font-black text-slate-800">
-              {activeCard === 'all' ? 'Matriz Global de Validaciones' : 'Matriz del Módulo de Contratos'}
-            </h2>
-            <p className="text-xs text-slate-500">{validationsData.length} registros cargados</p>
-          </div>
-
-          <button 
-            type="button"
-            onClick={() => setActiveCard(null)}
-            className="bg-rose-500 hover:bg-rose-600 text-white w-8 h-8 rounded-lg flex items-center justify-center transition-colors shadow-sm cursor-pointer"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-          </button>
-        </div>
-
-        {/* Tabla */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[1100px]">
-            <thead>
-              <tr className="bg-slate-50/80 text-[10px] font-black text-slate-700 uppercase tracking-wider border-b border-slate-200/80">
-                {t.matrixTab.tableCols.map((col, idx) => (
-                  <th key={idx} className={`py-4 px-4 ${idx >= 4 && idx <= 6 || idx === 8 || idx === 9 ? 'text-center' : ''}`}>
-                    {col}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs bg-white">
-              {validationsData.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className="py-20 text-center">
-                    <p className="font-semibold text-slate-600 text-sm">{t.matrixTab.emptyTitle}</p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {t.matrixTab.emptySub}
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                validationsData.map((val) => (
-                  <tr key={val.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="py-4 px-4 font-bold text-slate-800">{val.id}</td>
-                    <td className="py-4 px-4 text-slate-700 font-medium">{val.reqFolio}</td>
-                    <td className="py-4 px-4 text-slate-500">REF-{val.reqFolio}</td>
-                    <td className="py-4 px-4 text-slate-800 font-medium">{val.contractor}</td>
-                    <td className="py-4 px-4 text-center">
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${val.technical === 'Conforme' || val.technical === 'Aprobado' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-                        {val.technical}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 text-center">
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${val.contractual === 'En Regla' || val.contractual === 'Conforme' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
-                        {val.contractual}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 text-center text-slate-600 font-medium">{val.budget}</td>
-                    <td className="py-4 px-4 text-slate-600 font-medium">{t.registerTab.strategies.openComp}</td>
-                    <td className="py-4 px-4 text-center">
-                      <span className={`px-3 py-1.5 rounded-full text-[10px] font-bold ${val.overallStatus === 'Validado' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
-                        {val.overallStatus === 'Validado' ? t.matrixTab.yes : t.matrixTab.noBlocked}
-                      </span>
-                    </td>
-                    
-                    {/* COLUMNA DE ACCIONES CON BOTONES EDITAR Y ELIMINAR */}
-                    <td className="py-4 px-4 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        {/* BOTÓN EDITAR (Píldora gris claro con texto azul/negro) */}
-                        <button
-                          type="button"
-                          onClick={() => handleTabChange('register', t.tabs.register.title)}
-                          className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-900 font-black text-[11px] rounded-full transition-colors cursor-pointer tracking-wider"
-                        >
-                          EDITAR
-                        </button>
-
-                        {/* BOTÓN ELIMINAR (Píldora roja con texto blanco) */}
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteValidation(val.id)}
-                          className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-black text-[11px] rounded-full transition-colors cursor-pointer tracking-wider shadow-xs"
-                        >
-                          ELIMINAR
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    )}
-  </div>
-)}
         {/* TARJETA 4: Reglas inteligentes */}
         {activeTab === 'compliance' && (
           <div className="space-y-5">

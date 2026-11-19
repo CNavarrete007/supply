@@ -175,7 +175,86 @@ const flat = s => String(s).replace(/\s+/g, ' ');
     await sg.getByRole('button', { name: /Ver validaciones/ }).click();
     await page.getByText('Matriz de validaciones internas').first().waitFor();
     check('Ver validaciones abre la matriz', true);
-    await page.getByRole('button', { name: /Registro de validación/ }).first().click();
+
+    // 3 · Matriz de validaciones internas
+    const mxa = await api('/api/v1/contractor-management/validations?page=1&page_size=50');
+    const vm = page.getByTestId('validation-matrix'); await vm.waitFor();
+    await page.getByTestId('validation-matrix-chip').waitFor();
+    const m0 = flat(await vm.innerText());
+    check('matriz: título, explicación, "+ Nueva validación" y tarjetas por responsable del diseño', ['Matriz de validaciones internas', 'Consulta si cada requisición puede o no pasar a cotización.', 'Tarjetas por responsable', 'Selecciona un responsable para abrir únicamente sus validaciones internas.'].every(x => m0.includes(x)) && await vm.getByRole('button', { name: /Nueva validación/ }).isVisible(), m0.slice(0, 300));
+    check('matriz: chip "N responsable(s) · M validación(es)"', (await page.getByTestId('validation-matrix-chip').innerText()).trim() === `${mxa.summary.buyers.length} responsable(s) · ${mxa.summary.validations} validación(es)`);
+    const mc = page.getByTestId('validation-buyer-card');
+    check('matriz: tarjeta "Todas" + una por responsable con validaciones, puede cotizar y bloqueadas', await mc.count() === mxa.summary.buyers.length + 1
+      && flat(await mc.first().innerText()).includes(`TOD Todas las validaciones Vista general ${mxa.summary.validations} Validaciones ${mxa.summary.can_quote} Puede cotizar ${mxa.summary.blocked} Bloqueadas Abrir todas`), flat(await mc.first().innerText()));
+    check('matriz cerrada hasta elegir tarjeta', await page.getByTestId('validation-row').count() === 0);
+    const vr = page.waitForResponse(r => /\/contractor-management\/validations\?/.test(r.url()) && /buyer=all/.test(r.url()));
+    await mc.first().click();
+    check('matriz: consulta en el servidor (200)', (await vr).status() === 200);
+    await page.getByTestId('validation-row').first().waitFor();
+    check('matriz: "Todas las validaciones · N registro(s)" y Volver a tarjetas', flat(await page.getByTestId('validation-matrix-selected').innerText()).includes(`Todas las validaciones ${mxa.total} registro(s)`) && await page.getByTestId('validation-row').count() === Math.min(10, mxa.total));
+    const r0 = mxa.items[0]; const rowEl = page.getByTestId('validation-row').filter({ hasText: r0.folio });
+    const rt = flat(await rowEl.innerText()).toLowerCase();
+    check('matriz: fila con folio, requisición, responsable, resultados, estrategia y ¿puede cotizar?', [r0.folio, r0.requisition, (r0.buyer || '').toUpperCase(), r0.technical, r0.contract, r0.budget, r0.strategy, r0.can_quote ? 'Sí' : 'No (Bloqueado)'].every(x => rt.includes(String(x).toLowerCase())) && ['editar', 'eliminar'].every(x => rt.includes(x)), rt);
+    check('matriz: paginación del diseño', flat(await page.getByTestId('validation-matrix-pager').innerText()).includes(`1-${Math.min(10, mxa.total)} de ${mxa.total} registros`) && flat(await page.getByTestId('validation-matrix-pager').innerText()).includes(`Página 1 / ${Math.max(1, Math.ceil(mxa.total / 10))}`));
+    const bk = mxa.summary.buyers[0];
+    const vb = page.waitForResponse(r => r.url().includes(`buyer=${bk.key}`));
+    await mc.nth(1).click();
+    check('matriz: filtro por responsable en el servidor (200)', (await vb).status() === 200);
+    await page.getByTestId('validation-matrix-selected').filter({ hasText: `${bk.total} registro(s)` }).waitFor();
+    check('matriz: solo validaciones del responsable', await page.getByTestId('validation-row').count() === Math.min(10, bk.total));
+    await page.getByRole('button', { name: /Volver a tarjetas/ }).click();
+    check('Volver a tarjetas cierra la matriz', await page.getByTestId('validation-row').count() === 0);
+    await mc.first().click(); await page.getByTestId('validation-row').first().waitFor();
+    // Eliminar: vigente con documentos posteriores → se conserva
+    const keep = mxa.items.find(x => x.latest && (x.rfq_count + x.quote_count + x.po_count) > 0);
+    await page.getByTestId('validation-row').filter({ hasText: keep.folio }).getByRole('button', { name: /^eliminar$/i }).click();
+    check('eliminar: validación vigente con RFQ/OC se conserva', (await page.getByTestId('validation-delete-block').innerText()).includes(`es la validación vigente de ${keep.requisition}`));
+    await page.getByRole('dialog', { name: 'Eliminar validación' }).getByRole('button', { name: 'Cancelar' }).click();
+    // Editar: tarjeta 1 en modo edición
+    await page.getByTestId('validation-row').filter({ hasText: r0.folio }).getByRole('button', { name: /^editar$/i }).click();
+    const fe = page.getByTestId('validation-register'); await fe.waitFor();
+    await fe.getByLabel('Requisición', { exact: true }).locator(`option[value="${r0.requisition_id}"]`).waitFor({ state: 'attached' });
+    await page.getByTestId('validation-history').waitFor();
+    const ev = [(await page.getByTestId('validation-mode').innerText()).includes(`Modo edición activo: ${r0.folio}`), await fe.getByLabel('Folio interno', { exact: true }).inputValue() === r0.folio,
+      await fe.getByLabel('Requisición', { exact: true }).inputValue() === r0.requisition_id, await fe.getByLabel('Requisición', { exact: true }).isDisabled(), await fe.getByLabel('Validación técnica', { exact: true }).inputValue() === r0.technical,
+      await fe.getByLabel('Número mínimo de cotizaciones', { exact: true }).inputValue() === String(r0.min_quotes), await fe.getByLabel('Fecha límite de cotización', { exact: true }).inputValue() === String(r0.deadline || '').slice(0, 10),
+      await fe.getByLabel('Responsable de compras', { exact: true }).inputValue() === (r0.buyer_person_id || '')];
+    check('editar: tarjeta 1 en modo edición con los datos registrados', ev.every(Boolean), JSON.stringify(ev));
+    await fe.getByRole('button', { name: /Guardar cambios/ }).click();
+    check('editar: sin cambios no se guarda', (await page.getByTestId('validation-save-msg').innerText()).includes('Sin cambios por guardar.'));
+    await fe.getByLabel('Observaciones internas / justificación', { exact: true }).fill('Cambio de prueba E2E en la validación');
+    await fe.getByRole('button', { name: /Guardar cambios/ }).click();
+    check('editar: validado pero NO guardado (campos cambiados)', flat(await page.getByTestId('validation-save-msg').innerText()).startsWith(`Datos validados, pero no se guardaron los cambios de ${r0.folio} (observaciones)`), flat(await page.getByTestId('validation-save-msg').innerText()));
+    await fe.getByRole('button', { name: /Nueva validación/ }).click();
+    await page.getByTestId('validation-mode').filter({ hasText: 'Modo nueva captura activo' }).waitFor();
+    check('"+ Nueva validación" sale del modo edición', await fe.getByLabel('Folio interno', { exact: true }).inputValue() === 'Automático' && await fe.getByLabel('Requisición', { exact: true }).inputValue() === '');
+    // Fuente única simulada (sin datos sintéticos de ese tipo): Registrar fuente de costo y eliminar un borrador
+    const sole = { ...mxa.items.find(x => x.rfq_count === 0 && x.po_count === 0 && x.quote_count === 0) || mxa.items[0], strategy: 'Fuente única justificada', rfq_count: 0, quote_count: 0, po_count: 0, latest: true, imported: false };
+    await page.route('**/api/v1/contractor-management/validations?*', async route => { const res = await route.fetch(); const body = await res.json(); body.items = body.items.map(x => (x.id === sole.id ? sole : x)); await route.fulfill({ response: res, json: body }); });
+    await page.getByRole('button', { name: /Matriz de validaciones/ }).first().click();
+    await page.getByTestId('validation-buyer-card').first().click();
+    const sr = page.getByTestId('validation-row').filter({ hasText: sole.folio }); await sr.waitFor();
+    check('fuente única: chip FUENTE ÚNICA y botón Registrar fuente de costo', flat(await sr.innerText()).toUpperCase().includes('FUENTE ÚNICA') && await sr.getByRole('button', { name: /Registrar fuente de costo/i }).isVisible());
+    await sr.getByRole('button', { name: /Registrar fuente de costo/i }).click();
+    const cd = page.getByRole('dialog', { name: 'Registrar fuente de costo' });
+    await cd.getByLabel('Costo unitario #1').waitFor();
+    await cd.getByRole('button', { name: 'Registrar fuente de costo' }).click();
+    check('fuente de costo: exige fuente y costo', (await page.getByTestId('validation-cost-msg').innerText()).includes('Describe la fuente del costo'));
+    await cd.getByLabel('Costo unitario #1').fill('125.50'); await cd.getByLabel('Moneda #1').selectOption('USD'); await cd.getByLabel('Fuente del costo', { exact: true }).fill('Cotización única del distribuidor autorizado');
+    await cd.getByRole('button', { name: 'Registrar fuente de costo' }).click();
+    check('fuente de costo: validada pero NO registrada', flat(await page.getByTestId('validation-cost-msg').innerText()).startsWith(`Datos validados, pero no se registró la fuente de costo de ${sole.requisition} (${sole.folio}; 1 partida(s), fuente: Cotización única del distribuidor autorizado)`));
+    await cd.getByRole('button', { name: 'Cancelar' }).click();
+    await sr.getByRole('button', { name: /^eliminar$/i }).click();
+    const dd = page.getByRole('dialog', { name: 'Eliminar validación' });
+    await dd.getByLabel('Folio a eliminar').fill(sole.folio.toLowerCase()); await dd.getByLabel('Motivo de la eliminación').fill('Validación capturada por error (E2E)');
+    await dd.getByRole('button', { name: 'Eliminar', exact: true }).click();
+    check('eliminar: validado pero NO eliminado', (await page.getByTestId('validation-delete-msg').innerText()).startsWith(`Datos validados, pero no se eliminó ${sole.folio}`));
+    await dd.getByRole('button', { name: 'Cancelar' }).click();
+    await page.unroute('**/api/v1/contractor-management/validations?*');
+    await shot(page, 'cm_3_matrix');
+    await vm.getByRole('button', { name: /Nueva validación/ }).click();
+    await page.getByTestId('validation-register').waitFor();
+    check('"+ Nueva validación" de la matriz abre el registro vacío', await page.getByTestId('validation-register').getByLabel('Folio interno', { exact: true }).inputValue() === 'Automático');
     await page.setViewportSize({ width: 390, height: 900 });
     check('sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   } catch (e) {

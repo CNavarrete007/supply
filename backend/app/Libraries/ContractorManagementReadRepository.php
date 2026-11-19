@@ -304,4 +304,72 @@ final class ContractorManagementReadRepository
             'plan' => $plan ? ['version' => (int) $plan['version_number'], 'min_quotes' => (int) $plan['min_quotes'], 'updated_at' => $plan['updated_at'], 'lots' => array_values($lots)] : null,
             'rfqs_without_lot' => $loose];
     }
+    /** "Can move to quoting" rule of Reglas inteligentes (Spanish or English values; collation is case/accent-insensitive). */
+    private const CAN_QUOTE = "(rv.technical_result IN ('Conforme','Con observaciones','compliant','with observations') AND rv.contract_result IN ('Conforme','Con observaciones','compliant','with observations') AND rv.budget_result IN ('Disponible','Parcial','available','partial'))";
+
+    /**
+     * Card 3 "Matriz de validaciones": every internal validation with its requisition, purchasing manager (cards by manager:
+     * key = user public id, a hash of the imported name, or "unassigned"), results, strategy and the "can quote" verdict.
+     * @param array{buyer:string,q:string,page:int,page_size:int} $f
+     */
+    public function validations(int $org, array $f): array
+    {
+        $snap = self::snapName('rv.buyer_snapshot');
+        $person = "(SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=rv.buyer_user_id AND u.organization_id=rv.organization_id)";
+        $can = self::CAN_QUOTE;
+        $base = <<<SQL
+            SELECT rv.id AS rv_id,e.public_id AS id,rv.folio,re.public_id AS requisition_id,r.folio AS requisition,r.client_reference,r.internal_reference,c.legal_name AS client_name,
+                   r.project_reference_snapshot AS project,COALESCE({$person},{$snap}) AS buyer,
+                   (SELECT p.public_id FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=rv.buyer_user_id AND u.organization_id=rv.organization_id) AS buyer_person_id,
+                   CASE WHEN rv.buyer_user_id IS NOT NULL THEN CONVERT((SELECT u.public_id FROM users u WHERE u.id=rv.buyer_user_id AND u.organization_id=rv.organization_id) USING utf8mb4)
+                        WHEN {$snap} IS NOT NULL AND TRIM({$snap})<>'' THEN CONCAT('legacy-',LEFT(SHA2(TRIM({$snap}),256),16)) ELSE 'unassigned' END AS buyer_key,
+                   rv.technical_result AS technical,rv.contract_result AS contract,rv.budget_result AS budget,rv.strategy,rv.min_quotes,rv.deadline,rv.criteria,rv.notes,
+                   e.created_at,(e.imported_at IS NOT NULL OR e.legacy_id IS NOT NULL) AS imported,{$can} AS can_quote,
+                   NOT EXISTS (SELECT 1 FROM requisition_reviews n WHERE n.organization_id=rv.organization_id AND n.requisition_id=rv.requisition_id AND n.id>rv.id) AS latest,
+                   (SELECT COUNT(*) FROM rfqs fq WHERE fq.organization_id=r.organization_id AND fq.requisition_id=r.id) AS rfq_count,
+                   (SELECT COUNT(*) FROM supplier_quotes q WHERE q.organization_id=r.organization_id AND q.requisition_id=r.id) AS quote_count,
+                   (SELECT COUNT(DISTINCT po.series_public_id) FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
+                      WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id) AS po_count
+            FROM requisition_reviews rv
+            JOIN business_entities e ON e.id=rv.id AND e.organization_id=rv.organization_id
+            JOIN requisitions r ON r.id=rv.requisition_id AND r.organization_id=rv.organization_id
+            JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
+            JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+            WHERE rv.organization_id=? AND e.archived_at IS NULL AND re.archived_at IS NULL
+            SQL;
+        $buyers = $this->rows("SELECT V.buyer_key AS `key`,MAX(V.buyer) AS name,COUNT(*) AS total,SUM(V.can_quote) AS can_quote FROM ({$base}) V GROUP BY V.buyer_key ORDER BY V.buyer_key='unassigned',name", [$org]);
+        foreach ($buyers as &$b) {
+            $b['total'] = (int) $b['total'];
+            $b['can_quote'] = (int) $b['can_quote'];
+            $b['blocked'] = $b['total'] - $b['can_quote'];
+        }
+        unset($b);
+        $where = ''; $binds = [$org];
+        if ($f['buyer'] !== 'all') {
+            $where .= ' AND V.buyer_key=?';
+            $binds[] = $f['buyer'];
+        }
+        if ($f['q'] !== '') {
+            $l = '%' . strtr($f['q'], ['!' => '!!', '%' => '!%', '_' => '!_']) . '%';
+            $where .= " AND (V.folio LIKE ? ESCAPE '!' OR V.requisition LIKE ? ESCAPE '!' OR V.client_reference LIKE ? ESCAPE '!' OR V.internal_reference LIKE ? ESCAPE '!' OR V.buyer LIKE ? ESCAPE '!' OR V.client_name LIKE ? ESCAPE '!' OR V.strategy LIKE ? ESCAPE '!')";
+            array_push($binds, $l, $l, $l, $l, $l, $l, $l);
+        }
+        $total = (int) ($this->rows("SELECT COUNT(*) AS n FROM ({$base}) V WHERE 1=1{$where}", $binds)[0]['n'] ?? 0);
+        $size = $f['page_size'];
+        $off = ($f['page'] - 1) * $size;
+        $items = $this->rows("SELECT V.* FROM ({$base}) V WHERE 1=1{$where} ORDER BY V.rv_id LIMIT {$size} OFFSET {$off}", $binds);
+        foreach ($items as &$x) {
+            unset($x['rv_id']);
+            foreach (['min_quotes', 'rfq_count', 'quote_count', 'po_count'] as $k) {
+                $x[$k] = (int) $x[$k];
+            }
+            foreach (['imported', 'can_quote', 'latest'] as $k) {
+                $x[$k] = (bool) $x[$k];
+            }
+        }
+        unset($x);
+        $all = array_sum(array_column($buyers, 'total'));
+        return ['items' => $items, 'total' => $total, 'page' => $f['page'], 'page_size' => $size,
+            'summary' => ['validations' => $all, 'can_quote' => array_sum(array_column($buyers, 'can_quote')), 'blocked' => array_sum(array_column($buyers, 'blocked')), 'buyers' => $buyers]];
+    }
 }

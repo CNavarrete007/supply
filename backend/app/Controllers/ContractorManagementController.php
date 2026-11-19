@@ -64,6 +64,23 @@ final class ContractorManagementController extends ReadOnlyModuleController
         return $this->read(fn ($r, $o) => $r->strategyRequisition($o, $id), 'No se pudo consultar la estrategia de la requisición.', 'Requisición validada no encontrada.');
     }
 
+    public function validations(): ResponseInterface
+    {
+        try {
+            if ($denied = $this->guard()) {
+                return $denied;
+            }
+            $f = $this->query(['buyer' => ['/^(all|unassigned|legacy-[0-9a-f]{16}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/D', 'all'], 'q' => [self::TEXT, '']]);
+            if ($f === null) {
+                return $this->fail(422, 'INVALID_FILTER', 'Parámetros de consulta inválidos.');
+            }
+            return $this->respond(200, (new ContractorManagementReadRepository())->validations((int) $this->actor['organization_id'], $f));
+        } catch (Throwable) {
+            log_message('error', 'SupplyFlow contractor management validations unavailable.');
+            return $this->fail(503, 'CONTRACTOR_MANAGEMENT_UNAVAILABLE', 'No se pudo consultar la matriz de validaciones.');
+        }
+    }
+
     /** Guard + no query parameters + 404 when the repository returns null + safe 503. */
     private function read(callable $fn, string $error, string $notFound = ''): ResponseInterface
     {
