@@ -160,4 +160,148 @@ final class ContractorManagementReadRepository
         }
         return ['item' => $r, 'items' => $items, 'reviews' => $reviews];
     }
+    /** Latest validation per requisition (same rule as Cotizaciones: the newest requisition_reviews row). */
+    private const LATEST_REVIEW = 'rv.organization_id=r.organization_id AND rv.requisition_id=r.id AND NOT EXISTS (SELECT 1 FROM requisition_reviews n WHERE n.organization_id=rv.organization_id AND n.requisition_id=rv.requisition_id AND n.id>rv.id)';
+
+    /** Supplier catalog for lots: status, own category and the categories of its registered supplies (offerings). */
+    private function supplierCatalog(int $org): array
+    {
+        $rows = $this->rows(<<<'SQL'
+            SELECT se.public_id AS id,s.code,s.legal_name AS name,s.status_code AS status,s.legacy_status,COALESCE(c.name,s.legacy_category_label) AS category,
+                   (SELECT GROUP_CONCAT(DISTINCT COALESCE(oc.name,o.legacy_category_label) ORDER BY COALESCE(oc.name,o.legacy_category_label) SEPARATOR '||') FROM supplier_offerings o
+                      LEFT JOIN categories oc ON oc.id=o.category_id AND oc.organization_id=o.organization_id
+                      WHERE o.organization_id=s.organization_id AND o.supplier_id=s.id AND COALESCE(oc.name,o.legacy_category_label) IS NOT NULL) AS offering_categories
+            FROM suppliers s JOIN business_entities se ON se.id=s.id AND se.organization_id=s.organization_id
+            LEFT JOIN categories c ON c.id=s.category_id AND c.organization_id=s.organization_id
+            WHERE s.organization_id=? AND se.archived_at IS NULL
+            ORDER BY s.legal_name,s.id
+            SQL, [$org]);
+        foreach ($rows as &$x) {
+            $x['offering_categories'] = $x['offering_categories'] === null ? [] : explode('||', (string) $x['offering_categories']);
+        }
+        unset($x);
+        return $rows;
+    }
+
+    /** Card 2 setup: validated requisitions (latest validation) and the supplier catalog. */
+    public function strategySetup(int $org): array
+    {
+        $buyer = self::buyer();
+        $latest = self::LATEST_REVIEW;
+        $reqs = $this->rows(<<<SQL
+            SELECT e.public_id AS id,r.folio,c.legal_name AS client_name,r.project_reference_snapshot AS project,r.contract_reference_snapshot AS contract,
+                   rv.folio AS review_folio,{$buyer} AS buyer,rv.technical_result AS technical,rv.contract_result AS contract_result,rv.budget_result AS budget,rv.strategy,rv.min_quotes,
+                   (SELECT COUNT(*) FROM requisition_items ri WHERE ri.organization_id=r.organization_id AND ri.requisition_id=r.id AND ri.cancelled_at IS NULL) AS item_count,
+                   (SELECT COUNT(*) FROM rfqs f WHERE f.organization_id=r.organization_id AND f.requisition_id=r.id) AS rfq_count,
+                   (SELECT COUNT(*) FROM sourcing_plans sp WHERE sp.organization_id=r.organization_id AND sp.requisition_id=r.id) AS plan_count,
+                   EXISTS(SELECT 1 FROM purchase_order_requisitions pr WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id) AS has_po
+            FROM requisition_reviews rv
+            JOIN requisitions r ON r.id=rv.requisition_id AND r.organization_id=rv.organization_id
+            JOIN business_entities e ON e.id=r.id AND e.organization_id=r.organization_id
+            JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+            WHERE rv.organization_id=? AND e.archived_at IS NULL AND {$latest}
+            ORDER BY has_po,COALESCE(r.request_date,'0000-01-01') DESC,r.id DESC
+            LIMIT 1000
+            SQL, [$org]);
+        foreach ($reqs as &$r) {
+            foreach (['min_quotes', 'item_count', 'rfq_count', 'plan_count'] as $k) {
+                $r[$k] = (int) $r[$k];
+            }
+            $r['has_po'] = (bool) $r['has_po'];
+        }
+        unset($r);
+        $suppliers = $this->supplierCatalog($org);
+        $authorized = count(array_filter($suppliers, static fn ($x) => in_array($x['status'], ['authorized', 'active'], true)));
+        $available = count(array_filter($suppliers, static fn ($x) => ! in_array($x['status'], ['suspended', 'inactive', 'blocked'], true)));
+        return ['requisitions' => $reqs, 'suppliers' => $suppliers,
+            'summary' => ['requisitions' => count($reqs), 'suppliers' => count($suppliers), 'authorized' => $authorized, 'available' => $available]];
+    }
+
+    /** Card 2 detail: validated requisition, its active lines (with RFQs already sent), latest sourcing plan and RFQs per lot. */
+    public function strategyRequisition(int $org, string $id): ?array
+    {
+        $buyer = self::buyer();
+        $latest = self::LATEST_REVIEW;
+        $r = $this->rows(<<<SQL
+            SELECT r.id AS db_id,e.public_id AS id,r.folio,c.legal_name AS client_name,r.project_reference_snapshot AS project,r.contract_reference_snapshot AS contract,
+                   r.need_date,r.currency_code AS currency,rv.folio AS review_folio,{$buyer} AS buyer,rv.technical_result AS technical,rv.contract_result AS contract_result,
+                   rv.budget_result AS budget,rv.strategy,rv.min_quotes,rv.deadline AS review_deadline,
+                   EXISTS(SELECT 1 FROM purchase_order_requisitions pr WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id) AS has_po
+            FROM requisition_reviews rv
+            JOIN requisitions r ON r.id=rv.requisition_id AND r.organization_id=rv.organization_id
+            JOIN business_entities e ON e.id=r.id AND e.organization_id=r.organization_id
+            JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+            WHERE rv.organization_id=? AND e.public_id=? AND e.archived_at IS NULL AND {$latest}
+            SQL, [$org, $id])[0] ?? null;
+        if (! $r) {
+            return null;
+        }
+        $rid = (int) $r['db_id'];
+        unset($r['db_id']);
+        $r['min_quotes'] = (int) $r['min_quotes'];
+        $r['has_po'] = (bool) $r['has_po'];
+        $items = $this->rows(<<<'SQL'
+            SELECT ri.id AS db_id,ri.public_id AS id,ri.line_number,ri.description,COALESCE(ri.category_label_snapshot,cat.name) AS category,ri.quantity,ri.unit_label AS unit,
+                   ri.history_based,ri.repeat_sourcing_mode,ri.fixed_client_price
+            FROM requisition_items ri LEFT JOIN categories cat ON cat.id=ri.category_id AND cat.organization_id=ri.organization_id
+            WHERE ri.organization_id=? AND ri.requisition_id=? AND ri.cancelled_at IS NULL
+            ORDER BY ri.line_number,ri.id LIMIT 500
+            SQL, [$org, $rid]);
+        $sent = [];
+        foreach ($this->rows(<<<'SQL'
+            SELECT it.requisition_item_id AS item,f.folio,s.legal_name AS supplier_name FROM rfq_items it
+            JOIN rfqs f ON f.id=it.rfq_id AND f.organization_id=it.organization_id JOIN suppliers s ON s.id=f.supplier_id AND s.organization_id=f.organization_id
+            WHERE it.organization_id=? AND it.requisition_id=? AND it.requisition_item_id IS NOT NULL ORDER BY f.folio
+            SQL, [$org, $rid]) as $x) {
+            $sent[(int) $x['item']][] = ['rfq' => $x['folio'], 'supplier_name' => $x['supplier_name']];
+        }
+        $byDb = [];
+        foreach ($items as &$i) {
+            $byDb[(int) $i['db_id']] = $i['id'];
+            $i['sent'] = $sent[(int) $i['db_id']] ?? [];
+            unset($i['db_id']);
+            $i['line_number'] = (int) $i['line_number'];
+            $i['quantity'] = (float) $i['quantity'];
+            foreach (['history_based', 'fixed_client_price'] as $k) {
+                $i[$k] = $i[$k] === null ? null : (bool) $i[$k];
+            }
+        }
+        unset($i);
+        $plan = $this->rows('SELECT id,version_number,min_quotes,updated_at FROM sourcing_plans WHERE organization_id=? AND requisition_id=? ORDER BY version_number DESC LIMIT 1', [$org, $rid])[0] ?? null;
+        $lots = [];
+        $lotKey = [];
+        if ($plan) {
+            foreach ($this->rows('SELECT id,name,min_quotes FROM sourcing_lots WHERE organization_id=? AND sourcing_plan_id=? ORDER BY id', [$org, $plan['id']]) as $n => $l) {
+                $lotKey[(int) $l['id']] = 'L' . ($n + 1);
+                $lots[(int) $l['id']] = ['key' => 'L' . ($n + 1), 'name' => $l['name'], 'min_quotes' => (int) $l['min_quotes'], 'items' => [], 'suppliers' => [], 'rfqs' => []];
+            }
+            if ($lots !== []) {
+                $in = implode(',', array_fill(0, count($lots), '?'));
+                foreach ($this->rows("SELECT sourcing_lot_id AS lot,requisition_item_id AS item,strategy FROM sourcing_lot_items WHERE organization_id=? AND sourcing_lot_id IN ({$in})", [$org, ...array_keys($lots)]) as $x) {
+                    if (isset($byDb[(int) $x['item']])) {
+                        $lots[(int) $x['lot']]['items'][] = ['id' => $byDb[(int) $x['item']], 'strategy' => $x['strategy']];
+                    }
+                }
+                foreach ($this->rows("SELECT ls.sourcing_lot_id AS lot,se.public_id AS id,ls.selected,ls.suggested FROM sourcing_lot_suppliers ls JOIN business_entities se ON se.id=ls.supplier_id AND se.organization_id=ls.organization_id WHERE ls.organization_id=? AND ls.sourcing_lot_id IN ({$in})", [$org, ...array_keys($lots)]) as $x) {
+                    $lots[(int) $x['lot']]['suppliers'][] = ['id' => $x['id'], 'selected' => (bool) $x['selected'], 'suggested' => (bool) $x['suggested']];
+                }
+            }
+        }
+        $loose = [];
+        foreach ($this->rows(<<<'SQL'
+            SELECT f.sourcing_lot_id AS lot,f.folio,se.public_id AS supplier_id,s.legal_name AS supplier_name,f.status_code AS status,f.legacy_status
+            FROM rfqs f JOIN suppliers s ON s.id=f.supplier_id AND s.organization_id=f.organization_id JOIN business_entities se ON se.id=s.id AND se.organization_id=s.organization_id
+            WHERE f.organization_id=? AND f.requisition_id=? ORDER BY f.folio
+            SQL, [$org, $rid]) as $f) {
+            $row = ['folio' => $f['folio'], 'supplier_id' => $f['supplier_id'], 'supplier_name' => $f['supplier_name'], 'status' => $f['status'], 'legacy_status' => $f['legacy_status']];
+            if ($f['lot'] !== null && isset($lots[(int) $f['lot']])) {
+                $lots[(int) $f['lot']]['rfqs'][] = $row;
+            } else {
+                $loose[] = $row + ['lot' => $f['lot'] !== null ? ($lotKey[(int) $f['lot']] ?? 'other_plan') : null];
+            }
+        }
+        return ['item' => $r, 'items' => $items,
+            'plan' => $plan ? ['version' => (int) $plan['version_number'], 'min_quotes' => (int) $plan['min_quotes'], 'updated_at' => $plan['updated_at'], 'lots' => array_values($lots)] : null,
+            'rfqs_without_lot' => $loose];
+    }
 }

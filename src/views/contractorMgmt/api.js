@@ -10,3 +10,5 @@ async function getJson(path, signal) {
 }
 export const validationSetup = signal => getJson('/api/v1/contractor-management/validation-setup', signal);
 export const validationRequisition = (id, signal) => (/^[0-9a-f-]{36}$/i.test(String(id)) ? getJson(`/api/v1/contractor-management/requisitions/${encodeURIComponent(id)}`, signal) : Promise.reject(new Error('Identificador inválido.')));
+export const strategySetup = signal => getJson('/api/v1/contractor-management/strategy-setup', signal);
+export const strategyRequisition = (id, signal) => (/^[0-9a-f-]{36}$/i.test(String(id)) ? getJson(`/api/v1/contractor-management/strategy/${encodeURIComponent(id)}`, signal) : Promise.reject(new Error('Identificador inválido.')));

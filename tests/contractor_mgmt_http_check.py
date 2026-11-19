@@ -24,16 +24,17 @@ def logout(op):
     try:
         tok = json.loads(op.open(API + '/api/v1/auth/csrf').read())['csrf_token']; op.open(urllib.request.Request(API + '/api/v1/auth/logout', b'{}', {'Content-Type': 'application/json', 'X-SF-CSRF': tok}))
     except Exception: pass
-anon = session(); check('sin sesión: 401', status(anon, S) == 401 and status(anon, f'{R}/requisitions/{ZERO}') == 401)
+T = f'{R}/strategy-setup'
+anon = session(); check('sin sesión: 401', all(status(anon, p) == 401 for p in [S, f'{R}/requisitions/{ZERO}', T, f'{R}/strategy/{ZERO}']))
 if NONADMIN:
-    o = session(NONADMIN); check('sin Master Admin: 403', status(o, S) == 403); logout(o)
+    o = session(NONADMIN); check('sin Master Admin: 403', status(o, S) == 403 and status(o, T) == 403); logout(o)
 adm = session(USER)
 try:
     get = lambda p: json.loads(adm.open(API + p).read())
     check('Master Admin: 200', status(adm, S) == 200)
     check('422 con parámetros', status(adm, S + '?x=1') == 422 and status(adm, f'{R}/requisitions/{ZERO}?a=1') == 422)
     check('requisición inexistente o id inválido → 404', status(adm, f'{R}/requisitions/{ZERO}') == 404 and status(adm, f'{R}/requisitions/abc') == 404)
-    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [S, f'{R}/requisitions/{ZERO}', f'{R}/validations', f'{R}/requisitions/{ZERO}/validations'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
+    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [S, f'{R}/requisitions/{ZERO}', f'{R}/validations', f'{R}/requisitions/{ZERO}/validations', T, f'{R}/strategy/{ZERO}', f'{R}/strategy/{ZERO}/lots'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
     d = get(S); reqs = d['requisitions']; buyers = d['buyers']
     check('estructura de requisiciones', all({'id', 'folio', 'project', 'client_name', 'internal_reference', 'item_count', 'review_count', 'last_review', 'rfq_count', 'quote_count', 'po_count'} <= set(r) for r in reqs) and d['summary']['requisitions'] == len(reqs))
     check('validación más reciente presente solo si hay validaciones', all((r['last_review'] is None) == (r['review_count'] == 0) for r in reqs) and d['summary']['with_review'] == sum(1 for r in reqs if r['review_count']))
@@ -49,6 +50,21 @@ try:
         check('detalle: partidas activas = conteo', len(x['items']) == r['item_count'])
         check('detalle: campos de requisition_reviews', all({'folio', 'buyer', 'technical', 'contract', 'budget', 'strategy', 'min_quotes', 'deadline', 'criteria', 'notes'} <= set(v) and isinstance(v['min_quotes'], int) for v in x['reviews']))
         check('detalle: sin ids internos', not re.search(r'"db_id"|buyer_user_id|requisition_id', json.dumps(x)))
+    # Tarjeta 2 · estrategia y lotificación
+    check('estrategia: 200 / 422 / 404', status(adm, T) == 200 and status(adm, T + '?x=1') == 422 and status(adm, f'{R}/strategy/{ZERO}') == 404 and status(adm, f'{R}/strategy/abc') == 404)
+    t = get(T); sreqs = t['requisitions']; sups = t['suppliers']
+    check('estrategia: solo requisiciones con validación (la más reciente)', {r['id'] for r in sreqs} == {r['id'] for r in reqs if r['review_count']} and all(r['review_folio'] == next(x for x in reqs if x['id'] == r['id'])['last_review']['folio'] for r in sreqs))
+    check('catálogo: conteos autorizados y asignables', t['summary']['authorized'] == sum(1 for x in sups if x['status'] in ('authorized', 'active')) and t['summary']['available'] == sum(1 for x in sups if x['status'] not in ('suspended', 'inactive', 'blocked')) and t['summary']['suppliers'] == len(sups))
+    check('catálogo: categorías de suministros como lista', all(isinstance(x['offering_categories'], list) for x in sups))
+    for r in sreqs:
+        x = get(f"{R}/strategy/{r['id']}")
+        lots = (x['plan'] or {}).get('lots', [])
+        ok = len(x['items']) == r['item_count'] and (x['plan'] is not None) == (r['plan_count'] > 0)
+        ids = {i['id'] for i in x['items']}; sup_ids = {s['id'] for s in sups}
+        ok = ok and all(it['id'] in ids for l in lots for it in l['items']) and all(s['id'] in sup_ids for l in lots for s in l['suppliers'])
+        ok = ok and sum(len(l['rfqs']) for l in lots) + len(x['rfqs_without_lot']) == r['rfq_count']
+        check(f"estrategia {r['folio']}: partidas, plan, proveedores y RFQ por lote coherentes", ok)
+    check('estrategia: sin ids internos', not re.search(r'"(db_id|sourcing_lot_id|supplier_id_db|requisition_item_id)"', json.dumps([get(f"{R}/strategy/{r['id']}") for r in sreqs[:3]])))
 finally:
     logout(adm)
 w = max(len(n) for n, _, _ in results)

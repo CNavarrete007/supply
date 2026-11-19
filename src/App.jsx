@@ -547,6 +547,7 @@ export default function App() {
 
           {activeTab === 'contractor_mgmt' && (
             <ContractorManagement 
+              onNavigate={handleNavigate}
               onNotify={pushNotification} 
               lang={language} 
             />
