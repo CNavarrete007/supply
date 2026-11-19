@@ -372,4 +372,42 @@ final class ContractorManagementReadRepository
         return ['items' => $items, 'total' => $total, 'page' => $f['page'], 'page_size' => $size,
             'summary' => ['validations' => $all, 'can_quote' => array_sum(array_column($buyers, 'can_quote')), 'blocked' => array_sum(array_column($buyers, 'blocked')), 'buyers' => $buyers]];
     }
+    /**
+     * Card 4 "Reglas inteligentes": requisitions without validation, current validations (latest per requisition) that
+     * block quoting and requisitions ready to quote. Counters are exact; lists are limited to 100 rows each.
+     */
+    public function rules(int $org): array
+    {
+        $buyer = self::buyer();
+        $can = self::CAN_QUOTE;
+        $latest = self::LATEST_REVIEW;
+        $none = 'FROM requisitions r JOIN business_entities e ON e.id=r.id AND e.organization_id=r.organization_id JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+            WHERE r.organization_id=? AND e.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM requisition_reviews rv WHERE rv.organization_id=r.organization_id AND rv.requisition_id=r.id)';
+        $cur = "FROM requisition_reviews rv JOIN business_entities ve ON ve.id=rv.id AND ve.organization_id=rv.organization_id
+            JOIN requisitions r ON r.id=rv.requisition_id AND r.organization_id=rv.organization_id JOIN business_entities e ON e.id=r.id AND e.organization_id=r.organization_id
+            JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+            WHERE rv.organization_id=? AND e.archived_at IS NULL AND ve.archived_at IS NULL AND {$latest}";
+        $n = fn (string $from) => (int) ($this->rows("SELECT COUNT(*) AS n {$from}", [$org])[0]['n'] ?? 0);
+        $counters = ['without_validation' => $n($none), 'blocked' => $n("{$cur} AND NOT {$can}"), 'ready' => $n("{$cur} AND {$can}")];
+        $without = $this->rows("SELECT e.public_id AS id,r.folio,c.legal_name AS client_name,r.project_reference_snapshot AS project,r.internal_reference,r.request_date,r.need_date,
+                (SELECT COUNT(*) FROM requisition_items ri WHERE ri.organization_id=r.organization_id AND ri.requisition_id=r.id AND ri.cancelled_at IS NULL) AS item_count
+            {$none} ORDER BY COALESCE(r.request_date,'0000-01-01') DESC,r.id DESC LIMIT 100", [$org]);
+        $fields = "ve.public_id AS id,rv.folio,e.public_id AS requisition_id,r.folio AS requisition,c.legal_name AS client_name,r.project_reference_snapshot AS project,{$buyer} AS buyer,
+            rv.technical_result AS technical,rv.contract_result AS contract,rv.budget_result AS budget,rv.strategy,rv.min_quotes,rv.deadline,
+            (SELECT COUNT(*) FROM rfqs f WHERE f.organization_id=r.organization_id AND f.requisition_id=r.id) AS rfq_count";
+        $blocked = $this->rows("SELECT {$fields} {$cur} AND NOT {$can} ORDER BY rv.id DESC LIMIT 100", [$org]);
+        $ready = $this->rows("SELECT {$fields} {$cur} AND {$can} ORDER BY rv.id DESC LIMIT 100", [$org]);
+        foreach ([&$without, &$blocked, &$ready] as &$list) {
+            foreach ($list as &$x) {
+                foreach (['item_count', 'min_quotes', 'rfq_count'] as $k) {
+                    if (array_key_exists($k, $x)) {
+                        $x[$k] = (int) $x[$k];
+                    }
+                }
+            }
+            unset($x);
+        }
+        unset($list);
+        return ['counters' => $counters, 'without_validation' => $without, 'blocked' => $blocked, 'ready' => $ready, 'limit' => 100];
+    }
 }

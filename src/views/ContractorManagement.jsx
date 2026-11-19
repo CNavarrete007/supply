@@ -3,6 +3,7 @@ import { Lock } from 'lucide-react';
 import { ValidationRegister } from './contractorMgmt/ValidationRegister.jsx';
 import { StrategyLots } from './contractorMgmt/StrategyLots.jsx';
 import { ValidationMatrix } from './contractorMgmt/ValidationMatrix.jsx';
+import { SmartRules } from './contractorMgmt/SmartRules.jsx';
 import { 
   ClipboardCheck, 
   Layers, 
@@ -287,6 +288,7 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
 
   const [activeTab, setActiveTab] = useState('register');
   const [valEdit, setValEdit] = useState(null); // tarjeta 3 → "Editar" abre la tarjeta 1 en modo edición
+  const [startReq, setStartReq] = useState(null); // tarjeta 4 → Validar / Estrategia preseleccionan la requisición
   const [selectedReq, setSelectedReq] = useState('REQ-001');
   const [showMatrixTable, setShowMatrixTable] = useState(false);
   const [activeCard, setActiveCard] = useState(null);
@@ -476,7 +478,7 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
             <button
               key={tab.id}
               type="button"
-              onClick={() => handleTabChange(tab.id, tab.title)}
+              onClick={() => { setStartReq(null); handleTabChange(tab.id, tab.title); }}
               className={`text-left p-4 rounded-2xl transition-all duration-300 transform active:scale-[0.98] cursor-pointer flex flex-col justify-between h-32 border ${
                 isActive
                   ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 border-transparent -translate-y-0.5'
@@ -515,10 +517,12 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
       </div>
 
       {/* Aviso propio del módulo: solo la tarjeta 1 está conectada a MariaDB */}
-      <div data-testid="contractor-mgmt-notice" className={`rounded-xl border px-4 py-3 flex items-start gap-2 text-[11px] ${['register', 'strategy', 'matrix'].includes(activeTab) ? 'border-amber-200 bg-amber-50/70 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-900 font-semibold'}`}>
+      <div data-testid="contractor-mgmt-notice" className={`rounded-xl border px-4 py-3 flex items-start gap-2 text-[11px] ${['register', 'strategy', 'matrix', 'compliance'].includes(activeTab) ? 'border-amber-200 bg-amber-50/70 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-900 font-semibold'}`}>
         <Lock className="w-4 h-4 shrink-0 mt-0.5" />
         <span>{activeTab === 'register'
           ? (lang === 'en' ? 'Validation register connected to MariaDB (read-only): requisitions, purchasing managers and recorded validations are real data. Saving validates the capture but does not store it: recording internal validations is a write blocked until authorized.' : 'Registro de validación conectado a MariaDB (solo lectura): requisiciones, responsables de compras y validaciones registradas son datos reales. Guardar valida la captura pero no la almacena: registrar validaciones internas es una escritura bloqueada hasta su autorización.')
+          : activeTab === 'compliance'
+          ? (lang === 'en' ? 'Smart rules connected to MariaDB (read-only): requisitions without validation, current validations with a block and requisitions ready to quote are computed from the real validations.' : 'Reglas inteligentes conectadas a MariaDB (solo lectura): requisiciones sin validación, validaciones vigentes con bloqueo y requisiciones listas para cotizar se calculan con las validaciones reales.')
           : activeTab === 'matrix'
           ? (lang === 'en' ? 'Validation matrix connected to MariaDB (read-only): every internal validation with its requisition, manager, results and the "can quote" verdict. Editing, deleting and recording the cost source validate the capture but do not store it: they are writes blocked until authorized.' : 'Matriz de validaciones conectada a MariaDB (solo lectura): cada validación interna con su requisición, responsable, resultados y "¿puede cotizar?". Editar, eliminar y registrar la fuente de costo validan la captura pero no la almacenan: son escrituras bloqueadas hasta su autorización.')
           : activeTab === 'strategy'
@@ -531,66 +535,24 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
 
         {/* TARJETA 1: Registro de validación (MariaDB, solo lectura; guardar valida y no escribe) */}
         {activeTab === 'register' && (
-          <ValidationRegister key={valEdit ? valEdit.id : 'new'} edit={valEdit} onExitEdit={() => setValEdit(null)} en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} />
+          <ValidationRegister key={valEdit ? valEdit.id : `new:${startReq?.tab === 'register' ? startReq.id : ''}`} edit={valEdit} startRequisition={startReq?.tab === 'register' ? startReq.id : ''} onExitEdit={() => setValEdit(null)} en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} />
         )}
 
         {/* TARJETA 2: Estrategia y lotificación (MariaDB, solo lectura; guardar valida y no escribe) */}
         {activeTab === 'strategy' && (
-          <StrategyLots en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} onNavigate={onNavigate} />
+          <StrategyLots key={`s:${startReq?.tab === 'strategy' ? startReq.id : ''}`} startRequisition={startReq?.tab === 'strategy' ? startReq.id : ''} en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} onNavigate={onNavigate} />
         )}
 
         {/* TARJETA 3: Matriz de validaciones internas (MariaDB, solo lectura; editar/eliminar validan y no escriben) */}
         {activeTab === 'matrix' && (
           <ValidationMatrix en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)}
-            onEdit={preset => { setValEdit(preset); handleTabChange('register', t.tabs.register.title); }}
-            onNew={() => { setValEdit(null); handleTabChange('register', t.tabs.register.title); }} />
+            onEdit={preset => { setStartReq(null); setValEdit(preset); handleTabChange('register', t.tabs.register.title); }}
+            onNew={() => { setStartReq(null); setValEdit(null); handleTabChange('register', t.tabs.register.title); }} />
         )}
 
-        {/* TARJETA 4: Reglas inteligentes */}
+        {/* TARJETA 4: Reglas inteligentes (MariaDB, solo lectura) */}
         {activeTab === 'compliance' && (
-          <div className="space-y-5">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-1">
-              <div>
-                <h3 className="text-base font-black text-slate-900">{t.complianceTab.title}</h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  {t.complianceTab.subtitle}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleTabChange('matrix', t.tabs.matrix.title)}
-                className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-              >
-                <span className="text-sm">📋</span>
-                <span>{t.complianceTab.btnViewValidations}</span>
-              </button>
-            </div>
-
-            <div className="space-y-3 pt-1">
-              <div className="p-3.5 bg-amber-50/50 border-l-4 border-l-amber-500 border border-slate-200/60 rounded-xl text-xs text-slate-700 flex items-center gap-1.5 shadow-2xs">
-                <span className="font-extrabold text-slate-900">0</span>
-                <span>{t.complianceTab.noValReqs}</span>
-              </div>
-
-              <div className="p-3.5 bg-rose-50/50 border-l-4 border-l-rose-500 border border-slate-200/60 rounded-xl text-xs text-slate-700 flex items-center gap-1.5 shadow-2xs">
-                <span className="font-extrabold text-slate-900">
-                  {validationsData.filter(v => v.overallStatus !== 'Validado').length}
-                </span>
-                <span>{t.complianceTab.blockedVals}</span>
-              </div>
-
-              <div className="p-3.5 bg-emerald-50/50 border-l-4 border-l-emerald-500 border border-slate-200/60 rounded-xl text-xs text-slate-700 flex items-center gap-1.5 shadow-2xs">
-                <span className="font-extrabold text-slate-900">
-                  {validationsData.filter(v => v.overallStatus === 'Validado').length}
-                </span>
-                <span>{t.complianceTab.readyToQuote}</span>
-              </div>
-            </div>
-
-            <p className="text-[11px] text-slate-500 pt-1 leading-relaxed">
-              {t.complianceTab.footerNote}
-            </p>
-          </div>
+          <SmartRules en={lang === 'en'} onGo={handleTabChange} onStart={(tab, id) => { setValEdit(null); setStartReq({ tab, id }); handleTabChange(tab, tab === 'register' ? t.tabs.register.title : t.tabs.strategy.title); }} />
         )}
       </div>
     </div>

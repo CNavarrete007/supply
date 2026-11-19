@@ -11,10 +11,10 @@ const DASH = '—';
 const ymd = v => (v ? String(v).slice(0, 10) : DASH);
 const money = (v, cur) => (v === null || v === undefined ? DASH : `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur || ''}`.trim());
 
-export function ValidationRegister({ en = false, notify = () => {}, onGo, edit = null, onExitEdit }) {
+export function ValidationRegister({ en = false, notify = () => {}, onGo, edit = null, onExitEdit, startRequisition = '' }) {
   const tx = (es, e) => (en ? e : es);
   const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
-  const [f, setF] = useState(() => (edit ? fromPreset(edit) : emptyValidation()));
+  const [f, setF] = useState(() => (edit ? fromPreset(edit) : { ...emptyValidation(), requisition: startRequisition || '' }));
   const [tried, setTried] = useState(false); const [msg, setMsg] = useState(null);
   const setup = useLoad(s => validationSetup(s), []);
   const detail = useLoad(s => validationRequisition(f.requisition, s), [f.requisition], !!f.requisition);

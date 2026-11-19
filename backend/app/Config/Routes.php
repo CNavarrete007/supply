@@ -51,6 +51,7 @@ $routes->get('api/v1/contractor-management/requisitions/(:segment)', 'Contractor
 $routes->get('api/v1/contractor-management/strategy-setup', 'ContractorManagementController::strategySetup');
 $routes->get('api/v1/contractor-management/strategy/(:segment)', 'ContractorManagementController::strategyRequisition/$1');
 $routes->get('api/v1/contractor-management/validations', 'ContractorManagementController::validations');
+$routes->get('api/v1/contractor-management/rules', 'ContractorManagementController::rules');
 $routes->get('api/v1/quotes/rfq-contacts', 'QuoteController::rfqContacts');
 $routes->get('api/v1/quotes/customer-quote-setup', 'QuoteController::customerQuoteSetup');
 $routes->get('api/v1/quotes/rfq-setup', 'QuoteController::rfqSetup');

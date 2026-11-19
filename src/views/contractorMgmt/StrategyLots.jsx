@@ -10,9 +10,9 @@ import { useLoad } from '../reception/useLoad.js';
 // catálogo de proveedores (sugerencias por categoría y suministros). Guardar estrategia y abrir RFQ no escriben.
 const DASH = '—';
 
-export function StrategyLots({ en = false, notify = () => {}, onGo, onNavigate }) {
+export function StrategyLots({ en = false, notify = () => {}, onGo, onNavigate, startRequisition = '' }) {
   const tx = (es, e) => (en ? e : es);
-  const [reqId, setReqId] = useState('');
+  const [reqId, setReqId] = useState(startRequisition || '');
   const [st, setSt] = useState(null);
   const [tried, setTried] = useState(false); const [msg, setMsg] = useState(null); const [pick, setPick] = useState({});
   const setup = useLoad(s => strategySetup(s), []);

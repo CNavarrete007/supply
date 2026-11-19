@@ -24,8 +24,8 @@ def logout(op):
     try:
         tok = json.loads(op.open(API + '/api/v1/auth/csrf').read())['csrf_token']; op.open(urllib.request.Request(API + '/api/v1/auth/logout', b'{}', {'Content-Type': 'application/json', 'X-SF-CSRF': tok}))
     except Exception: pass
-T = f'{R}/strategy-setup'; M = f'{R}/validations'
-anon = session(); check('sin sesión: 401', all(status(anon, p) == 401 for p in [S, f'{R}/requisitions/{ZERO}', T, f'{R}/strategy/{ZERO}', M]))
+T = f'{R}/strategy-setup'; M = f'{R}/validations'; RU = f'{R}/rules'
+anon = session(); check('sin sesión: 401', all(status(anon, p) == 401 for p in [S, f'{R}/requisitions/{ZERO}', T, f'{R}/strategy/{ZERO}', M, RU]))
 if NONADMIN:
     o = session(NONADMIN); check('sin Master Admin: 403', status(o, S) == 403 and status(o, T) == 403); logout(o)
 adm = session(USER)
@@ -34,7 +34,7 @@ try:
     check('Master Admin: 200', status(adm, S) == 200)
     check('422 con parámetros', status(adm, S + '?x=1') == 422 and status(adm, f'{R}/requisitions/{ZERO}?a=1') == 422)
     check('requisición inexistente o id inválido → 404', status(adm, f'{R}/requisitions/{ZERO}') == 404 and status(adm, f'{R}/requisitions/abc') == 404)
-    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [S, f'{R}/requisitions/{ZERO}', f'{R}/validations', f'{R}/requisitions/{ZERO}/validations', T, f'{R}/strategy/{ZERO}', f'{R}/strategy/{ZERO}/lots', M, f'{M}/{ZERO}'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
+    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [S, f'{R}/requisitions/{ZERO}', f'{R}/validations', f'{R}/requisitions/{ZERO}/validations', T, f'{R}/strategy/{ZERO}', f'{R}/strategy/{ZERO}/lots', M, f'{M}/{ZERO}', RU] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
     d = get(S); reqs = d['requisitions']; buyers = d['buyers']
     check('estructura de requisiciones', all({'id', 'folio', 'project', 'client_name', 'internal_reference', 'item_count', 'review_count', 'last_review', 'rfq_count', 'quote_count', 'po_count'} <= set(r) for r in reqs) and d['summary']['requisitions'] == len(reqs))
     check('validación más reciente presente solo si hay validaciones', all((r['last_review'] is None) == (r['review_count'] == 0) for r in reqs) and d['summary']['with_review'] == sum(1 for r in reqs if r['review_count']))
@@ -84,6 +84,14 @@ try:
         p1 = get(M + '?page_size=1&page=1'); p2 = get(M + '?page_size=1&page=2') if mx['total'] > 1 else {'items': []}
         check('matriz: paginación', len(p1['items']) == 1 and (mx['total'] < 2 or p1['items'][0]['id'] != p2['items'][0]['id']))
     check('matriz: sin ids internos', not re.search(r'"(db_id|rv_id|buyer_user_id|requisition_db_id)"', json.dumps(mx)))
+    # Tarjeta 4 · reglas inteligentes
+    check('reglas: 200 / 422', status(adm, RU) == 200 and status(adm, RU + '?x=1') == 422)
+    ru = get(RU); k = ru['counters']
+    check('reglas: sin validación = requisiciones sin validaciones registradas', k['without_validation'] == sum(1 for r in reqs if r['review_count'] == 0))
+    check('reglas: bloqueadas + listas = requisiciones con validación vigente', k['blocked'] + k['ready'] == sum(1 for r in reqs if r['review_count']))
+    cur = [x for x in get(M + '?page_size=50')['items'] if x['latest']]
+    check('reglas: bloqueo / listas = ¿puede cotizar? de la validación vigente', k['ready'] == sum(1 for x in cur if x['can_quote']) and k['blocked'] == sum(1 for x in cur if not x['can_quote']) or len(cur) == 50)
+    check('reglas: listas ≤ 100 y coherentes con los contadores', all(len(ru[n]) == min(100, k[n]) for n in ('without_validation', 'blocked', 'ready')))
 finally:
     logout(adm)
 w = max(len(n) for n, _, _ in results)

@@ -81,6 +81,11 @@ final class ContractorManagementController extends ReadOnlyModuleController
         }
     }
 
+    public function rules(): ResponseInterface
+    {
+        return $this->read(fn ($r, $o) => $r->rules($o), 'No se pudieron consultar las reglas inteligentes.');
+    }
+
     /** Guard + no query parameters + 404 when the repository returns null + safe 503. */
     private function read(callable $fn, string $error, string $notFound = ''): ResponseInterface
     {
