@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { listContractors, contractorPersonnel } from './contractors/api';
-import { STATUS_FILTERS, contractorRow, matrixBadge, deleteBlock, activeText, personRow, editPrefill } from './contractors/model.mjs';
+import { STATUS_FILTERS, contractorRow, matrixBadge, deleteBlock, activeText, personRow, editPrefill, displayName, serverQuery } from './contractors/model.mjs';
 import { 
   HardHat, 
   FileSpreadsheet, 
@@ -66,7 +66,7 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
     if (activeTab !== 'matrix') return undefined;
     const c = new AbortController();
     setList(x => ({ ...x, status: 'loading', error: null }));
-    listContractors({ q, status: statusFilter }, c.signal).then(d => !c.signal.aborted && setList({ status: 'ready', data: d, error: null }))
+    listContractors({ q: serverQuery(q), status: statusFilter }, c.signal).then(d => !c.signal.aborted && setList({ status: 'ready', data: d, error: null }))
       .catch(e => !c.signal.aborted && setList(x => ({ ...x, status: 'error', error: e })));
     return () => c.abort();
   }, [activeTab, q, statusFilter, rev]);
@@ -454,7 +454,7 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                   {items.map(c => { const v = contractorRow(c, !isEs); return (
                     <tr key={c.id} data-testid="contractor-row" className="align-top hover:bg-slate-50/60">
                       <td className="p-3"><div className="w-20 h-16 rounded-xl border border-slate-200 bg-white flex items-center justify-center p-1.5" title={v.logo.note}><img src={v.logo.src} alt={`${tx('Logotipo', 'Logo')} ${v.name}`} className="max-w-full max-h-full object-contain" /></div></td>
-                      <td className="p-3 min-w-[170px]"><div className="font-black text-slate-900 text-xs leading-snug">{v.name}</div><div className="text-[9.5px] text-slate-500 mt-1">{v.logo.note}</div></td>
+                      <td className="p-3 min-w-[170px]"><div className="font-black text-slate-900 text-xs leading-snug">{v.name}</div>{v.registered && <div data-testid="contractor-registered" className="text-[9.5px] text-amber-700 mt-1">{tx('Razón social registrada en MariaDB', 'Legal name recorded in MariaDB')}: {v.registered}</div>}<div className="text-[9.5px] text-slate-500 mt-1">{v.logo.note}</div></td>
                       <td className="p-3 font-medium text-slate-700 whitespace-nowrap">{v.taxId}</td>
                       <td className="p-3 text-slate-700 min-w-[150px]"><div>{v.phone || '—'}</div><div className="text-[10px] text-slate-500 break-all">{v.email || '—'}</div></td>
                       <td className="p-3 text-slate-700 min-w-[200px] max-w-[260px]">{v.address}</td>
@@ -476,7 +476,7 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
 
             {delDlg && <div role="dialog" aria-modal="true" aria-label={tx('Eliminar contratista', 'Delete contractor')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setDelDlg(null)}>
               <div className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-3" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-between"><h3 className="text-sm font-black text-rose-700">{tx('Eliminar', 'Delete')} {delDlg.legal_name}</h3><button type="button" aria-label={tx('Cerrar diálogo', 'Close dialog')} onClick={() => setDelDlg(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
+                <div className="flex items-center justify-between"><h3 className="text-sm font-black text-rose-700">{tx('Eliminar', 'Delete')} {displayName(delDlg)}</h3><button type="button" aria-label={tx('Cerrar diálogo', 'Close dialog')} onClick={() => setDelDlg(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
                 <p role="alert" data-testid="contractor-delete-block" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">{deleteBlock(delDlg, !isEs)}</p>
                 <div className="flex justify-end text-xs font-black"><button type="button" onClick={() => setDelDlg(null)} className="px-4 py-2 border border-slate-200 rounded-xl">{tx('Cerrar', 'Close')}</button></div>
               </div>
@@ -484,7 +484,7 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
 
             {staff && <div role="dialog" aria-modal="true" aria-label={tx('Personal del contratista', 'Contractor personnel')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-3 sm:p-6" onClick={() => setStaff(null)}>
               <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-between gap-3 p-4 border-b border-slate-100"><div className="min-w-0"><h3 className="text-sm font-black text-slate-900">{tx('Personal / contactos', 'Personnel / contacts')} · {staff.contractor.legal_name}</h3><p className="text-[11px] text-slate-500">{tx('Personas registradas en la organización (MariaDB). El acceso proviene de su usuario del sistema.', 'People registered in the organization (MariaDB). Access comes from their system user.')}</p></div><button type="button" aria-label={tx('Cerrar personal', 'Close personnel')} onClick={() => setStaff(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
+                <div className="flex items-center justify-between gap-3 p-4 border-b border-slate-100"><div className="min-w-0"><h3 className="text-sm font-black text-slate-900">{tx('Personal / contactos', 'Personnel / contacts')} · {displayName(staff.contractor)}</h3><p className="text-[11px] text-slate-500">{tx('Personas registradas en la organización (MariaDB). El acceso proviene de su usuario del sistema.', 'People registered in the organization (MariaDB). Access comes from their system user.')}</p></div><button type="button" aria-label={tx('Cerrar personal', 'Close personnel')} onClick={() => setStaff(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
                 <div className="p-4 overflow-auto space-y-3">
                   {staff.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p>}
                   {staff.error && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{staff.error.message}</p>}

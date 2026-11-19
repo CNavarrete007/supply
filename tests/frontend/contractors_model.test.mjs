@@ -1,7 +1,7 @@
 // Contratista · tarjeta 2 "Matriz de contratistas": lógica pura (node --test).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { STATUS_FILTERS, CONTRACTOR_LOGO, contractorRow, matrixBadge, deleteBlock, activeText, personRow, editPrefill } from '../../src/views/contractors/model.mjs';
+import { STATUS_FILTERS, CONTRACTOR_LOGO, CONTRACTOR_IDENTITY, contractorRow, matrixBadge, deleteBlock, activeText, personRow, editPrefill, displayName, registeredName, serverQuery } from '../../src/views/contractors/model.mjs';
 
 // Fila sintética con la forma de GET /api/v1/contractors.
 const C = { id: 'o1', legal_name: 'Supply Base Services de Mexico', tax_identifier: 'SPM1802193A6', phone: '8332140041', email: 'supplies@qa.invalid', postal_address: '3ra avenida #1007, Tampico', status: 'active',
@@ -13,7 +13,7 @@ test('filtros de estatus del diseño', () => {
 
 test('fila del contratista con las columnas del diseño', () => {
   const v = contractorRow(C);
-  assert.deepEqual([v.name, v.taxId, v.phone, v.email, v.address], ['SUPPLY BASE SERVICES DE MEXICO', 'SPM1802193A6', '8332140041', 'supplies@qa.invalid', '3ra avenida #1007, Tampico']);
+  assert.deepEqual([v.name, v.registered, v.taxId, v.phone, v.email, v.address], ['TRÁMITES ADUANALES GEREZ S.C', 'Supply Base Services de Mexico', 'SPM1802193A6', '8332140041', 'supplies@qa.invalid', '3ra avenida #1007, Tampico']);
   assert.equal(v.logo.src, CONTRACTOR_LOGO);
   assert.match(v.logo.note, /institucional Grupo Gerez/);
   assert.deepEqual([v.responsible.text, v.responsible.tone], ['Sin responsable', 'amber']);
@@ -22,6 +22,7 @@ test('fila del contratista con las columnas del diseño', () => {
   assert.deepEqual([v.usage.text, v.usage.tone, v.usage.sub], ['Contratista activo', 'green', '31 requisición(es) · 4 OC · 3 factura(s)']);
   const w = contractorRow({ ...C, has_logo: true, responsible: { name: 'Ana Pérez', position: 'Gerente' }, personnel: 5, with_access: 3, status: 'suspended', active: false, tax_identifier: null });
   assert.deepEqual([w.responsible.text, w.responsible.sub, w.personnel.text, w.personnel.sub, w.status.text, w.usage.text, w.taxId], ['Ana Pérez', 'Gerente', '5 persona(s)', '3 con acceso', 'Inactivo', 'Disponible', '—']);
+  assert.deepEqual([w.name, w.registered], ['SUPPLY BASE SERVICES DE MEXICO', ''], 'otro contratista (no activo) conserva su razón social');
   assert.match(w.logo.note, /resguardo privado/);
   assert.equal(contractorRow(C, true).usage.text, 'Active contractor');
 });
@@ -30,7 +31,7 @@ test('insignia, Activo y Eliminar (escrituras bloqueadas)', () => {
   assert.equal(matrixBadge({ total: 1 }), '1 empresa(s) · activa en esta sesión');
   assert.match(activeText(C), /ya es el contratista activo para documentos y operaciones/);
   assert.match(activeText({ ...C, active: false }), /escritura bloqueada/);
-  assert.match(deleteBlock(C), /^No se elimina Supply Base Services de Mexico: es el contratista activo de esta sesión y la empresa titular de 38 documento\(s\) y 0 persona\(s\)/);
+  assert.match(deleteBlock(C), /^No se elimina Trámites Aduanales Gerez S\.C: es el contratista activo de esta sesión y la empresa titular de 38 documento\(s\) y 0 persona\(s\)/);
   assert.match(deleteBlock(C, true), /is not deleted/);
 });
 
@@ -42,5 +43,15 @@ test('personal: estado, acceso y responsable', () => {
 });
 
 test('Editar precarga la tarjeta 1 con los datos reales', () => {
-  assert.deepEqual(editPrefill(C), { companyName: 'Supply Base Services de Mexico', rfc: 'SPM1802193A6', phone: '8332140041', email: 'supplies@qa.invalid', address: '3ra avenida #1007, Tampico', status: 'Activo' });
+  assert.deepEqual(editPrefill(C), { companyName: 'Trámites Aduanales Gerez S.C', rfc: 'SPM1802193A6', phone: '8332140041', email: 'supplies@qa.invalid', address: '3ra avenida #1007, Tampico', status: 'Activo' });
+});
+
+test('identidad Trámites Aduanales Gerez S.C con logotipo Grupo Gerez, sin ocultar la razón social registrada', () => {
+  assert.deepEqual(CONTRACTOR_IDENTITY, { name: 'Trámites Aduanales Gerez S.C', logo: '/image_923273.svg' });
+  assert.equal(displayName(C), 'Trámites Aduanales Gerez S.C');
+  assert.equal(registeredName({ ...C, legal_name: 'TRAMITES ADUANALES GEREZ, S.C.' }), '', 'misma razón social (sin acentos, puntos ni comas): no se repite');
+  assert.equal(registeredName({ ...C, legal_name: '' }), '');
+  assert.equal(registeredName(C), 'Supply Base Services de Mexico');
+  assert.match(activeText(C), /^Trámites Aduanales Gerez S\.C ya es el contratista activo/);
+  assert.deepEqual(['trámites', 'ADUANALES gerez', 'Gerez S.C', 'SPM18', 'Supply', ''].map(serverQuery), ['', '', '', 'SPM18', 'Supply', ''], 'el nombre mostrado también encuentra la empresa');
 });
