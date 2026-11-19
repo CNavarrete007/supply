@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
 import { receptionMatrix, receptionOrders, receptionOrder, receiptDetail, deliveryDetail, receptionClosure } from './api';
 import { label, tone, isAccepted, reasonLabel, pct, qty, shortHash, bytes, closureCards, deliveryHtml } from './model.mjs';
+import { RECEPTION_TYPES, QUALITY, DOCUMENTATION, PHOTO_MAX, emptyReception, withType, orderOptions, photoError, fitSize, validateReception, receptionLockedText, outstanding } from './receptionForm.mjs';
 
 // Recepción y Entrega · diseño Grupo Gerez (4 tarjetas) conectado a MariaDB en modo consulta.
 // GET /api/v1/reception/* (Master Admin). Registrar recepciones, entregas, firmas o fotografías sigue bloqueado.
@@ -38,7 +39,6 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
   const [page, setPage] = useState(1);
   const [client, setClient] = useState(null); // null = matrix closed (design: opens on a client card)
   const [kind, setKind] = useState('all');
-  const [poStatus, setPoStatus] = useState('all');
   const [poId, setPoId] = useState(''); const [recId, setRecId] = useState(''); const [delId, setDelId] = useState('');
   const [format, setFormat] = useState('');
   const [closureKey, setClosureKey] = useState('po_without_receipt');
@@ -46,7 +46,7 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
   const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setKind('all'); setDelId(''); };
 
   const matrix = useLoad(s => receptionMatrix({ page, q, kind, client: client || 'all' }, s), [page, q, kind, client, rev], tab === 3);
-  const orders = useLoad(s => receptionOrders({ status: poStatus }, s), [poStatus, rev], tab === 1);
+  const orders = useLoad(s => receptionOrders({ status: 'all' }, s), [rev], tab === 1);
   const order = useLoad(s => receptionOrder(poId, s), [poId, rev], tab === 1 && !!poId);
   const receipts = useLoad(s => receptionMatrix({ kind: 'receipt', page_size: 50, q }, s), [q, rev], tab === 2);
   const receipt = useLoad(s => receiptDetail(recId, s), [recId, rev], (tab === 1 || tab === 2) && !!recId);
@@ -88,6 +88,38 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
     <p className="text-[11px] text-slate-500">{tx('Origen', 'Source')}: {d.sources.map(s => `${s.po_folio}${s.receipt_folio ? ` / ${s.receipt_folio}` : ''}`).join(' · ') || DASH}</p>
     {evidence(d)}
   </div>;
+  // ---------- Tarjeta 1: registro de recepción (se valida; guardar y subir fotografías requieren endpoint autorizado) ----------
+  const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+  const [rf, setRf] = useState(() => emptyReception(today));
+  const [rTried, setRTried] = useState(false); const [rMsg, setRMsg] = useState(null); const [photoMsg, setPhotoMsg] = useState('');
+  const photoRef = useRef(null);
+  const rv = useMemo(() => validateReception({ ...rf, po: poId }, { order: order.status === 'ready' ? order.data : null, today }, en), [rf, poId, order, today, en]);
+  const setR = (k, v) => { setRf(f => ({ ...f, [k]: v })); setRMsg(null); };
+  const resetReception = keepPo => { setRf(emptyReception(today)); setRTried(false); setRMsg(null); setPhotoMsg(''); if (photoRef.current) photoRef.current.value = ''; if (!keepPo) { setPoId(''); setRecId(''); } };
+  const compress = file => new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file); const img = new Image();
+    img.onload = () => { const { w, h } = fitSize(img.naturalWidth, img.naturalHeight); const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url);
+      const data = c.toDataURL('image/jpeg', 0.8); resolve({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name: file.name, original: file.size, size: Math.round(((data.length - 23) * 3) / 4), w, h, data }); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(tx(`${file.name}: no se pudo leer la imagen.`, `${file.name}: the image could not be read.`))); };
+    img.src = url;
+  });
+  const addPhotos = async files => {
+    const list = [...(files || [])]; const errs = []; const ok = [];
+    for (const file of list) { const err = photoError(file, en); if (err) errs.push(err); else ok.push(file); }
+    const room = Math.max(0, PHOTO_MAX - rf.photos.length);
+    if (ok.length > room) errs.push(tx(`Máximo ${PHOTO_MAX} fotografías: se omitieron ${ok.length - room}.`, `Maximum ${PHOTO_MAX} photos: ${ok.length - room} were skipped.`));
+    const done = [];
+    for (const file of ok.slice(0, room)) { try { done.push(await compress(file)); } catch (e) { errs.push(e.message); } }
+    setRf(f => ({ ...f, photos: [...f.photos, ...done].slice(0, PHOTO_MAX) })); setRMsg(null); setPhotoMsg(errs.join(' '));
+    if (photoRef.current) photoRef.current.value = '';
+  };
+  const viewPhoto = p => { const a = document.createElement('a'); a.href = p.data; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.click(); };
+  const saveReception = () => {
+    setRTried(true);
+    if (!rv.ok) { setRMsg({ kind: 'error', text: rv.first }); return; }
+    const text = receptionLockedText(order.data, rf, en);
+    setRMsg({ kind: 'locked', text }); notify(tx('Recepción no registrada', 'Receipt not recorded'), text, 'warning');
+  };
   const printFormat = () => { if (!fmt.data) return; const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(deliveryHtml(fmt.data, en)); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); };
   const cards = matrix.data?.summary?.clients || [];
   const allCard = { id: 'all', name: tx('Todos los clientes', 'All customers'), receipts: cards.reduce((n, c) => n + c.receipts, 0), deliveries: cards.reduce((n, c) => n + c.deliveries, 0) };
@@ -105,20 +137,60 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
     </div>
     <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 flex items-start gap-2 text-[11px] text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{LOCK}</span></div>
 
-    {tab === 1 && <div className={box}>{head(tx('Registro de recepción', 'Reception registration'), tx('Recepción física del suministro: cantidad, calidad, documentos y evidencia fotográfica, por orden de compra vigente.', 'Physical supply receipt: quantity, quality, documents and photo evidence, per current purchase order.'), <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 rounded-full px-2.5 py-1">{tx('Paso 6 • Recepción', 'Step 6 • Reception')}</span>)}
-      <div className="grid grid-cols-3 gap-3">{[['pending', tx('Sin recepción', 'Not received'), 'border-l-amber-500'], ['partial', tx('Parciales', 'Partial'), 'border-l-rose-500'], ['complete', tx('Completas', 'Complete'), 'border-l-emerald-500']].map(([k, l, c]) => <button key={k} type="button" aria-pressed={poStatus === k} onClick={() => { setPoStatus(poStatus === k ? 'all' : k); setPoId(''); setRecId(''); }} className={`text-left p-3 rounded-xl border border-l-4 ${c} ${poStatus === k ? 'border-purple-400 bg-purple-50/40' : 'border-slate-100 bg-slate-50/40'}`}><div className="text-xl font-black text-slate-900 tabular-nums">{orders.data?.summary?.[k] ?? '…'}</div><div className="text-[11px] text-slate-600">{l}</div></button>)}</div>
+    {tab === 1 && <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 sm:p-6 text-left space-y-5" data-testid="reception-form">
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-3 pb-4 border-b border-slate-100">
+        <div className="min-w-0 flex-1"><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Registro de recepción', 'Reception registration')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Documenta la recepción física del suministro, cantidad, calidad, documentos y evidencia fotográfica.', 'Document the physical receipt of the supply, quantity, quality, documents and photo evidence.')}</p></div>
+        <span className="text-[10.5px] font-black text-emerald-800 bg-emerald-100/80 border border-emerald-200 rounded-full px-3 py-1 shrink-0">{tx('Paso 6 · Recepción', 'Step 6 · Receipt')}</span>
+      </div>
+      <div className="flex items-center gap-3 p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-xs font-black text-emerald-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-300 to-emerald-600 shadow-inner shrink-0" />{tx('Modo nueva captura activo. Completa la información y presiona Guardar. Al terminar, el formulario se limpiará y bloqueará.', 'New capture mode active. Fill in the information and press Save. When finished, the form will be cleared and locked.')}</div>
       <Wait s={orders} /><Err s={orders} />
-      <div className="flex flex-wrap gap-2 items-center"><select aria-label={tx('Orden de compra', 'Purchase order')} value={order.data?.item?.id ?? poId} onChange={e => { setPoId(e.target.value); setRecId(''); }} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl min-w-[320px] flex-1"><option value="">{tx('Seleccionar orden de compra…', 'Select purchase order…')}</option>{(orders.data?.items || []).map(o => <option key={o.id} value={o.id}>{o.folio}{o.version_number > 1 ? ` Rev. ${o.version_number - 1}` : ''} · {o.supplier_name} · {pct(o.received_percent)}</option>)}</select>{lockBtn(tx('Guardar recepción', 'Save receipt'))}</div>
+      {(() => { const lbl = (t, req, k, child, cls = '') => <label className={`block ${cls}`}><span className="block text-[11px] font-black text-slate-900 mb-1.5">{t}{req ? ' *' : ''}</span>{child}{rTried && rv.errors[k] && <span role="alert" className="block text-[10.5px] text-rose-600 font-semibold mt-1">{rv.errors[k]}</span>}</label>;
+        const ctl = k => `w-full px-3.5 py-3 bg-white border rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 ${rTried && rv.errors[k] ? 'border-rose-400' : 'border-slate-300'}`;
+        return <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {lbl(tx('Orden de compra', 'Purchase order'), true, 'po', <select aria-label={tx('Orden de compra', 'Purchase order')} value={poId ? (order.data?.item?.id ?? poId) : ''} onChange={e => { setPoId(e.target.value); setRecId(''); setRMsg(null); }} className={ctl('po')}><option value="">{tx('Seleccionar...', 'Select...')}</option>{orderOptions(orders.data?.items || [], en).map(o => <option key={o.id} value={o.id} disabled={o.disabled}>{o.label}</option>)}</select>, 'md:col-span-2')}
+          {lbl(tx('Folio de recepción', 'Receipt folio'), false, 'folio', <input type="text" readOnly aria-label={tx('Folio de recepción', 'Receipt folio')} value={tx('Automático', 'Automatic')} className="w-full px-3.5 py-3 bg-slate-100 border border-slate-200 rounded-xl text-sm text-slate-500 cursor-default" />)}
+          {lbl(tx('Fecha de recepción', 'Receipt date'), true, 'date', <input type="date" aria-label={tx('Fecha de recepción', 'Receipt date')} value={rf.date} max={today} onChange={e => setR('date', e.target.value)} className={ctl('date')} />)}
+          {lbl(tx('Tipo de recepción', 'Receipt type'), false, 'type', <select aria-label={tx('Tipo de recepción', 'Receipt type')} value={rf.type} onChange={e => { setRf(f => withType(f, e.target.value)); setRMsg(null); }} className={ctl('type')}>{RECEPTION_TYPES.map(([v, es, e2]) => <option key={v} value={v}>{en ? e2 : es}</option>)}</select>)}
+          {lbl(tx('Cantidad / % recibido', 'Quantity / % received'), false, 'qty', <input type="text" inputMode="decimal" aria-label={tx('Cantidad / % recibido', 'Quantity / % received')} value={rf.qty} onChange={e => setR('qty', e.target.value)} className={ctl('qty')} />)}
+          {lbl(tx('Inspección de calidad', 'Quality inspection'), false, 'quality', <select aria-label={tx('Inspección de calidad', 'Quality inspection')} value={rf.quality} onChange={e => setR('quality', e.target.value)} className={ctl('quality')}>{QUALITY.map(([v, es, e2]) => <option key={v} value={v}>{en ? e2 : es}</option>)}</select>)}
+          {lbl(tx('Documentación recibida', 'Documentation received'), false, 'docs', <select aria-label={tx('Documentación recibida', 'Documentation received')} value={rf.docs} onChange={e => setR('docs', e.target.value)} className={ctl('docs')}>{DOCUMENTATION.map(([v, es, e2]) => <option key={v} value={v}>{en ? e2 : es}</option>)}</select>)}
+          {lbl(tx('Evidencia / remisión / factura', 'Evidence / delivery note / invoice'), false, 'evidence', <input type="text" aria-label={tx('Evidencia / remisión / factura', 'Evidence / delivery note / invoice')} value={rf.evidence} maxLength={255} placeholder={tx('Número de remisión, factura, packing list, certificado...', 'Delivery note, invoice, packing list, certificate number...')} onChange={e => setR('evidence', e.target.value)} className={ctl('evidence')} />, 'md:col-span-2')}
+          {lbl(tx('Observaciones / no conformidad', 'Notes / non-compliance'), rf.quality !== 'conforme', 'notes', <textarea rows={3} aria-label={tx('Observaciones / no conformidad', 'Notes / non-compliance')} value={rf.notes} maxLength={2100} onChange={e => setR('notes', e.target.value)} className={ctl('notes')} />, 'md:col-span-2')}
+        </div>; })()}
+
+      <div data-testid="reception-photos" className="p-4 sm:p-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50/40 space-y-3">
+        <div className="flex flex-col sm:flex-row items-start justify-between gap-2 pb-3 border-b border-slate-200/70"><div><h4 className="text-sm font-black text-slate-900">{tx('Fotografías de recepción', 'Receipt photos')}</h4><p className="text-[11px] text-slate-500 mt-0.5">{tx('Agrega imágenes de descarga, inspección, cantidades, daños, etiquetas o documentos recibidos.', 'Add images of unloading, inspection, quantities, damage, labels or documents received.')}</p></div><span data-testid="reception-photo-count" className="text-[10.5px] font-black text-blue-900 bg-blue-100/80 border border-blue-200 rounded-full px-3 py-1 shrink-0">{rf.photos.length} {rf.photos.length === 1 ? tx('fotografía', 'photo') : tx('fotografías', 'photos')}</span></div>
+        <input ref={photoRef} type="file" multiple accept="image/jpeg,image/png,image/webp" aria-label={tx('Fotografías de recepción', 'Receipt photos')} onChange={e => addPhotos(e.target.files)} className="block w-full text-sm text-slate-700 bg-white border border-slate-200 rounded-xl px-2 py-2 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border file:border-slate-300 file:bg-slate-50 file:text-slate-700 file:font-semibold" />
+        <p className="text-[10px] text-slate-500">{tx(`Máximo recomendado: ${PHOTO_MAX} fotografías. Las imágenes se comprimen automáticamente (lado mayor ≤ 1600 px, JPG) y no se suben mientras el registro esté bloqueado.`, `Recommended maximum: ${PHOTO_MAX} photos. Images are compressed automatically (longest edge ≤ 1600 px, JPG) and are not uploaded while recording is blocked.`)}</p>
+        {photoMsg && <p role="alert" data-testid="reception-photo-msg" className="text-[11px] text-rose-700 font-semibold">{photoMsg}</p>}
+        {rTried && rv.errors.photos && <p role="alert" className="text-[11px] text-rose-700 font-semibold">{rv.errors.photos}</p>}
+        {rf.photos.length ? <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">{rf.photos.map(p => <figure key={p.id} data-testid="reception-photo" className="bg-white rounded-xl border border-slate-200 p-1.5 space-y-1">
+            <button type="button" onClick={() => viewPhoto(p)} aria-label={`${tx('Ver fotografía', 'View photo')} ${p.name}`} className="block w-full"><img src={p.data} alt={p.name} className="w-full h-20 object-cover rounded-lg" /></button>
+            <figcaption className="text-[9.5px] text-slate-600 truncate" title={p.name}>{p.name}</figcaption><div className="text-[9px] text-slate-400">{p.w}×{p.h} · {bytes(p.size)}</div>
+            <span className="text-[10px] font-black block"><button type="button" onClick={() => setR('photos', rf.photos.filter(x => x.id !== p.id))} className="w-full px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-md">{tx('Quitar', 'Remove')}</button></span>
+          </figure>)}</div>
+          : <div className="p-8 border border-dashed border-slate-300 rounded-2xl bg-white/60 text-center text-sm text-slate-500">{tx('No se han agregado fotografías.', 'No photos have been added.')}</div>}
+      </div>
+
       <Wait s={order} /><Err s={order} />
-      {!poId && <div className="p-10 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500">{tx('Selecciona una orden de compra para ver lo ordenado, lo recibido y sus recepciones.', 'Select a purchase order to see ordered and received quantities and its receipts.')}</div>}
-      {order.data && <div data-testid="order-reception" className="space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">{[[tx('Proveedor', 'Supplier'), order.data.item.supplier_name], [tx('Requisición / cliente', 'Requisition / client'), `${show(order.data.item.requisitions)} · ${show(order.data.item.client_name)}`], [tx('Compromiso de entrega', 'Committed date'), ymd(order.data.item.commitment_date)], [tx('Avance de recepción', 'Reception progress'), `${pct(order.data.item.received_percent)} · ${label(order.data.item.reception, en)}`]].map(([k, v]) => field(k, v))}</div>
-        {table(['#', tx('Descripción', 'Description'), tx('Ordenado', 'Ordered'), tx('Recibido (serie)', 'Received (series)'), tx('Rechazado', 'Rejected'), tx('Pendiente', 'Outstanding')], order.data.items.map(i => <tr key={i.line_number}><td className="p-2.5">{i.line_number}</td><td className="p-2.5 font-semibold">{i.description}</td><td className="p-2.5">{qty(i.quantity)} {i.unit_label}</td><td className="p-2.5">{qty(i.received ?? 0)}</td><td className="p-2.5">{qty(i.rejected ?? 0)}</td><td className="p-2.5 font-bold">{qty(Math.max(0, i.quantity - (i.received ?? 0)))}</td></tr>), tx('Sin partidas.', 'No items.'), 'min-w-[640px]')}
-        <p className="text-[10px] text-slate-400">{tx('Las recepciones históricas a nivel encabezado solo registran porcentaje; no suman cantidades por partida.', 'Header-level historical receipts only record a percentage; they do not add line quantities.')}</p>
-        <div className="flex flex-wrap gap-2">{order.data.receipts.map(r => <button key={r.id} type="button" aria-pressed={recId === r.id} onClick={() => setRecId(r.id)} className={`px-3 py-2 rounded-xl border text-left text-[11px] ${recId === r.id ? 'border-purple-500 bg-purple-50/50' : 'border-slate-200 hover:border-purple-300'}`}><div className="font-black">{r.folio}</div><div className="text-slate-500">{ymd(r.date)} · {pct(r.received_percent)}</div></button>)}{!order.data.receipts.length && <p className="text-[11px] text-amber-700 font-semibold">{tx('Esta orden aún no tiene recepciones registradas.', 'This order has no receipts yet.')}</p>}</div>
-        <Wait s={receipt} /><Err s={receipt} />
-        {receipt.data && receiptView(receipt.data)}
-      </div>}
+      {!poId ? <div className="bg-blue-50/70 border-l-4 border-blue-600 rounded-xl p-3.5 text-xs text-slate-700">{tx('Selecciona una orden para visualizar su contexto.', 'Select an order to view its context.')}</div>
+        : order.data && <div data-testid="order-reception" className="space-y-3">
+          <div className={`border-l-4 rounded-xl p-3.5 text-xs ${order.data.item.reception === 'complete' ? 'bg-emerald-50/70 border-emerald-500 text-emerald-900' : 'bg-blue-50/70 border-blue-600 text-slate-700'}`}><strong>{order.data.item.folio}{order.data.item.version_number > 1 ? ` · Rev. ${order.data.item.version_number - 1}` : ''}</strong> · {order.data.item.supplier_name} · {show(order.data.item.requisitions)} · {show(order.data.item.client_name)} · {tx('Compromiso', 'Commitment')}: {ymd(order.data.item.commitment_date)} · {tx('Recibido', 'Received')}: <strong>{pct(order.data.item.received_percent)}</strong> ({label(order.data.item.reception, en)})</div>
+          {table(['#', tx('Descripción', 'Description'), tx('Ordenado', 'Ordered'), tx('Recibido (serie)', 'Received (series)'), tx('Rechazado', 'Rejected'), tx('Pendiente', 'Outstanding')], order.data.items.map(i => <tr key={i.line_number}><td className="p-2.5">{i.line_number}</td><td className="p-2.5 font-semibold">{i.description}</td><td className="p-2.5">{qty(i.quantity)} {i.unit_label}</td><td className="p-2.5">{qty(i.received)}</td><td className="p-2.5">{qty(i.rejected)}</td><td className="p-2.5 font-bold">{qty(outstanding(i))}</td></tr>), tx('La OC no tiene partidas registradas.', 'The PO has no recorded line items.'), 'min-w-[640px]')}
+          <div className="flex flex-wrap items-center gap-2 text-[11px]"><span className="font-bold text-slate-600">{tx('Recepciones registradas', 'Recorded receipts')}:</span>{order.data.receipts.map(r => <button key={r.id} type="button" aria-pressed={recId === r.id} onClick={() => setRecId(recId === r.id ? '' : r.id)} className={`px-3 py-2 rounded-xl border text-left ${recId === r.id ? 'border-purple-500 bg-purple-50/50' : 'border-slate-200 hover:border-purple-300 bg-white'}`}><span className="block font-black">{r.folio}</span><span className="block text-slate-500">{ymd(r.date)} · {pct(r.received_percent)}</span></button>)}{!order.data.receipts.length && <span className="text-slate-500">{tx('ninguna todavía.', 'none yet.')}</span>}</div>
+          <Wait s={receipt} /><Err s={receipt} />
+          {receipt.data && receiptView(receipt.data)}
+        </div>}
+
+      {rTried && rv.ok && rv.warnings.map(w => <p key={w} className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">⚠ {w}</p>)}
+      {rMsg && <p role={rMsg.kind === 'error' ? 'alert' : 'status'} data-testid="reception-save-msg" className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${rMsg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{rMsg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{rMsg.text}</span></p>}
+      <div className="flex flex-wrap gap-3 pt-1 text-sm font-black">
+        <button type="button" onClick={() => resetReception(false)} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2">+ {tx('Nueva recepción', 'New receipt')}</button>
+        <button type="button" onClick={saveReception} className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-700 hover:to-teal-600 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">📦</span>{tx('Guardar recepción', 'Save receipt')}</button>
+        <button type="button" onClick={() => resetReception(true)} className="px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm flex items-center gap-2"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
+        <button type="button" onClick={() => go(2)} className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">🚚</span>{tx('Ir a entrega', 'Go to delivery')}</button>
+        <button type="button" onClick={() => go(3)} className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl flex items-center gap-2"><span aria-hidden="true">📋</span>{tx('Ver matriz', 'View matrix')}</button>
+      </div>
     </div>}
 
     {tab === 2 && <div className={box}>{head(tx('Entrega al cliente', 'Client delivery'), tx('Entregas, responsables, aceptación del cliente, evidencia y fotografías por recepción registrada.', 'Deliveries, managers, client acceptance, evidence and photos per recorded receipt.'), lockBtn(tx('Guardar entrega', 'Save delivery')))}
@@ -159,7 +231,7 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
           <td className="p-2.5 whitespace-nowrap"><span className="bg-purple-100 text-purple-700 text-[9px] font-bold px-2 py-0.5 rounded-full">{r.file_count} {tx('archivo(s)', 'file(s)')}</span></td>
           <td className="p-2.5">{del ? pill(r.acceptance_status) : r.acceptance ? pill(r.acceptance, isAccepted(r.acceptance) ? tx('Aceptado', 'Accepted') : label(r.acceptance, en)) : <span className="text-[9px] text-slate-400">{tx('Sin entrega', 'No delivery')}</span>}</td>
           <td className="p-2.5 whitespace-nowrap"><div className="flex flex-col gap-0.5">{del ? (r.locked ? pill('signed', `🔒 ${tx('Firmada y bloqueada', 'Signed and locked')}`) : pill('pending', tx('Sin bloqueo', 'Unlocked'))) : (r.signature_count ? pill('signed', `🔒 ${r.signature_count} ${tx('firma(s)', 'signature(s)')}`) : <span className="text-[9px] text-slate-400">{tx('Sin firmas', 'No signatures')}</span>)}{del && r.document_sha256 && <span className="text-[8px] font-mono text-slate-400">{shortHash(r.document_sha256)}</span>}</div></td>
-          <td className="p-2.5 whitespace-nowrap text-center">{del ? <button type="button" onClick={() => setFormat(r.id)} className="px-2 py-1 bg-purple-700 hover:bg-purple-800 text-white text-[9px] font-bold rounded-lg">{tx('VER FORMATO', 'VIEW FORMAT')}</button> : <button type="button" onClick={() => { setTab(1); setPoId(r.po_id); setRecId(r.id); setPoStatus('all'); }} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold rounded-lg">{tx('RECEPCIÓN', 'RECEPTION')}</button>}</td>
+          <td className="p-2.5 whitespace-nowrap text-center">{del ? <button type="button" onClick={() => setFormat(r.id)} className="px-2 py-1 bg-purple-700 hover:bg-purple-800 text-white text-[9px] font-bold rounded-lg">{tx('VER FORMATO', 'VIEW FORMAT')}</button> : <button type="button" onClick={() => { setTab(1); setPoId(r.po_id); setRecId(r.id); }} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold rounded-lg">{tx('RECEPCIÓN', 'RECEPTION')}</button>}</td>
         </tr>; }), tx('Sin datos registrados para este cliente.', 'No data recorded for this client.'), 'min-w-[1200px]')}
         {pager(matrix)}
       </>}

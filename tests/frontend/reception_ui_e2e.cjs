@@ -95,20 +95,64 @@ const pct = v => `${Number(v).toLocaleString('es-MX', { maximumFractionDigits: 2
     const o3 = orders.items.find(o => o.folio === 'OC-QA-0003');
     check('abre la OC vigente de la serie (Rev. 1)', (await page.getByRole('combobox', { name: 'Orden de compra' }).inputValue()) === o3.id);
     const od = flat(await page.getByTestId('order-reception').innerText());
-    check('ordenado vs recibido de la serie', od.includes(`${pct(o3.received_percent)} · Parcial`) && od.includes('Instrumento sintético'), od.slice(0, 400));
+    check('ordenado vs recibido de la serie', od.includes(`Recibido: ${pct(o3.received_percent)} (Parcial)`) && od.includes('Instrumento sintético'), od.slice(0, 400));
     const rd = flat(await page.getByTestId('receipt-detail').innerText());
     check('detalle de recepción histórica: 50 % y aceptación pendiente desde la entrega', rd.includes('REC-QA-0003') && rd.includes('50%') && rd.includes('Pendiente (entrega)') && rd.includes('Histórico (encabezado)'), rd.slice(0, 400));
 
-    // 1 · Registro de recepción
+    // 1 · Registro de recepción (diseño): formulario validado contra la OC, fotografías comprimidas; guardar NO escribe
     await page.getByRole('button', { name: /Registro de recepción/ }).click();
-    const sumTxt = flat(await page.getByRole('button', { name: /Parciales/ }).innerText());
-    check('contadores por estado de recepción', sumTxt.startsWith(String(orders.summary.partial)), sumTxt);
-    await page.getByRole('button', { name: /REC-QA-0004/ }).click();
+    const rfm = page.getByTestId('reception-form'); await rfm.waitFor();
+    const rft = flat(await rfm.innerText());
+    check('registro: título, explicación, Paso 6 y modo nueva captura', ['Registro de recepción', 'Documenta la recepción física del suministro, cantidad, calidad, documentos y evidencia fotográfica.', 'Paso 6 · Recepción', 'Modo nueva captura activo.'].every(x => rft.includes(x)), rft.slice(0, 300));
+    const fld = l => rfm.getByLabel(l, { exact: true });
+    const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+    check('registro: valores iniciales del diseño (Total, 100, Conforme, Completa, hoy, folio automático)', await fld('Tipo de recepción').inputValue() === 'total' && await fld('Cantidad / % recibido').inputValue() === '100' && await fld('Inspección de calidad').inputValue() === 'conforme'
+      && await fld('Documentación recibida').inputValue() === 'completa' && await fld('Fecha de recepción').inputValue() === today && await fld('Folio de recepción').inputValue() === 'Automático');
+    check('registro: opciones del diseño', JSON.stringify(await fld('Tipo de recepción').locator('option').allInnerTexts()) === '["Total","Parcial"]' && JSON.stringify(await fld('Inspección de calidad').locator('option').allInnerTexts()) === '["Conforme","Con observaciones","No conforme"]' && JSON.stringify(await fld('Documentación recibida').locator('option').allInnerTexts()) === '["Completa","Incompleta","No recibida"]');
+    await rfm.getByRole('button', { name: /Nueva recepción/ }).click();
+    check('registro: sin OC muestra "Selecciona una orden para visualizar su contexto."', await rfm.getByText('Selecciona una orden para visualizar su contexto.').isVisible() && (await page.getByTestId('reception-photo-count').innerText()).trim() === '0 fotografías' && await rfm.getByText('No se han agregado fotografías.').isVisible());
+    const opts = await fld('Orden de compra').locator('option').evaluateAll(os => os.map(o => [o.value, o.disabled]));
+    check('registro: OC recibidas al 100 % deshabilitadas', orders.items.every(o => opts.some(([v, dis]) => v === o.id && dis === (o.reception === 'complete'))), JSON.stringify(opts));
+    await rfm.getByRole('button', { name: /Guardar recepción/ }).click();
+    check('registro: guardar sin OC pide seleccionarla', (await page.getByTestId('reception-save-msg').innerText()).includes('Selecciona la orden de compra.'));
+    await fld('Orden de compra').selectOption(o3.id);
+    await page.getByTestId('order-reception').waitFor();
+    check('registro: contexto de la OC (recibido, partidas y pendiente)', flat(await page.getByTestId('order-reception').innerText()).includes(`Recibido: ${pct(o3.received_percent)}`));
+    await fld('Tipo de recepción').selectOption('partial');
+    check('registro: Parcial pide capturar el %', await fld('Cantidad / % recibido').inputValue() === '');
+    await fld('Cantidad / % recibido').fill('60');
+    await rfm.getByRole('button', { name: /Guardar recepción/ }).click();
+    check('registro: % acumulado mayor a lo ya recibido', (await page.getByTestId('reception-save-msg').innerText()).includes(`mayor al ya registrado (${Number(o3.received_percent)} %)`));
+    await fld('Cantidad / % recibido').fill('90');
+    await fld('Inspección de calidad').selectOption('observaciones');
+    await rfm.getByRole('button', { name: /Guardar recepción/ }).click();
+    check('registro: calidad con observaciones exige describirlas', (await page.getByTestId('reception-save-msg').innerText()).includes('Describe las observaciones o la no conformidad'));
+    await fld('Observaciones / no conformidad').fill('Dos piezas con empaque dañado (prueba E2E)');
+    await fld('Evidencia / remisión / factura').fill('REM-E2E-01');
+    const px = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64');
+    await rfm.getByLabel('Fotografías de recepción').setInputFiles([{ name: 'descarga.png', mimeType: 'image/png', buffer: px }, { name: 'etiqueta.png', mimeType: 'image/png', buffer: px }, { name: 'animada.gif', mimeType: 'image/gif', buffer: Buffer.from('GIF89a') }]);
+    await page.getByTestId('reception-photo-count').filter({ hasText: '2 fotografías' }).waitFor();
+    check('registro: fotografías comprimidas (JPG/PNG/WebP) y GIF rechazado', await page.getByTestId('reception-photo').count() === 2 && (await page.getByTestId('reception-photo-msg').innerText()).includes('animada.gif: solo se aceptan imágenes JPG, PNG o WebP'));
+    await page.getByTestId('reception-photo').first().getByRole('button', { name: 'Quitar' }).click();
+    check('registro: quitar fotografía', (await page.getByTestId('reception-photo-count').innerText()).trim() === '1 fotografía');
+    await rfm.getByRole('button', { name: /Guardar recepción/ }).click();
+    const rsm = flat(await page.getByTestId('reception-save-msg').innerText());
+    check('registro: validado pero NO guardado ni fotografías subidas', rsm.includes('Datos validados, pero no se guardó la recepción de OC-QA-0003 (90 %, parcial, con observaciones, documentación completa, 1 fotografía(s))') && rsm.includes('Las fotografías no se subieron.'), rsm);
+    await shot(page, 'rec_1_registro');
+    await rfm.getByRole('button', { name: /REC-QA-0004/ }).click();
     await page.getByTestId('receipt-detail').getByText('REC-QA-0004').waitFor();
     const r4d = flat(await page.getByTestId('receipt-detail').innerText());
     check('recepción por partida: rechazos, motivos y nota de calidad', ['Recepción parcial', 'Piezas rechazadas', 'Calidad con observaciones', 'Documentación incompleta', 'Golpe en carcasa', 'Sin entrega registrada'].every(x => r4d.includes(x)), r4d.slice(0, 500));
-    check('"Guardar recepción" bloqueado', await page.getByRole('button', { name: /Guardar recepción/ }).isDisabled());
-    await shot(page, 'rec_1_registro');
+    await rfm.getByRole('button', { name: /^.{0,3}Limpiar$/ }).click();
+    check('registro: Limpiar conserva la OC y reinicia la captura', await fld('Orden de compra').inputValue() === o3.id && await fld('Cantidad / % recibido').inputValue() === '100' && (await page.getByTestId('reception-photo-count').innerText()).trim() === '0 fotografías' && await page.getByTestId('reception-save-msg').count() === 0);
+    await rfm.getByRole('button', { name: /Nueva recepción/ }).click();
+    check('registro: Nueva recepción limpia también la OC', await fld('Orden de compra').inputValue() === '');
+    await page.setViewportSize({ width: 390, height: 900 });
+    check('registro: sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await rfm.getByRole('button', { name: /Ir a entrega/ }).click();
+    await page.getByRole('combobox', { name: 'Recepción registrada' }).waitFor();
+    check('registro: "Ir a entrega" abre Entrega al cliente', true);
 
     // 2 · Entrega al cliente
     await page.getByRole('button', { name: /^🚚.*Entrega al cliente/ }).click();
