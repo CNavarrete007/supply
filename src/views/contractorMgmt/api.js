@@ -1,0 +1,12 @@
+// Gestión del Contratista · cliente HTTP de SOLO LECTURA (GET con la sesión del servidor; sin datos de demostración).
+async function getJson(path, signal) {
+  const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' }, signal });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(response.status === 401 ? 'Tu sesión expiró. Inicia sesión nuevamente.' : response.status === 403 ? 'No tienes acceso a este módulo.' : body?.error?.message || 'No fue posible consultar MariaDB.');
+    error.status = response.status; throw error;
+  }
+  return body;
+}
+export const validationSetup = signal => getJson('/api/v1/contractor-management/validation-setup', signal);
+export const validationRequisition = (id, signal) => (/^[0-9a-f-]{36}$/i.test(String(id)) ? getJson(`/api/v1/contractor-management/requisitions/${encodeURIComponent(id)}`, signal) : Promise.reject(new Error('Identificador inválido.')));

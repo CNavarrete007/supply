@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { Lock } from 'lucide-react';
+import { ValidationRegister } from './contractorMgmt/ValidationRegister.jsx';
 import { 
   ClipboardCheck, 
   Layers, 
@@ -509,216 +511,20 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
         })}
       </div>
 
+      {/* Aviso propio del módulo: solo la tarjeta 1 está conectada a MariaDB */}
+      <div data-testid="contractor-mgmt-notice" className={`rounded-xl border px-4 py-3 flex items-start gap-2 text-[11px] ${activeTab === 'register' ? 'border-amber-200 bg-amber-50/70 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-900 font-semibold'}`}>
+        <Lock className="w-4 h-4 shrink-0 mt-0.5" />
+        <span>{activeTab === 'register'
+          ? (lang === 'en' ? 'Validation register connected to MariaDB (read-only): requisitions, purchasing managers and recorded validations are real data. Saving validates the capture but does not store it: recording internal validations is a write blocked until authorized.' : 'Registro de validación conectado a MariaDB (solo lectura): requisiciones, responsables de compras y validaciones registradas son datos reales. Guardar valida la captura pero no la almacena: registrar validaciones internas es una escritura bloqueada hasta su autorización.')
+          : (lang === 'en' ? 'Card pending integration: it may show demo data and its forms do not save operations in MariaDB.' : 'Tarjeta pendiente de integración: puede mostrar datos de demostración y sus formularios no guardan operaciones en MariaDB.')}</span>
+      </div>
+
       {/* Contenedor Principal de Vistas */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-2xs">
 
-        {/* TARJETA 1: Registro de validación */}
+        {/* TARJETA 1: Registro de validación (MariaDB, solo lectura; guardar valida y no escribe) */}
         {activeTab === 'register' && (
-          <div className="space-y-5">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pb-1">
-              <div>
-                <h3 className="text-base font-black text-slate-900">{t.registerTab.title}</h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  {t.registerTab.subtitle}
-                </p>
-              </div>
-              <span className="px-3 py-1 bg-blue-50 text-blue-700 font-bold text-[10px] rounded-full border border-blue-100">
-                {t.registerTab.stepBadge}
-              </span>
-            </div>
-
-            <form onSubmit={handleSaveValidation} className="space-y-4 pt-1">
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                <div className="md:col-span-6">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    {t.registerTab.requisition} <span className="text-red-500">*</span>
-                  </label>
-                  <select 
-                    value={selectedReq}
-                    onChange={(e) => setSelectedReq(e.target.value)}
-                    className="w-full px-3.5 py-2 text-xs bg-white border border-blue-400/80 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 shadow-2xs font-medium"
-                  >
-                    <option value="Seleccionar">{t.registerTab.select}</option>
-                    <option value="REQ-001">REQ-001 · PROYECTO EJEMPLO GENERAL</option>
-                    <option value="REQ-002">REQ-002 · MANTENIMIENTO PLANTA</option>
-                  </select>
-                </div>
-
-                <div className="md:col-span-3">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.internalFolio}</label>
-                  <input
-                    type="text"
-                    disabled
-                    placeholder={t.registerTab.automatic}
-                    className="w-full px-3.5 py-2 text-xs bg-slate-100/70 border border-slate-200 rounded-xl text-slate-500 outline-none shadow-2xs cursor-not-allowed placeholder:text-slate-400 font-medium"
-                  />
-                </div>
-
-                <div className="md:col-span-3">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.internalRef}</label>
-                  <input
-                    type="text"
-                    disabled
-                    defaultValue={t.registerTab.autoFromReq}
-                    className="w-full px-3.5 py-2 text-xs bg-slate-100/70 border border-slate-200 rounded-xl text-slate-500 font-bold outline-none shadow-2xs cursor-not-allowed"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                <div className="md:col-span-3">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    {t.registerTab.buyer} <span className="text-red-500">*</span>
-                  </label>
-                  <select 
-                    name="contractor"
-                    value={validationForm.contractor}
-                    onChange={handleValidationInputChange}
-                    className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 shadow-2xs font-medium"
-                  >
-                    <option value="">{t.registerTab.selectBuyer}</option>
-                    <option value="Juan Pérez">Juan Pérez</option>
-                    <option value="María Gómez">María Gómez</option>
-                  </select>
-                  <span className="text-[9.5px] text-slate-400 mt-1 block">
-                    {t.registerTab.buyerHelp}
-                  </span>
-                </div>
-
-                <div className="md:col-span-3">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.technicalVal}</label>
-                  <select 
-                    name="technicalStatus"
-                    value={validationForm.technicalStatus}
-                    onChange={handleValidationInputChange}
-                    className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl text-slate-700 outline-none shadow-2xs font-medium"
-                  >
-                    <option value="Pendiente">{t.registerTab.statuses.pending}</option>
-                    <option value="Conforme">{t.registerTab.statuses.compliant}</option>
-                    <option value="Con observaciones">{t.registerTab.statuses.withObs}</option>
-                    <option value="No conforme">{t.registerTab.statuses.nonCompliant}</option>
-                  </select>
-                </div>
-
-                <div className="md:col-span-3">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.contractualVal}</label>
-                  <select 
-                    name="contractualStatus"
-                    value={validationForm.contractualStatus}
-                    onChange={handleValidationInputChange}
-                    className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl text-slate-700 outline-none shadow-2xs font-medium"
-                  >
-                    <option value="Pendiente">{t.registerTab.statuses.pending}</option>
-                    <option value="Conforme">{t.registerTab.statuses.compliant}</option>
-                    <option value="Con observaciones">{t.registerTab.statuses.withObs}</option>
-                    <option value="No conforme">{t.registerTab.statuses.nonCompliant}</option>
-                  </select>
-                </div>
-
-                <div className="md:col-span-3">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.budgetAvailability}</label>
-                  <select 
-                    name="budgetStatus"
-                    value={validationForm.budgetStatus}
-                    onChange={handleValidationInputChange}
-                    className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl text-slate-700 outline-none shadow-2xs font-medium"
-                  >
-                    <option value="Pendiente">{t.registerTab.statuses.pending}</option>
-                    <option value="Disponible">{t.registerTab.statuses.available}</option>
-                    <option value="Parcial">{t.registerTab.statuses.partial}</option>
-                    <option value="No disponible">{t.registerTab.statuses.notAvailable}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                <div className="md:col-span-3">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.purchaseStrategy}</label>
-                  <select className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl text-slate-700 outline-none shadow-2xs font-medium">
-                    <option value="Competencia abierta">{t.registerTab.strategies.openComp}</option>
-                    <option value="Proveedor preferente">{t.registerTab.strategies.preferredSupp}</option>
-                    <option value="Compra urgente">{t.registerTab.strategies.urgent}</option>
-                    <option value="Fuente única justificada">{t.registerTab.strategies.soleSource}</option>
-                  </select>
-                </div>
-
-                <div className="md:col-span-3">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.minQuotations}</label>
-                  <input
-                    type="number"
-                    defaultValue={1}
-                    className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 shadow-2xs font-medium"
-                  />
-                </div>
-
-                <div className="md:col-span-3">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.deadline}</label>
-                  <div className="relative">
-                    <input
-                      type="date"
-                      className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 shadow-2xs font-medium"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.evalCriteria}</label>
-                <input
-                  type="text"
-                  defaultValue={t.registerTab.evalCriteriaDefault}
-                  className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-500 shadow-2xs font-medium"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">{t.registerTab.observations}</label>
-                <textarea
-                  name="observations"
-                  value={validationForm.observations}
-                  onChange={handleValidationInputChange}
-                  rows={3}
-                  className="w-full px-3.5 py-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 shadow-2xs resize-y"
-                ></textarea>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5 pt-2">
-                <button
-                  type="submit"
-                  className="px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:opacity-90 border border-transparent"
-                  style={{ backgroundColor: '#a221b7' }}
-                >
-                  <span className="text-sm">💾</span>
-                  <span>{t.registerTab.btnSave}</span>
-                </button>
-
-                <button
-                  type="reset"
-                  onClick={() => setValidationForm({
-                    contractor: '',
-                    technicalStatus: 'Aprobado',
-                    contractualStatus: 'En Regla',
-                    budgetStatus: 'Dentro de Presupuesto',
-                    safetyStatus: 'Cumple',
-                    observations: ''
-                  })}
-                  className="px-4 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-2 cursor-pointer shadow-2xs"
-                >
-                  <span className="text-sm">🪄</span>
-                  <span>{t.registerTab.btnClear}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleTabChange('matrix', t.tabs.matrix.title)}
-                  className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-2 cursor-pointer shadow-2xs"
-                >
-                  <span className="text-sm">📋</span>
-                  <span>{t.registerTab.btnViewMatrix}</span>
-                </button>
-              </div>
-            </form>
-          </div>
+          <ValidationRegister en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} />
         )}
 
         {/* TARJETA 2: Estrategia y lotificación */}

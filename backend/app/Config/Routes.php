@@ -46,6 +46,8 @@ $routes->get('api/v1/reception/closure', 'ReceptionController::closure');
 $routes->get('api/v1/reception/deliverable', 'ReceptionController::deliverable');
 $routes->get('api/v1/contractors', 'ContractorController::index');
 $routes->get('api/v1/contractors/(:segment)/personnel', 'ContractorController::personnel/$1');
+$routes->get('api/v1/contractor-management/validation-setup', 'ContractorManagementController::validationSetup');
+$routes->get('api/v1/contractor-management/requisitions/(:segment)', 'ContractorManagementController::requisition/$1');
 $routes->get('api/v1/quotes/rfq-contacts', 'QuoteController::rfqContacts');
 $routes->get('api/v1/quotes/customer-quote-setup', 'QuoteController::customerQuoteSetup');
 $routes->get('api/v1/quotes/rfq-setup', 'QuoteController::rfqSetup');
