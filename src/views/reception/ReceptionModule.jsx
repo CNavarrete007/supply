@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
+import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { receptionMatrix, receptionOrders, receptionOrder, receiptDetail, deliveryDetail, receptionClosure } from './api';
-import { label, tone, isAccepted, reasonLabel, pct, qty, shortHash, bytes, closureCards, deliveryHtml } from './model.mjs';
+import { label, tone, reasonLabel, pct, qty, shortHash, bytes, closureCards } from './model.mjs';
+import { clientsChip, matrixRow, deleteBlock, deleteError, deleteLockedText, deliveryPreset } from './receptionMatrix.mjs';
+import { formatModel, deliveryFormatHtml, buildDeliveryPdf, deliveryPdfName } from './deliveryFormat.mjs';
+import { loadPoLogo } from '../purchaseOrders/poPdf.mjs';
 import { RECEPTION_TYPES, QUALITY, DOCUMENTATION, PHOTO_MAX, emptyReception, withType, orderOptions, validateReception, receptionLockedText, outstanding } from './receptionForm.mjs';
 import { compressPhotos, openPhoto } from './photos.js';
 import { DeliveryFormat } from './DeliveryFormat.jsx';
@@ -33,8 +36,9 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
   const [poId, setPoId] = useState(''); const [recId, setRecId] = useState('');
   const [format, setFormat] = useState('');
   const [closureKey, setClosureKey] = useState('po_without_receipt');
+  const [preset, setPreset] = useState(null); const [delDlg, setDelDlg] = useState(null); const [actMsg, setActMsg] = useState(null); const [pdfBusy, setPdfBusy] = useState('');
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
-  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setKind('all'); };
+  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setKind('all'); setPreset(null); setActMsg(null); };
 
   const matrix = useLoad(s => receptionMatrix({ page, q, kind, client: client || 'all' }, s), [page, q, kind, client, rev], tab === 3);
   const orders = useLoad(s => receptionOrders({ status: 'all' }, s), [rev], tab === 1);
@@ -46,7 +50,8 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
   const Err = ({ s }) => (s?.error ? <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{s.error.message}</p> : null);
   const Wait = ({ s }) => (s?.status === 'loading' ? <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p> : null);
   const pill = (code, txt) => <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border whitespace-nowrap ${tone(code)}`}>{txt || label(code, en)}</span>;
-  const lockBtn = t => <button type="button" disabled title={LOCK} className="px-3 py-1.5 bg-slate-200 text-slate-500 text-[11px] font-bold rounded-xl flex items-center gap-1.5 cursor-not-allowed"><Lock className="w-3.5 h-3.5" />{t}</button>;
+  const TONES = { green: 'bg-emerald-50 text-emerald-700 border-emerald-200', amber: 'bg-amber-50 text-amber-700 border-amber-200', red: 'bg-rose-50 text-rose-700 border-rose-200', blue: 'bg-blue-50 text-blue-700 border-blue-200', purple: 'bg-purple-50 text-purple-700 border-purple-200', gray: 'bg-slate-100 text-slate-600 border-slate-200' };
+  const chip = c => <span className={`inline-block px-2.5 py-1 rounded-full text-[9.5px] font-black border whitespace-nowrap ${TONES[c.tone] || TONES.gray}`}>{c.text}</span>;
   const box = 'bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6 text-left space-y-5';
   const head = (title, sub, right) => <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2"><div><h3 className="text-base font-bold text-slate-900">{title}</h3><p className="text-xs text-slate-400">{sub}</p></div>{right}</div>;
   const field = (k, v) => <div key={k} className="p-3 rounded-xl border border-slate-200 bg-slate-50/40"><div className="text-[10px] font-bold text-slate-400 uppercase">{k}</div><div className="text-xs font-semibold text-slate-800 break-words">{v}</div></div>;
@@ -90,7 +95,15 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
     const text = receptionLockedText(order.data, rf, en);
     setRMsg({ kind: 'locked', text }); notify(tx('Recepción no registrada', 'Receipt not recorded'), text, 'warning');
   };
-  const printFormat = () => { if (!fmt.data) return; const w = window.open('', '_blank', 'width=900,height=1000'); if (!w) { notify(tx('Imprimir', 'Print'), tx('El navegador bloqueó la ventana; permite ventanas emergentes.', 'The browser blocked the window; allow pop-ups.'), 'warning'); return; } w.document.write(deliveryHtml(fmt.data, en)); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250); };
+  // PDF del formato de entrega (jsPDF en el navegador, identidad Grupo Gerez). No escribe nada en el servidor.
+  const pdfOf = async (id, detail = null) => {
+    setPdfBusy(id); setActMsg(null);
+    try {
+      const [{ jsPDF }, d, logo] = await Promise.all([import('jspdf'), detail ? Promise.resolve(detail) : deliveryDetail(id), loadPoLogo()]);
+      buildDeliveryPdf(jsPDF, d, en, logo).save(deliveryPdfName(d));
+    } catch (e) { setActMsg({ kind: 'error', text: e.message || tx('No se pudo generar el PDF.', 'The PDF could not be generated.') }); }
+    finally { setPdfBusy(''); }
+  };
   const cards = matrix.data?.summary?.clients || [];
   const allCard = { id: 'all', name: tx('Todos los clientes', 'All customers'), receipts: cards.reduce((n, c) => n + c.receipts, 0), deliveries: cards.reduce((n, c) => n + c.deliveries, 0) };
   const initials = n => String(n || '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
@@ -163,35 +176,56 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
       </div>
     </div>}
 
-    {tab === 2 && <DeliveryFormat en={en} today={today} rev={rev} notify={notify} onMatrix={() => go(3)} onViewFormat={setFormat} />}
+    {tab === 2 && <DeliveryFormat key={preset ? `${preset.client}:${preset.from}` : 'new'} preset={preset} en={en} today={today} rev={rev} notify={notify} onMatrix={() => go(3)} onViewFormat={setFormat} />}
 
-    {tab === 3 && <div className={box}>
-      {head(tx('Matriz de recepción y entrega', 'Reception and delivery matrix'), tx('Registros de recepción de materiales y entregas a clientes con sus acuses y firmas.', 'Material receipts and client deliveries with acknowledgments and signatures.'), <div className="flex gap-2">{lockBtn(tx('Nueva recepción', 'New receipt'))}{lockBtn(tx('Nueva entrega', 'New delivery'))}</div>)}
-      <div><h3 className="text-sm font-bold text-slate-900">{tx('Recepciones y entregas por cliente', 'Receipts and deliveries by customer')}</h3><p className="text-[11px] text-slate-500">{tx('Selecciona un cliente para consultar únicamente sus registros.', 'Select a client to view only their records.')}</p></div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">{[allCard, ...cards].map(c => { const on = (client || null) === c.id; return <button key={c.id} type="button" aria-pressed={on} onClick={() => { setClient(c.id); setPage(1); }} className={`text-left bg-white rounded-2xl p-3 border transition-all relative overflow-hidden flex flex-col justify-between ${on ? 'border-purple-600 ring-2 ring-purple-500/20 shadow-md' : 'border-slate-200 hover:border-slate-300 shadow-xs'}`}>
-        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-purple-600 via-indigo-600 to-emerald-500 rounded-l-2xl" />
-        <div className="pl-1.5"><div className="flex items-center gap-2.5 mb-2"><div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-emerald-500 text-white font-black text-xs flex items-center justify-center shrink-0">{c.id === 'all' ? 'ALL' : initials(c.name)}</div><div className="min-w-0"><h4 className="text-[11px] font-bold text-slate-900 leading-tight truncate">{c.name}</h4><p className="text-[10px] text-slate-500">{c.id === 'all' ? tx('Cartera completa', 'Full portfolio') : tx('Cliente', 'Client')}</p></div></div>
-          <div className="grid grid-cols-3 gap-1 my-2.5">{[[c.receipts + c.deliveries, tx('Registros', 'Records')], [c.receipts, tx('Recepción', 'Reception')], [c.deliveries, tx('Entregas', 'Deliveries')]].map(([n, l]) => <div key={l} className="bg-slate-50 border border-slate-100 rounded-xl p-1.5 text-center"><span className="text-xs font-bold text-slate-900 block">{n}</span><span className="text-[9px] text-slate-500 font-medium">{l}</span></div>)}</div></div>
-        <div className="pl-1.5 pt-1 border-t border-slate-100 flex items-center justify-between text-[9px] text-slate-500 font-medium"><span>{c.id === 'all' ? tx('Vista general', 'Overview') : tx('Expediente', 'Records')}</span><span className="font-bold text-purple-700">{tx('Abrir →', 'Open →')}</span></div>
-      </button>; })}</div>
-      <Wait s={matrix} /><Err s={matrix} />
+    {tab === 3 && <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 sm:p-6 text-left space-y-5" data-testid="reception-matrix">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+        <div className="min-w-0"><h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Matriz de recepción y entrega', 'Reception and delivery matrix')}</h3><p className="text-[11px] text-slate-500 mt-0.5">{tx('Consulta el avance de recepción, calidad, documentos, entrega y aceptación del cliente.', 'Review receipt progress, quality, documents, delivery and client acceptance.')}</p></div>
+        <div className="flex flex-wrap gap-2 text-sm font-black shrink-0">
+          <button type="button" onClick={() => { go(1); resetReception(false); }} className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-700 hover:to-teal-600 text-white rounded-xl shadow-md">+ {tx('Nueva recepción', 'New receipt')}</button>
+          <button type="button" onClick={() => go(2)} className="px-4 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md">+ {tx('Nueva entrega', 'New delivery')}</button>
+        </div>
+      </div>
+      <div data-testid="matrix-unified" className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3 text-[11px] text-slate-600 leading-relaxed"><strong className="text-slate-900">{tx('Matriz unificada:', 'Unified matrix:')}</strong> <strong className="text-slate-900">{tx('RECEPCIÓN', 'RECEIPT')}</strong> {tx('muestra cada recepción física registrada.', 'shows every physical receipt recorded.')} <strong className="text-slate-900">{tx('ENTREGA', 'DELIVERY')}</strong> {tx('muestra cada formato ENT registrado (firmado o en borrador), incluso cuando consolida varias requisiciones.', 'shows every recorded ENT format (signed or draft), even when it consolidates several requisitions.')} {tx('Los formatos de entrega ya no se duplican debajo del formulario.', 'Delivery formats are no longer duplicated under the form.')}</div>
+
+      <div className="rounded-2xl border border-slate-200 p-4 sm:p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2"><div><h3 className="text-base font-black text-slate-900">{tx('Recepciones y entregas por cliente', 'Receipts and deliveries by customer')}</h3><p className="text-[11px] text-slate-500">{tx('Selecciona un cliente para consultar únicamente sus registros.', 'Select a client to view only their records.')}</p></div>{matrix.data && <span data-testid="matrix-clients-chip" className="text-[10.5px] font-black text-orange-800 bg-orange-50 border border-orange-200 rounded-full px-3 py-1 shrink-0">{clientsChip(cards, en)}</span>}</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">{[allCard, ...cards].map(c => { const on = (client || null) === c.id; return <button key={c.id} type="button" aria-pressed={on} data-testid="matrix-client-card" onClick={() => { setClient(c.id); setPage(1); }} className={`text-left bg-white rounded-2xl p-3.5 border transition-all relative overflow-hidden flex flex-col justify-between ${on ? 'border-purple-600 ring-2 ring-purple-500/20 shadow-md' : 'border-slate-200 hover:border-slate-300 shadow-xs'}`}>
+          {on && <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-purple-600 via-indigo-600 to-emerald-500" />}
+          <div><div className="flex items-center gap-2.5 mb-3"><div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600 via-indigo-600 to-blue-500 text-white font-black text-sm flex items-center justify-center shrink-0">{c.id === 'all' ? 'ALL' : initials(c.name)}</div><div className="min-w-0"><h4 className="text-xs font-black text-slate-900 leading-tight truncate uppercase">{c.name}</h4><p className="text-[10px] text-slate-500">{c.id === 'all' ? tx('Vista general', 'Overview') : tx('Registros del cliente', 'Client records')}</p></div></div>
+            <div className="grid grid-cols-3 gap-1.5 mb-3">{[[c.receipts + c.deliveries, tx('Registros', 'Records')], [c.receipts, tx('Recepciones', 'Receipts')], [c.deliveries, tx('Entregas', 'Deliveries')]].map(([n, l]) => <div key={l} className="bg-white border border-slate-200 rounded-xl px-2 py-1.5"><span className="text-sm font-black text-slate-900 block">{n}</span><span className="text-[8.5px] text-slate-500 font-black uppercase">{l}</span></div>)}</div></div>
+          <div className="flex items-center justify-between text-[10px] font-black text-slate-700"><span>{c.id === 'all' ? tx('Cartera completa', 'Full portfolio') : tx('Cliente', 'Client')}</span><span className="text-slate-600">{tx('Abrir →', 'Open →')}</span></div>
+        </button>; })}</div>
+        <Wait s={matrix} /><Err s={matrix} />
+        {client && <div data-testid="matrix-selected" className="rounded-2xl border border-slate-200 p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="min-w-0"><h3 className="text-sm font-black text-slate-900">{client === 'all' ? tx('Todos los clientes', 'All customers') : cards.find(c => c.id === client)?.name || ''}</h3><p className="text-[11px] text-slate-500">{matrix.data?.total ?? '…'} {tx('registro(s) visibles', 'visible record(s)')}</p></div>
+          <div className="flex flex-wrap items-center gap-2 lg:max-w-[70%] lg:flex-1 lg:justify-end">{searchBox(tx('Buscar folio, OC, recepción, requisición, proveedor o cliente...', 'Search folio, PO, receipt, requisition, supplier or client...'))}<select aria-label={tx('Tipo', 'Type')} value={kind} onChange={e => { setKind(e.target.value); setPage(1); }} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"><option value="all">{tx('Recepciones y entregas', 'Receipts and deliveries')}</option><option value="receipt">{tx('Solo recepciones', 'Receipts only')} ({matrix.data?.summary?.receipts ?? '…'})</option><option value="delivery">{tx('Solo entregas', 'Deliveries only')} ({matrix.data?.summary?.deliveries ?? '…'})</option></select><button type="button" aria-label={tx('Cerrar matriz', 'Close matrix')} onClick={() => setClient(null)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-500"><X className="w-4 h-4" /></button></div>
+        </div>}
+      </div>
+
       {client && <>
-        <div className="bg-purple-500/5 border border-purple-200/80 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"><h3 className="text-xs font-bold text-slate-900">{client === 'all' ? tx('Todos los clientes', 'All customers') : `${tx('Cliente', 'Client')}: ${cards.find(c => c.id === client)?.name || ''}`}</h3><button type="button" aria-label={tx('Cerrar matriz', 'Close matrix')} onClick={() => setClient(null)} className="p-1.5 rounded-lg hover:bg-purple-100 text-slate-500"><X className="w-4 h-4" /></button></div>
-        <div className="flex flex-wrap gap-3">{searchBox(tx('Buscar folio, OC, recepción, requisición, proveedor o cliente...', 'Search folio, PO, receipt, requisition, supplier or client...'))}<select aria-label={tx('Tipo', 'Type')} value={kind} onChange={e => { setKind(e.target.value); setPage(1); }} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl"><option value="all">{tx('Recepciones y entregas', 'Receipts and deliveries')}</option><option value="receipt">{tx('Solo recepciones', 'Receipts only')} ({matrix.data?.summary?.receipts ?? '…'})</option><option value="delivery">{tx('Solo entregas', 'Deliveries only')} ({matrix.data?.summary?.deliveries ?? '…'})</option></select></div>
-        {table([tx('Tipo', 'Type'), 'Folio', 'OC', tx('Requisición / solicitudes', 'Requisition / requests'), tx('Cliente', 'Client'), tx('Cantidad / avance', 'Quantity / progress'), tx('Calidad / estado', 'Quality / condition'), tx('Documentos / evidencia', 'Documents / evidence'), tx('Fotos', 'Photos'), tx('Aceptación', 'Acceptance'), tx('Firma / integridad', 'Signature / integrity'), tx('Acciones', 'Actions')], (matrix.data?.items || []).map(r => { const del = r.kind === 'delivery'; return <tr key={`${r.kind}-${r.id}`} className="hover:bg-slate-50">
-          <td className="p-2.5 whitespace-nowrap">{del ? <span className="bg-purple-100 text-purple-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🚚 {tx('ENTREGA', 'DELIVERY')}</span> : <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-2 py-0.5 rounded-full">📦 {tx('RECEPCIÓN', 'RECEIVING')}</span>}</td>
-          <td className="p-2.5 whitespace-nowrap"><div className="font-bold text-slate-900">{r.folio}</div><div className="text-[9px] text-slate-400">{del ? `${label(r.delivery_type, en)} · ${ymd(r.date)}` : ymd(r.date)}</div></td>
-          <td className="p-2.5 whitespace-nowrap text-slate-600 font-medium leading-tight">{(del ? show(r.po_folios) : `${r.po_folio}${r.po_version > 1 ? ` Rev. ${r.po_version - 1}` : ''}`).split(', ').map(x => <div key={x}>{x}</div>)}</td>
-          <td className="p-2.5"><div className="font-bold text-slate-900">{show(r.requisitions)}</div>{!del && <div className="text-[9px] text-slate-400">{r.supplier_name}</div>}</td>
-          <td className="p-2.5 font-semibold text-slate-700">{show(r.client_name)}</td>
-          <td className="p-2.5 whitespace-nowrap"><div className="font-bold text-slate-900">{del ? `${qty(r.delivered_qty)} ${tx('entregado', 'delivered')}` : `${pct(r.received_percent)} ${tx('recibido', 'received')}`}</div><div className="text-[9px] text-slate-400">{del ? `${r.item_count} ${tx('partida(s)', 'item(s)')}` : `${r.delivery_count} ${tx('formato(s) de entrega', 'delivery form(s)')}`}</div></td>
-          <td className="p-2.5">{del ? pill(r.status) : r.quality_result ? pill(r.quality_result, r.quality_result) : <span className="text-slate-400">{DASH}</span>}</td>
-          <td className="p-2.5"><div className="font-semibold text-slate-800">{del ? (r.evidence_text ? tx('Acuse', 'Acknowledgment') : DASH) : show(r.documentation_result)}</div><div className="text-[9px] text-slate-400 max-w-[150px] truncate" title={del ? r.evidence_text || '' : r.notes || ''}>{del ? show(r.evidence_text) : show(r.notes)}</div></td>
-          <td className="p-2.5 whitespace-nowrap"><span className="bg-purple-100 text-purple-700 text-[9px] font-bold px-2 py-0.5 rounded-full">{r.file_count} {tx('archivo(s)', 'file(s)')}</span></td>
-          <td className="p-2.5">{del ? pill(r.acceptance_status) : r.acceptance ? pill(r.acceptance, isAccepted(r.acceptance) ? tx('Aceptado', 'Accepted') : label(r.acceptance, en)) : <span className="text-[9px] text-slate-400">{tx('Sin entrega', 'No delivery')}</span>}</td>
-          <td className="p-2.5 whitespace-nowrap"><div className="flex flex-col gap-0.5">{del ? (r.locked ? pill('signed', `🔒 ${tx('Firmada y bloqueada', 'Signed and locked')}`) : pill('pending', tx('Sin bloqueo', 'Unlocked'))) : (r.signature_count ? pill('signed', `🔒 ${r.signature_count} ${tx('firma(s)', 'signature(s)')}`) : <span className="text-[9px] text-slate-400">{tx('Sin firmas', 'No signatures')}</span>)}{del && r.document_sha256 && <span className="text-[8px] font-mono text-slate-400">{shortHash(r.document_sha256)}</span>}</div></td>
-          <td className="p-2.5 whitespace-nowrap text-center">{del ? <button type="button" onClick={() => setFormat(r.id)} className="px-2 py-1 bg-purple-700 hover:bg-purple-800 text-white text-[9px] font-bold rounded-lg">{tx('VER FORMATO', 'VIEW FORMAT')}</button> : <button type="button" onClick={() => { setTab(1); setPoId(r.po_id); setRecId(r.id); }} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-bold rounded-lg">{tx('RECEPCIÓN', 'RECEPTION')}</button>}</td>
-        </tr>; }), tx('Sin datos registrados para este cliente.', 'No data recorded for this client.'), 'min-w-[1200px]')}
+        {actMsg && <p role={actMsg.kind === 'error' ? 'alert' : 'status'} data-testid="matrix-action-msg" className={`p-3 rounded-xl border text-xs ${actMsg.kind === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>{actMsg.text}</p>}
+        {table([tx('Tipo', 'Type'), 'Folio', 'OC', tx('Requisición / solicitudes', 'Requisition / requests'), tx('Cliente', 'Client'), tx('Cantidad / avance', 'Quantity / progress'), tx('Calidad / estado', 'Quality / status'), tx('Documentos / evidencia', 'Documents / evidence'), tx('Fotos', 'Photos'), tx('Aceptación', 'Acceptance'), tx('Firma / integridad', 'Signature / integrity'), tx('Acciones', 'Actions')], (matrix.data?.items || []).map(r => { const v = matrixRow(r, en); const del = v.kind === 'delivery'; return <tr key={`${r.kind}-${r.id}`} data-testid="matrix-row" className="hover:bg-slate-50/70 align-top">
+          <td className="p-3 whitespace-nowrap">{del ? <span className="bg-purple-100 text-purple-800 text-[9.5px] font-black px-2.5 py-1 rounded-full border border-purple-200">🚚 {tx('ENTREGA', 'DELIVERY')}</span> : <span className="bg-emerald-50 text-emerald-800 text-[9.5px] font-black px-2.5 py-1 rounded-full border border-emerald-200">📦 {tx('RECEPCIÓN', 'RECEIPT')}</span>}</td>
+          <td className="p-3 whitespace-nowrap"><div className="font-black text-slate-900 text-[11px]">{v.folio}</div><div className="text-[9px] text-slate-500">{v.folioSub}</div></td>
+          <td className="p-3 whitespace-nowrap text-slate-700 leading-snug">{v.ocs.map(x => <div key={x}>{x}</div>)}</td>
+          <td className="p-3"><div className="font-black text-slate-900 text-[11px]">{v.requisitions}</div>{v.reqSub && <div className="text-[9px] text-slate-500 uppercase">{v.reqSub}</div>}</td>
+          <td className="p-3 text-slate-700 uppercase min-w-[90px]">{v.client}</td>
+          <td className="p-3 whitespace-nowrap"><div className="font-black text-slate-900 text-[11px]">{v.qtyMain}</div><div className="text-[9px] text-slate-500">{v.qtySub}</div></td>
+          <td className="p-3">{chip(v.status)}</td>
+          <td className="p-3 max-w-[180px]">{v.docs.chip ? chip(v.docs) : <div className="text-slate-800 font-semibold break-words">{v.docs.text}</div>}{v.docs.sub && <div className="text-[9px] text-slate-500 mt-1 line-clamp-2 break-words" title={v.docs.sub}>{v.docs.sub}</div>}</td>
+          <td className="p-3 whitespace-nowrap">{chip(v.photos)}</td>
+          <td className="p-3 whitespace-nowrap">{chip(v.acceptance)}</td>
+          <td className="p-3 whitespace-nowrap">{chip({ ...v.integrity, text: `${v.integrity.lock ? '🔒 ' : ''}${v.integrity.text}` })}{v.integrity.hash && <div className="text-[8.5px] font-mono text-slate-500 mt-1">{v.integrity.hash}</div>}</td>
+          <td className="p-3"><div className="flex flex-wrap gap-1.5 min-w-[200px] text-[10px] font-black uppercase">{del ? <>
+            <button type="button" onClick={() => setFormat(r.id)} className="px-3 py-1.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-lg shadow-sm">{tx('Ver formato', 'View format')}</button>
+            <button type="button" disabled={pdfBusy === r.id} onClick={() => pdfOf(r.id)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg disabled:opacity-50">{pdfBusy === r.id ? '…' : 'PDF'}</button>
+          </> : <>
+            <button type="button" onClick={() => { setTab(1); setPoId(r.po_id); setRecId(r.id); }} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg">{tx('Recepción', 'Receipt')}</button>
+            <button type="button" onClick={() => { go(2); setPreset(deliveryPreset(r)); }} className="px-3 py-1.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-lg shadow-sm">{tx('Nueva entrega', 'New delivery')}</button>
+          </>}
+            <button type="button" onClick={() => { setActMsg(null); setDelDlg({ r, folio: '', reason: '', msg: null, block: deleteBlock(r, en) }); }} className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-sm">{tx('Eliminar', 'Delete')}</button></div></td>
+        </tr>; }), tx('Sin datos registrados para este cliente.', 'No data recorded for this client.'), 'min-w-[1500px]')}
         {pager(matrix)}
       </>}
     </div>}
@@ -208,10 +242,26 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
       </div>}
     </div>}
 
-    {format && <div role="dialog" aria-modal="true" aria-label={tx('Formato de entrega', 'Delivery format')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setFormat('')}>
-      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-slate-100"><h3 className="text-sm font-black">{tx('Formato de entrega', 'Delivery format')} {fmt.data?.item?.folio || ''}</h3><div className="flex gap-2"><button type="button" onClick={printFormat} disabled={!fmt.data} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-bold rounded-xl flex items-center gap-1.5"><Printer className="w-3.5 h-3.5" />{tx('Imprimir / PDF', 'Print / PDF')}</button><button type="button" aria-label={tx('Cerrar', 'Close')} onClick={() => setFormat('')} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div></div>
-        <div className="p-4 overflow-auto"><Wait s={fmt} /><Err s={fmt} />{fmt.data && <iframe title={tx('Formato de entrega', 'Delivery format')} srcDoc={deliveryHtml(fmt.data, en)} sandbox="" className="w-full h-[70vh] rounded-xl border border-slate-200 bg-white" />}</div>
+    {format && <div role="dialog" aria-modal="true" aria-label={tx('Formato de entrega', 'Delivery format')} className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-2 sm:p-6" onClick={() => setFormat('')}>
+      <div className="w-full max-w-5xl max-h-[95vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl bg-slate-100" onClick={e => e.stopPropagation()}>
+        <div className="bg-[#1e385c] text-white px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0"><h3 className="text-sm sm:text-base font-black">{fmt.data ? `${fmt.data.item.folio} · ${formatModel(fmt.data, en).type}` : tx('Formato de entrega', 'Delivery format')}</h3><p className="text-[11px] text-blue-100">{fmt.data && !fmt.data.item.locked ? tx('Vista previa del documento (sin firma bloqueada)', 'Document preview (not signature-locked)') : tx('Vista previa del documento firmado', 'Signed document preview')}</p></div>
+          <div className="flex gap-2 text-sm font-black"><button type="button" onClick={() => fmt.data && pdfOf(fmt.data.item.id, fmt.data)} disabled={!fmt.data || pdfBusy === format} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl shadow-sm">⬇ PDF</button><button type="button" onClick={() => setFormat('')} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 rounded-xl shadow-sm flex items-center gap-1.5"><X className="w-4 h-4" />{tx('Cerrar', 'Close')}</button></div>
+        </div>
+        <div className="p-2 sm:p-5 overflow-auto bg-slate-200/60"><Wait s={fmt} /><Err s={fmt} />{fmt.data && <iframe title={tx('Formato de entrega', 'Delivery format')} srcDoc={deliveryFormatHtml(fmt.data, en)} sandbox="" className="w-full max-w-[860px] mx-auto block h-[74vh] bg-white shadow-md border border-slate-300" />}</div>
+      </div>
+    </div>}
+
+    {delDlg && <div role="dialog" aria-modal="true" aria-label={tx('Eliminar registro', 'Delete record')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setDelDlg(null)}>
+      <div className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between"><h3 className="text-sm font-black text-rose-700">{tx('Eliminar', 'Delete')} {delDlg.r.folio}</h3><button type="button" aria-label={tx('Cerrar diálogo', 'Close dialog')} onClick={() => setDelDlg(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
+        <p className="text-xs text-slate-600">{delDlg.r.kind === 'delivery' ? `${tx('Entrega', 'Delivery')} · ${show(delDlg.r.client_name)} · ${show(delDlg.r.requisitions)}` : `${tx('Recepción', 'Receipt')} · ${delDlg.r.po_folio} · ${show(delDlg.r.supplier_name)}`}</p>
+        {delDlg.block ? <p role="alert" data-testid="matrix-delete-block" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">{delDlg.block}</p> : <>
+          <label className="block"><span className="block text-[11px] font-black mb-1">{tx(`Escribe el folio (${delDlg.r.folio}) para confirmar`, `Type the folio (${delDlg.r.folio}) to confirm`)}</span><input type="text" aria-label={tx('Folio a eliminar', 'Folio to delete')} value={delDlg.folio} onChange={e => { const t = e.target.value; setDelDlg(x => ({ ...x, folio: t, msg: null })); }} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" /></label>
+          <label className="block"><span className="block text-[11px] font-black mb-1">{tx('Motivo', 'Reason')} *</span><textarea rows={3} aria-label={tx('Motivo de la eliminación', 'Deletion reason')} value={delDlg.reason} maxLength={600} onChange={e => { const t = e.target.value; setDelDlg(x => ({ ...x, reason: t, msg: null })); }} className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm" /></label>
+        </>}
+        {delDlg.msg && <p data-testid="matrix-delete-msg" role={delDlg.msg.kind === 'error' ? 'alert' : 'status'} className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${delDlg.msg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{delDlg.msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{delDlg.msg.text}</span></p>}
+        <div className="flex justify-end gap-2 text-xs font-black"><button type="button" onClick={() => setDelDlg(null)} className="px-4 py-2 border border-slate-200 rounded-xl">{tx('Cancelar', 'Cancel')}</button>{!delDlg.block && <button type="button" onClick={() => setDelDlg(x => { const err = deleteError(x.r, x.folio, x.reason, en); return { ...x, msg: err ? { kind: 'error', text: err } : { kind: 'locked', text: deleteLockedText(x.r, en) } }; })} className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl">{tx('Eliminar', 'Delete')}</button>}</div>
       </div>
     </div>}
   </div>;

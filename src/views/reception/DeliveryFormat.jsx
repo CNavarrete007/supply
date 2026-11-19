@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Lock, Loader2, AlertCircle } from 'lucide-react';
 import { receptionDeliverable } from './api';
 import { label, tone, qty, bytes } from './model.mjs';
@@ -15,9 +15,10 @@ import { safeSignature, signatureStatus } from '../purchaseOrders/poFormat.mjs';
 // operativa sin endpoint autorizado: el formato se valida completo, se calculan sus huellas SHA-256 y no se guarda nada.
 const r6 = n => Math.round(n * 1e6) / 1e6;
 
-export function DeliveryFormat({ en = false, today = '', rev = 0, notify = () => {}, onMatrix, onViewFormat }) {
+export function DeliveryFormat({ en = false, today = '', rev = 0, notify = () => {}, onMatrix, onViewFormat, preset = null }) {
   const tx = (es, e) => (en ? e : es);
-  const [f, setF] = useState(() => emptyDelivery(today));
+  const [f, setF] = useState(() => ({ ...emptyDelivery(today), client: preset?.client || '' }));
+  const [presetMsg, setPresetMsg] = useState(null); const applied = useRef(false);
   const [tried, setTried] = useState(false); const [msg, setMsg] = useState(null); const [photoMsg, setPhotoMsg] = useState(''); const [sigMsg, setSigMsg] = useState('');
   const [hashes, setHashes] = useState(null);
   const photoRef = useRef(null);
@@ -29,6 +30,23 @@ export function DeliveryFormat({ en = false, today = '', rev = 0, notify = () =>
   const v = useMemo(() => validateDelivery(f, { reqs, today, safeSig: safeSignature }, en), [f, reqs, today, en]);
   const err = k => (tried ? v.errors[k] : '');
 
+  // "Nueva entrega" desde una recepción de la matriz: cliente y requisiciones con saldo preseleccionados.
+  useEffect(() => {
+    if (!preset?.client || applied.current) return;
+    if (clients.status === 'ready' && !(clients.data?.clients || []).some(c => c.id === preset.client)) {
+      applied.current = true; setF(x => ({ ...x, client: '' }));
+      setPresetMsg({ tone: 'amber', text: tx(`${preset.from}: el cliente no tiene material recibido en órdenes vigentes para entregar.`, `${preset.from}: the client has no received material on current orders to deliver.`) }); return;
+    }
+    if (data.status !== 'ready' || data.data?.client !== preset.client) return;
+    applied.current = true;
+    const list = data.data.requisitions || [];
+    const pick = list.filter(r => preset.folios.includes(r.folio));
+    const ok = pick.filter(r => (r.items || []).some(i => i.available > 0));
+    if (ok.length) setF(x => withLines({ ...x, requisitions: ok.map(r => r.id) }, list));
+    setPresetMsg(ok.length ? { tone: 'blue', text: tx(`Desde ${preset.from}: se preseleccionó ${ok.map(r => r.folio).join(', ')} con su saldo disponible.`, `From ${preset.from}: ${ok.map(r => r.folio).join(', ')} was preselected with its available balance.`) }
+      : { tone: 'amber', text: tx(`Desde ${preset.from}: ${preset.folios.join(', ') || 'la requisición'} no tiene saldo disponible por entregar.`, `From ${preset.from}: ${preset.folios.join(', ') || 'the requisition'} has no available balance to deliver.`) });
+  }, [preset, clients, data]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const touch = () => { setMsg(null); setHashes(null); };
   const set = (k, val) => { setF(x => ({ ...x, [k]: val })); touch(); };
   // Completa: every available balance of the selected requisitions; Parcial keeps captured quantities still valid.
@@ -37,7 +55,7 @@ export function DeliveryFormat({ en = false, today = '', rev = 0, notify = () =>
   const setClient = id => { setF(x => ({ ...x, client: id, requisitions: [], qty: {} })); touch(); };
   const toggleReq = id => { setF(x => withLines({ ...x, requisitions: x.requisitions.includes(id) ? x.requisitions.filter(r => r !== id) : [...x.requisitions, id] })); touch(); };
   const setQty = (key, val) => { setF(x => ({ ...x, qty: { ...x.qty, [key]: val } })); touch(); };
-  const reset = () => { setF(emptyDelivery(today)); setTried(false); setMsg(null); setPhotoMsg(''); setSigMsg(''); setHashes(null); if (photoRef.current) photoRef.current.value = ''; };
+  const reset = () => { setPresetMsg(null); setF(emptyDelivery(today)); setTried(false); setMsg(null); setPhotoMsg(''); setSigMsg(''); setHashes(null); if (photoRef.current) photoRef.current.value = ''; };
   const addPhotos = async files => {
     const { photos, errors } = await compressPhotos(files, f.photos.length, en);
     setF(x => ({ ...x, photos: [...x.photos, ...photos].slice(0, PHOTO_MAX) })); touch(); setPhotoMsg(errors.join(' '));
@@ -68,6 +86,7 @@ export function DeliveryFormat({ en = false, today = '', rev = 0, notify = () =>
     </div>
     <div data-testid="delivery-nom151" className="p-4 rounded-2xl border border-amber-200 bg-amber-50/70 text-[11.5px] text-amber-900 leading-relaxed"><strong>{tx('Firma electrónica y NOM-151:', 'Electronic signature and NOM-151:')}</strong> {tx('SupplyFlow vincula el contenido del formato con las firmas de quien entrega y quien recibe mediante huellas SHA-256 y bloquea el registro firmado. Para una constancia de conservación NOM-151-SCFI-2016, debe registrarse la constancia emitida por un Prestador de Servicios de Certificación acreditado.', 'SupplyFlow binds the format content to the signatures of whoever delivers and whoever receives with SHA-256 fingerprints and locks the signed record. For a NOM-151-SCFI-2016 preservation certificate, the certificate issued by an accredited Certification Service Provider must be recorded.')}</div>
 
+    {presetMsg && <p data-testid="delivery-preset-msg" role="status" className={`p-3 rounded-xl border text-xs ${presetMsg.tone === 'blue' ? 'bg-blue-50 border-blue-200 text-blue-900' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>{presetMsg.text}</p>}
     <Wait s={clients} /><Err s={clients} />
     <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
       {lbl(tx('Cliente', 'Client'), true, 'client', <select aria-label={tx('Cliente', 'Client')} value={f.client} onChange={e => setClient(e.target.value)} className={ctl('client')}><option value="">{tx('Seleccionar...', 'Select...')}</option>{(clients.data?.clients || []).map(c => <option key={c.id} value={c.id}>{c.name} · {c.requisitions} {tx('requisición(es)', 'requisition(s)')}</option>)}</select>, 'md:col-span-2')}

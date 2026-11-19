@@ -54,6 +54,18 @@ final class ReceptionReadRepository
         return "(CASE WHEN {$col} IS NULL OR NOT JSON_VALID({$col}) THEN NULL WHEN JSON_TYPE({$col})='STRING' THEN JSON_UNQUOTE({$col}) ELSE COALESCE(JSON_VALUE({$col},'$.name'),JSON_VALUE({$col},'$.nombre'),JSON_VALUE({$col},'$.displayName'),JSON_VALUE({$col},'$.fullName'),JSON_VALUE({$col},'$.full_name')) END)";
     }
 
+    /** Position / job title inside a signer snapshot (JSON object); NULL when absent. */
+    private static function snapPosition(string $col): string
+    {
+        return "(CASE WHEN {$col} IS NULL OR NOT JSON_VALID({$col}) OR JSON_TYPE({$col})<>'OBJECT' THEN NULL ELSE COALESCE(JSON_VALUE({$col},'$.position'),JSON_VALUE({$col},'$.puesto'),JSON_VALUE({$col},'$.cargo'),JSON_VALUE({$col},'$.title'),JSON_VALUE({$col},'$.jobTitle')) END)";
+    }
+
+    /** Photos linked to an entity (file roles such as deliveryPhoto / receiptPhoto / foto). */
+    private static function photoCount(string $alias): string
+    {
+        return "(SELECT COUNT(*) FROM entity_files ef WHERE ef.organization_id={$alias}.organization_id AND ef.entity_id={$alias}.id AND (LOWER(ef.file_role) LIKE '%photo%' OR LOWER(ef.file_role) LIKE '%foto%'))";
+    }
+
     private static function legacyAccept(string $alias = 'gr'): string
     {
         return "(CASE WHEN {$alias}.legacy_delivery_snapshot IS NOT NULL AND JSON_VALID({$alias}.legacy_delivery_snapshot) THEN NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT({$alias}.legacy_delivery_snapshot,'$.clientAccept'))),'') END)";
@@ -81,6 +93,7 @@ final class ReceptionReadRepository
     private function receiptRows(int $org, string $where = '', array $binds = []): array
     {
         $accept = self::legacyAccept();
+        $photos = self::photoCount('gr');
         $rows = $this->rows(<<<SQL
             SELECT e.public_id AS id,gr.id AS db_id,gr.folio,gr.receipt_date AS date,gr.capture_grain,gr.status_code AS status,gr.legacy_type,
                    gr.legacy_received_percent,gr.quality_result,gr.documentation_result,gr.notes,{$accept} AS legacy_acceptance,
@@ -95,6 +108,10 @@ final class ReceptionReadRepository
                    (SELECT COUNT(*) FROM entity_files ef WHERE ef.organization_id=gr.organization_id AND ef.entity_id=gr.id) AS file_count,
                    (SELECT COUNT(*) FROM signature_evidence sg WHERE sg.organization_id=gr.organization_id AND sg.entity_id=gr.id) AS signature_count,
                    (SELECT COUNT(DISTINCT ds.delivery_id) FROM delivery_sources ds WHERE ds.organization_id=gr.organization_id AND ds.goods_receipt_id=gr.id) AS delivery_count,
+                   {$photos} AS photo_count,
+                   (SELECT d.delivery_type FROM delivery_sources ds JOIN deliveries d ON d.id=ds.delivery_id AND d.organization_id=ds.organization_id WHERE ds.organization_id=gr.organization_id AND ds.goods_receipt_id=gr.id ORDER BY d.delivery_date DESC,d.id DESC LIMIT 1) AS delivery_type,
+                   (SELECT (d.locked_at IS NOT NULL OR COALESCE(d.legacy_locked,0)=1) FROM delivery_sources ds JOIN deliveries d ON d.id=ds.delivery_id AND d.organization_id=ds.organization_id WHERE ds.organization_id=gr.organization_id AND ds.goods_receipt_id=gr.id ORDER BY d.delivery_date DESC,d.id DESC LIMIT 1) AS delivery_locked,
+                   (SELECT MIN(ce.public_id) FROM purchase_order_requisitions pr JOIN requisitions r ON r.id=pr.requisition_id AND r.organization_id=pr.organization_id JOIN business_entities ce ON ce.id=r.client_id AND ce.organization_id=r.organization_id WHERE pr.organization_id=gr.organization_id AND pr.purchase_order_id=gr.purchase_order_id) AS client_id,
                    (SELECT d.acceptance_status FROM delivery_sources ds JOIN deliveries d ON d.id=ds.delivery_id AND d.organization_id=ds.organization_id WHERE ds.organization_id=gr.organization_id AND ds.goods_receipt_id=gr.id ORDER BY d.delivery_date DESC,d.id DESC LIMIT 1) AS delivery_acceptance
             FROM goods_receipts gr
             JOIN business_entities e ON e.id=gr.id AND e.organization_id=gr.organization_id
@@ -108,6 +125,7 @@ final class ReceptionReadRepository
             $r['received_percent'] = $r['legacy_received_percent'] !== null ? round((float) $r['legacy_received_percent'], 2)
                 : ($r['capture_grain'] === 'line_items' && (float) $r['ordered_qty'] > 0 ? round(100 * (float) $r['received_qty'] / (float) $r['ordered_qty'], 2) : null);
             $r['acceptance'] = $r['delivery_acceptance'] ?? $r['legacy_acceptance'];
+            $r['delivery_locked'] = $r['delivery_locked'] === null ? null : (bool) $r['delivery_locked'];
             $r['acceptance_source'] = $r['delivery_acceptance'] !== null ? 'delivery' : ($r['legacy_acceptance'] !== null ? 'legacy_receipt' : null);
             $r['pending_reasons'] = array_values(array_filter([
                 $r['received_percent'] === null ? 'progress_unknown' : ($r['received_percent'] < 100 ? 'partial' : null),
@@ -117,7 +135,7 @@ final class ReceptionReadRepository
             ]));
         }
         unset($r);
-        self::num($rows, ['po_version', 'item_count', 'file_count', 'signature_count', 'delivery_count'], ['received_qty', 'rejected_qty', 'ordered_qty']);
+        self::num($rows, ['po_version', 'item_count', 'file_count', 'signature_count', 'delivery_count', 'photo_count'], ['received_qty', 'rejected_qty', 'ordered_qty']);
         return $rows;
     }
 
@@ -125,9 +143,12 @@ final class ReceptionReadRepository
     {
         $by = self::snapName('d.delivered_by_snapshot');
         $to = self::snapName('d.received_by_snapshot');
+        $byPos = self::snapPosition('d.delivered_by_snapshot');
+        $toPos = self::snapPosition('d.received_by_snapshot');
+        $photos = self::photoCount('d');
         $rows = $this->rows(<<<SQL
             SELECT e.public_id AS id,d.id AS db_id,d.folio,d.delivery_date AS date,d.control_reference,d.delivery_type,d.acceptance_status,d.status_code AS status,
-                   d.legacy_status,d.delivery_place,{$by} AS delivered_by,{$to} AS received_by,d.evidence_text,d.notes,
+                   d.legacy_status,d.delivery_place,{$by} AS delivered_by,{$to} AS received_by,{$byPos} AS delivered_by_position,{$toPos} AS received_by_position,d.evidence_text,d.notes,{$photos} AS photo_count,
                    (d.locked_at IS NOT NULL OR COALESCE(d.legacy_locked,0)=1) AS locked,c.legal_name AS client_name,ce.public_id AS client_id,
                    (SELECT GROUP_CONCAT(DISTINCT po.folio ORDER BY po.folio SEPARATOR ', ') FROM delivery_sources ds JOIN purchase_orders po ON po.id=ds.purchase_order_id AND po.organization_id=ds.organization_id WHERE ds.organization_id=d.organization_id AND ds.delivery_id=d.id) AS po_folios,
                    (SELECT GROUP_CONCAT(DISTINCT gr.folio ORDER BY gr.folio SEPARATOR ', ') FROM delivery_sources ds JOIN goods_receipts gr ON gr.id=ds.goods_receipt_id AND gr.organization_id=ds.organization_id WHERE ds.organization_id=d.organization_id AND ds.delivery_id=d.id) AS receipt_folios,
@@ -148,7 +169,7 @@ final class ReceptionReadRepository
             $r['locked'] = (bool) $r['locked'];
         }
         unset($r);
-        self::num($rows, ['item_count', 'file_count', 'signature_count'], ['delivered_qty']);
+        self::num($rows, ['item_count', 'file_count', 'signature_count', 'photo_count'], ['delivered_qty']);
         return $rows;
     }
 
@@ -402,11 +423,15 @@ final class ReceptionReadRepository
         $name = self::snapName('sg.signer_snapshot');
         $signatures = $this->rows(<<<SQL
             SELECT sg.signature_role AS role,sg.method_label AS method,sg.signed_at,sg.integrity_verification_status AS integrity,sg.hashing_scope,
-              LOWER(HEX(sg.document_sha256)) AS document_sha256,
+              LOWER(HEX(sg.document_sha256)) AS document_sha256,LOWER(HEX(sg.signature_sha256)) AS signature_sha256,(sg.signature_file_id IS NOT NULL) AS has_image,
               COALESCE((SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=sg.signer_user_id AND u.organization_id=sg.organization_id),
                        (SELECT c.legal_name FROM clients c WHERE c.id=sg.signer_client_id AND c.organization_id=sg.organization_id),{$name}) AS signer
             FROM signature_evidence sg WHERE sg.organization_id=? AND sg.entity_id=? ORDER BY sg.signed_at,sg.id
             SQL, [$org, $entity]);
+        foreach ($signatures as &$sg) {
+            $sg['has_image'] = (bool) $sg['has_image']; // the image itself stays in private storage (not served here)
+        }
+        unset($sg);
         return ['files' => $files, 'signatures' => $signatures];
     }
 

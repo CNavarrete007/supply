@@ -46,51 +46,108 @@ const pct = v => `${Number(v).toLocaleString('es-MX', { maximumFractionDigits: 2
     for (const t of ['Registro de recepción', 'Entrega al cliente', 'Matriz de recepción y entrega', 'Semáforo de cierre'])
       check(`tarjeta "${t}" visible`, await page.getByRole('button', { name: new RegExp(t) }).first().isVisible());
     check('aviso de modo consulta visible', await page.getByText(/Modo consulta MariaDB: registrar recepciones/).isVisible());
-    const allCard = flat(await page.getByRole('button', { name: /Todos los clientes/ }).innerText());
-    check('tarjeta "Todos": registros, recepciones y entregas', allCard.includes(`${all.total} Registros ${all.summary.receipts} Recepción ${all.summary.deliveries} Entregas`), allCard);
+    const low = s => flat(s).toLowerCase();
+    const mx = page.getByTestId('reception-matrix');
+    const mh = low(await mx.innerText());
+    check('matriz: título, explicación y aviso "Matriz unificada" del diseño', ['matriz de recepción y entrega', 'consulta el avance de recepción, calidad, documentos, entrega y aceptación del cliente.', 'matriz unificada:', 'muestra cada recepción física registrada', 'incluso cuando consolida varias requisiciones', 'los formatos de entrega ya no se duplican debajo del formulario.'].every(x => mh.includes(x)), mh.slice(0, 400));
+    const cardsApi = all.summary.clients;
+    check('matriz: chip "N cliente(s) · M registro(s)"', (await page.getByTestId('matrix-clients-chip').innerText()).trim() === `${cardsApi.length} cliente(s) · ${cardsApi.reduce((n, c) => n + c.receipts + c.deliveries, 0)} registro(s)`);
+    const allCard = low(await page.getByRole('button', { name: /Todos los clientes/i }).innerText());
+    check('tarjeta "Todos": registros, recepciones, entregas, cartera completa y abrir', allCard.includes(`${all.total} registros ${all.summary.receipts} recepciones ${all.summary.deliveries} entregas`) && allCard.includes('vista general') && allCard.includes('cartera completa') && allCard.includes('abrir →'), allCard);
+    check('tarjeta por cliente: "Registros del cliente" y "Cliente"', low(await page.getByTestId('matrix-client-card').nth(1).innerText()).includes('registros del cliente'));
     check('matriz cerrada hasta elegir cliente', await page.getByRole('row').count() === 0);
-    check('"Nueva recepción" y "Nueva entrega" bloqueadas', await page.getByRole('button', { name: /Nueva recepción/ }).isDisabled() && await page.getByRole('button', { name: /Nueva entrega/ }).isDisabled());
-    await page.getByRole('button', { name: /Todos los clientes/ }).click();
+    check('"+ Nueva recepción" y "+ Nueva entrega" habilitadas (navegan a sus tarjetas)', await mx.getByRole('button', { name: /Nueva recepción/i }).isEnabled() && await mx.getByRole('button', { name: /Nueva entrega/i }).first().isEnabled());
+    await page.getByRole('button', { name: /Todos los clientes/i }).click();
     await page.getByRole('row').filter({ hasText: 'ENT-QA-0001' }).waitFor();
-    const e1 = flat(await page.getByRole('row').filter({ hasText: 'ENT-QA-0001' }).innerText());
-    check('fila de entrega: OC, requisición, cantidad, aceptación, firma y hash', ['ENTREGA', 'OC-QA-0001', 'QA01-REQ-2026-SF4EA4', '3 entregado', 'Aceptada', 'Firmada y bloqueada', 'SHA-256 7f09511f0159'].every(x => e1.includes(x)), e1);
-    const r4 = flat(await page.getByRole('row').filter({ hasText: 'REC-QA-0004' }).innerText());
-    check('fila de recepción por partida: avance, calidad y documentos', ['RECEPCIÓN', 'OC-QA-0003 Rev. 1', pct(rec('REC-QA-0004').received_percent), 'Con observaciones', 'Incompleta', 'Sin entrega'].every(x => r4.includes(x)), r4);
-    const r1 = flat(await page.getByRole('row').filter({ hasText: 'REC-QA-0001' }).innerText());
-    check('recepción histórica muestra aceptación desde su entrega', r1.includes('100% recibido') && r1.includes('Aceptad'), r1);
-    check(`${all.total} registros (recepciones + entregas)`, await page.getByText(`${all.total} registros`).isVisible());
+    check('cliente elegido: "Todos los clientes · N registro(s) visibles"', low(await page.getByTestId('matrix-selected').innerText()).includes(`todos los clientes ${all.total} registro(s) visibles`));
+    const rowT = async f => low(await page.getByRole('row').filter({ hasText: f }).innerText());
+    const e1 = await rowT('ENT-QA-0001');
+    check('fila ENTREGA: folio, OC, requisición, cantidad, partidas, firmada, evidencia, lugar, fotos, aceptación y hash', ['entrega', 'completa · 2026-10-22', 'oc-qa-0001', 'qa01-req-2026-sf4ea4', '3.00 entregado', '1 partida(s) · completa', 'firmada y bloqueada', 'acuse sintético firmado', 'almacén sintético qa', '1 foto(s)', 'aceptado', 'sha-256 7f09511f0159'].every(x => e1.includes(x)), e1);
+    check('fila ENTREGA: acciones Ver formato, PDF y Eliminar', ['ver formato', 'pdf', 'eliminar'].every(x => e1.includes(x)) && !e1.includes('nueva entrega'));
+    const r4 = await rowT('REC-QA-0004');
+    check('fila RECEPCIÓN: avance, formatos, calidad, documentos, fotos, aceptación e integridad', ['recepción', 'oc-qa-0003 rev. 1', `${pct(rec('REC-QA-0004').received_percent)} recibido`, '0 formato(s) de entrega', 'con observaciones', 'incompleta', '0 recepción', 'sin entrega'].every(x => r4.includes(x)), r4);
+    check('fila RECEPCIÓN: acciones Recepción, Nueva entrega y Eliminar', ['nueva entrega', 'eliminar'].every(x => r4.includes(x)) && !r4.includes('ver formato'));
+    const r3 = await rowT('REC-QA-0003');
+    check('recepción con entrega parcial vinculada → "Entrega parcial"', r3.includes('entrega parcial') && r3.includes('1 formato(s) de entrega'), r3);
+    const r1 = await rowT('REC-QA-0001');
+    check('recepción con entrega completa firmada → "Aceptado" y "Firmas vinculadas"', r1.includes('100% recibido') && r1.includes('aceptado') && r1.includes('firmas vinculadas'), r1);
+    check(`${all.total} registros (recepciones + entregas)`, await page.getByText(`${all.total} registros ·`).isVisible());
     const c2 = all.summary.clients.find(c => c.name === 'Cliente Sintético Dos');
     const byClient = page.waitForResponse(r => new RegExp(`client=${c2.id}`).test(r.url()));
-    await page.getByRole('button', { name: /Cliente Sintético Dos/ }).click();
+    await page.getByRole('button', { name: /Cliente Sintético Dos/i }).click();
     check('filtro por cliente en el servidor (200)', (await byClient).status() === 200);
-    await page.getByText(`${c2.receipts + c2.deliveries} registros`).waitFor();
+    await page.getByText(`${c2.receipts + c2.deliveries} registros ·`).waitFor();
     check('solo registros del cliente', await page.getByRole('row').filter({ hasText: 'ENT-QA-0001' }).count() === 0 && await page.getByRole('row').filter({ hasText: 'ENT-QA-0002' }).count() === 1);
     const onlyDel = page.waitForResponse(r => /kind=delivery/.test(r.url()));
     await page.getByRole('combobox', { name: 'Tipo' }).selectOption('delivery');
     check('filtro por tipo en el servidor (200)', (await onlyDel).status() === 200);
-    await page.getByText(`${c2.deliveries} registros`).waitFor();
-    await shot(page, 'rec_3_matriz');
+    await page.getByText(`${c2.deliveries} registros ·`).waitFor();
     await page.getByRole('combobox', { name: 'Tipo' }).selectOption('all');
-    await page.getByRole('button', { name: /Todos los clientes/ }).click();
+    await page.getByRole('button', { name: /Todos los clientes/i }).click();
     await page.getByRole('row').filter({ hasText: 'ENT-QA-0001' }).waitFor();
+    await shot(page, 'rec_3_matriz');
 
-    // Formato de entrega (acuse)
-    await page.getByRole('row').filter({ hasText: 'ENT-QA-0001' }).getByRole('button', { name: 'VER FORMATO' }).click();
+    // Formato de entrega Grupo Gerez: vista previa y PDF
+    await page.getByRole('row').filter({ hasText: 'ENT-QA-0001' }).getByRole('button', { name: /^ver formato$/i }).click();
+    const dlg = page.getByRole('dialog', { name: 'Formato de entrega' });
     const frame = page.frameLocator('iframe[title="Formato de entrega"]');
-    await frame.getByText('Acuse de entrega ENT-QA-0001').waitFor();
+    await frame.getByText('FORMATO DE ENTREGA', { exact: true }).waitFor();
+    const dh = flat(await dlg.innerText());
+    check('formato: encabezado "ENT · Tipo" y "Vista previa del documento firmado" con ⬇ PDF y Cerrar', dh.includes('ENT-QA-0001 · Completa') && dh.includes('Vista previa del documento firmado') && dh.includes('PDF') && dh.includes('Cerrar'), dh.slice(0, 200));
     const ft = flat(await frame.locator('body').innerText());
-    check('acuse: cliente, lugar, origen, partidas, firmas', ['Cliente Sintético Uno', 'Almacén sintético QA', 'OC-QA-0001 / REC-QA-0001', 'Material sintético · placa', 'QA Comprador', 'Receptor Sintético', 'firmado y bloqueado'].every(x => ft.includes(x)), ft.slice(0, 300));
-    check('acuse aislado en iframe sandbox', (await page.locator('iframe[title="Formato de entrega"]').getAttribute('sandbox')) === '');
-    const popup = page.waitForEvent('popup');
-    await page.getByRole('button', { name: /Imprimir \/ PDF/ }).click();
-    const pop = await popup; await pop.waitForLoadState();
-    check('impresión abre el acuse', flat(await pop.locator('body').innerText()).includes('ENT-QA-0001'));
-    await pop.close().catch(() => {});
+    check('formato Grupo Gerez: cliente, lugar, requisición, OC, partida, firmantes e integridad', ['GRUPO GEREZ', 'FORMATO DE ENTREGA', 'DELIVERY NOTE / EVIDENCIA DE ENTREGA', 'Cliente Sintético Uno', 'Lugar: Almacén sintético QA', 'QA01-REQ-2026-SF4EA4', 'Aceptación: Aceptado', 'OC: OC-QA-0001',
+      'Material sintético · placa', '3.00', 'ENTREGÓ POR EL CONTRATISTA', 'QA COMPRADOR', 'RECIBIÓ POR EL CLIENTE', 'RECEPTOR SINTÉTICO', 'Firma electrónica registrada', 'ID de control: CTRL-QA-01', 'SHA-256 expediente: 7f09511f015935f96f7c00dfc85cca72ea6c4e20a84b83b35f3b63fcf7abbabb', 'Documento firmado y bloqueado.'].every(x => ft.includes(x)), ft.slice(0, 600));
+    check('formato aislado en iframe sandbox con logotipo Grupo Gerez', (await page.locator('iframe[title="Formato de entrega"]').getAttribute('sandbox')) === '' && await frame.locator('img[alt="Grupo Gerez"]').count() === 1);
     await shot(page, 'rec_formato');
-    await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
+    const fs = require('fs'); const os = require('os'); const path = require('path');
+    const pdfText = async dl => { const f = path.join(os.tmpdir(), `sf-${Date.now()}.pdf`); await dl.saveAs(f); const t = fs.readFileSync(f).toString('latin1'); fs.unlinkSync(f); return t; };
+    let dlP = page.waitForEvent('download');
+    await dlg.getByRole('button', { name: /PDF/ }).click();
+    let dl = await dlP; let pt = await pdfText(dl);
+    check('⬇ PDF descarga el formato Grupo Gerez (ENT-QA-0001.pdf)', dl.suggestedFilename() === 'ENT-QA-0001.pdf' && ['GRUPO GEREZ', 'FORMATO DE ENTREGA', 'ENT-QA-0001', 'CTRL-QA-01'].every(x => pt.includes(x)));
+    await dlg.getByRole('button', { name: 'Cerrar', exact: true }).click();
+    dlP = page.waitForEvent('download');
+    await page.getByRole('row').filter({ hasText: 'ENT-QA-0010' }).getByRole('button', { name: /^pdf$/i }).click();
+    dl = await dlP; pt = await pdfText(dl);
+    check('PDF desde la fila (ENT-QA-0010.pdf)', dl.suggestedFilename() === 'ENT-QA-0010.pdf' && pt.includes('ENT-QA-0010'));
+
+    // Eliminar: reglas de conservación y escritura bloqueada
+    const delDialog = page.getByRole('dialog', { name: 'Eliminar registro' });
+    await page.getByRole('row').filter({ hasText: 'ENT-QA-0001' }).getByRole('button', { name: /^eliminar$/i }).click();
+    check('eliminar entrega firmada: se conserva como evidencia', (await page.getByTestId('matrix-delete-block').innerText()).includes('firmado y bloqueado') && await delDialog.getByRole('button', { name: 'Eliminar', exact: true }).count() === 0);
+    await delDialog.getByRole('button', { name: 'Cancelar' }).click();
+    await page.getByRole('row').filter({ hasText: 'REC-QA-0001' }).getByRole('button', { name: /^eliminar$/i }).click();
+    check('eliminar recepción con entrega vinculada o histórica: bloqueado', /formato\(s\) de entrega|histórica importada/.test(await page.getByTestId('matrix-delete-block').innerText()));
+    await delDialog.getByRole('button', { name: 'Cancelar' }).click();
+    await page.getByRole('row').filter({ hasText: 'ENT-QA-0002' }).getByRole('button', { name: /^eliminar$/i }).click();
+    await delDialog.getByRole('button', { name: 'Eliminar', exact: true }).click();
+    check('eliminar borrador: exige escribir el folio', (await page.getByTestId('matrix-delete-msg').innerText()).includes('Escribe el folio ENT-QA-0002'));
+    await delDialog.getByLabel('Folio a eliminar').fill('ent-qa-0002'); await delDialog.getByLabel('Motivo de la eliminación').fill('Captura duplicada (prueba E2E)');
+    await delDialog.getByRole('button', { name: 'Eliminar', exact: true }).click();
+    check('eliminar borrador: validado pero NO eliminado', (await page.getByTestId('matrix-delete-msg').innerText()).startsWith('Datos validados, pero no se eliminó ENT-QA-0002'));
+    await delDialog.getByRole('button', { name: 'Cancelar' }).click();
+    check('la entrega sigue en la matriz', await page.getByRole('row').filter({ hasText: 'ENT-QA-0002' }).count() === 1);
+
+    // Nueva entrega desde una recepción: cliente y requisición preseleccionados en la tarjeta 2
+    await page.getByRole('row').filter({ hasText: 'REC-QA-0003' }).getByRole('button', { name: /^nueva entrega$/i }).click();
+    await page.getByTestId('delivery-preset-msg').waitFor();
+    const pm = flat(await page.getByTestId('delivery-preset-msg').innerText());
+    check('Nueva entrega (REC-QA-0003): cliente y requisición con saldo preseleccionados', pm.startsWith('Desde REC-QA-0003: se preseleccionó QA02-REQ-2026-SCF210') && await page.getByTestId('delivery-line').count() === 1
+      && await page.getByTestId('delivery-form').getByLabel('Cliente', { exact: true }).inputValue() === c2.id, pm);
+    await page.getByRole('button', { name: /^📋.*Matriz de recepción y entrega/ }).click();
+    await page.getByRole('row').filter({ hasText: 'REC-QA-0010' }).waitFor();
+    await page.getByRole('row').filter({ hasText: 'REC-QA-0010' }).getByRole('button', { name: /^nueva entrega$/i }).click();
+    await page.getByTestId('delivery-preset-msg').waitFor();
+    check('Nueva entrega (REC-QA-0010): avisa que la requisición no tiene saldo', flat(await page.getByTestId('delivery-preset-msg').innerText()).includes('no tiene saldo disponible por entregar') && await page.getByTestId('delivery-line').count() === 0);
+    await page.getByRole('button', { name: /^📋.*Matriz de recepción y entrega/ }).click();
+    await mx.getByRole('button', { name: /Nueva entrega/i }).first().click();
+    await page.getByTestId('delivery-form').waitFor();
+    check('"+ Nueva entrega" abre el formato vacío', await page.getByTestId('delivery-form').getByLabel('Cliente', { exact: true }).inputValue() === '' && await page.getByTestId('delivery-preset-msg').count() === 0);
+    await page.getByRole('button', { name: /^📋.*Matriz de recepción y entrega/ }).click();
+    await page.getByRole('row').filter({ hasText: 'REC-QA-0003' }).waitFor();
 
     // Matriz → Registro de recepción (desde una versión anterior de la OC)
-    await page.getByRole('row').filter({ hasText: 'REC-QA-0003' }).getByRole('button', { name: 'RECEPCIÓN' }).click();
+    await page.getByRole('row').filter({ hasText: 'REC-QA-0003' }).getByRole('button', { name: /^recepción$/i }).click();
     await page.getByTestId('receipt-detail').waitFor();
     const o3 = orders.items.find(o => o.folio === 'OC-QA-0003');
     check('abre la OC vigente de la serie (Rev. 1)', (await page.getByRole('combobox', { name: 'Orden de compra' }).inputValue()) === o3.id);
@@ -183,7 +240,7 @@ const pct = v => `${Number(v).toLocaleString('es-MX', { maximumFractionDigits: 2
     check('entrega: requisición sin saldo bloqueada y con su entrega registrada', await nb.getByRole('checkbox').isDisabled() && flat(await nb.innerText()).includes('Sin saldo por entregar') && flat(await nb.innerText()).includes(noBal.deliveries[0].folio));
     await nb.getByRole('button', { name: new RegExp(noBal.deliveries[0].folio) }).click();
     await page.getByRole('dialog', { name: 'Formato de entrega' }).waitFor();
-    await page.frameLocator('iframe[title="Formato de entrega"]').getByText(`Acuse de entrega ${noBal.deliveries[0].folio}`).waitFor({ timeout: 60000 });
+    await page.frameLocator('iframe[title="Formato de entrega"]').getByText(noBal.deliveries[0].folio, { exact: true }).waitFor({ timeout: 60000 });
     check('entrega: la entrega registrada abre su formato (acuse)', true);
     await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
     await dfm.getByRole('button', { name: /Guardar y firmar formato/ }).click();

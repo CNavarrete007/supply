@@ -46,6 +46,10 @@ try:
     check('matriz: sin identificadores internos', not any('db_id' in i or 'po_db_id' in i for i in items))
     check('tarjetas por cliente = totales', sum(c['receipts'] for c in s['clients']) >= s['receipts'] and sum(c['deliveries'] for c in s['clients']) == s['deliveries'])
     rec = [i for i in items if i['kind'] == 'receipt']; dl = [i for i in items if i['kind'] == 'delivery']
+    # Tarjeta 3 · campos de la matriz del diseño (aditivos, solo lectura)
+    check('matriz: fotos por registro (0 ≤ fotos ≤ archivos)', all(isinstance(i['photo_count'], int) and 0 <= i['photo_count'] <= i['file_count'] for i in items))
+    check('matriz: recepción con tipo/bloqueo de su última entrega y cliente', all(set(['delivery_type', 'delivery_locked', 'client_id']) <= set(r) and ((r['delivery_type'] is None) == (r['delivery_count'] == 0)) and (r['delivery_locked'] is None or isinstance(r['delivery_locked'], bool)) for r in rec))
+    check('matriz: entrega con puesto de quien entrega y recibe', all({'delivered_by_position', 'received_by_position'} <= set(x) for x in dl))
     check('avance de recepción en 0–100+ o sin registrar', all(r['received_percent'] is None or r['received_percent'] >= 0 for r in rec))
     od = get(f'{R}/orders?page_size=50')
     check('OC: resumen por estado = total', sum(od['summary'].values()) == od['total'] and all(o['reception'] == ('pending' if o['receipt_count'] == 0 else 'complete' if (o['received_percent'] or 0) >= 100 else 'partial') for o in od['items']))
@@ -62,6 +66,7 @@ try:
         x = get(f"{R}/deliveries/{dl[0]['id']}")
         check('detalle de entrega: partidas, origen y evidencia', x['item']['folio'] == dl[0]['folio'] and len(x['items']) == dl[0]['item_count'] and {'sources', 'files', 'signatures'} <= set(x))
         check('evidencia sin rutas de almacenamiento', not re.search(r'storage_key|storage_backend|"path"', json.dumps(x)))
+        check('firmas: huella de firma e indicador de imagen privada (sin archivo)', all('signature_sha256' in g and isinstance(g['has_image'], bool) and 'signature_file_id' not in g for g in x['signatures']))
     c = get(f'{R}/closure'); k = c['counters']
     check('semáforo: contadores = listas', all(k[n] == len(c[n]) for n in k))
     check('semáforo: OC sin recepción = OC con 0 recepciones', k['po_without_receipt'] == od['summary']['pending'] or od['total'] > 50)
