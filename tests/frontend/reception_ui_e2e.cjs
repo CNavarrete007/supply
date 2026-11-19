@@ -151,19 +151,98 @@ const pct = v => `${Number(v).toLocaleString('es-MX', { maximumFractionDigits: 2
     check('registro: sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
     await page.setViewportSize({ width: 1440, height: 1000 });
     await rfm.getByRole('button', { name: /Ir a entrega/ }).click();
-    await page.getByRole('combobox', { name: 'Recepción registrada' }).waitFor();
+    await page.getByTestId('delivery-form').waitFor();
     check('registro: "Ir a entrega" abre Entrega al cliente', true);
 
-    // 2 · Entrega al cliente
+    // 2 · Entrega al cliente · Formato de entrega (lectura GET /reception/deliverable; guardar y firmar NO escribe)
+    const dlv = await api('/api/v1/reception/deliverable?client=all');
+    const dos = dlv.clients.find(c => c.name === 'Cliente Sintético Dos');
+    const dlv2 = await api(`/api/v1/reception/deliverable?client=${dos.id}`);
+    const withBal = dlv2.requisitions.find(r => r.items.some(i => i.available > 0));
+    const noBal = dlv2.requisitions.find(r => r.items.every(i => i.available === 0) && r.deliveries.length);
     await page.getByRole('button', { name: /^🚚.*Entrega al cliente/ }).click();
-    await page.getByRole('combobox', { name: 'Recepción registrada' }).selectOption(rec('REC-QA-0001').id);
-    await page.getByTestId('receipt-deliveries').getByRole('button', { name: /ENT-QA-0001/ }).click();
-    await page.getByTestId('delivery-detail').waitFor();
-    const dd = flat(await page.getByTestId('delivery-detail').innerText());
-    check('detalle de entrega: responsables, evidencia, foto y firma', ['Receptor Sintético', 'QA Comprador', 'Acuse sintético firmado', 'foto-entrega-qa.jpg', 'Fotografía de entrega', 'Firma autógrafa digitalizada', 'Verificada'].every(x => dd.includes(x)), dd.slice(0, 500));
-    check('archivos privados sin enlace de descarga', await page.getByTestId('delivery-detail').locator('a[href]').count() === 0);
-    check('"Guardar entrega" bloqueado', await page.getByRole('button', { name: /Guardar entrega/ }).isDisabled());
+    const dfm = page.getByTestId('delivery-form'); await dfm.waitFor();
+    const dfl = n => dfm.getByLabel(n, { exact: true });
+    const dhead = flat(await dfm.innerText());
+    check('entrega: título, explicación, Paso 7 y aviso NOM-151 del diseño', ['Formato de entrega al cliente', 'Genera un formato firmado para una o varias requisiciones/solicitudes del mismo cliente. Permite entregas parciales o completas y controla el saldo por partida.', 'Paso 7 · Entrega documentada', 'Firma electrónica y NOM-151:', 'Prestador de Servicios de Certificación acreditado'].every(x => dhead.includes(x)));
+    const todayB = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+    await dfl('Cliente').locator('option').nth(dlv.clients.length).waitFor({ state: 'attached' });
+    check('entrega: valores iniciales (Parcial, Recibido parcial sin cierre, hoy) y opciones del diseño', await dfl('Tipo de entrega').inputValue() === 'partial' && await dfl('Aceptación / condición de recepción').inputValue() === 'partial_open' && await dfl('Fecha de entrega').inputValue() === todayB
+      && JSON.stringify(await dfl('Tipo de entrega').locator('option').allInnerTexts()) === '["Parcial","Completa"]' && JSON.stringify(await dfl('Aceptación / condición de recepción').locator('option').allInnerTexts()) === '["Recibido parcial sin cierre","Aceptado de conformidad","Aceptado con observaciones","Rechazado / devuelto"]');
+    check('entrega: clientes con material recibido desde MariaDB', (await dfl('Cliente').locator('option').count()) === dlv.clients.length + 1 && dlv.clients.length > 0, JSON.stringify(dlv.clients));
+    check('entrega: estados vacíos del diseño', ['Selecciona un cliente para mostrar las requisiciones/solicitudes con material recibido.', 'Selecciona una o varias requisiciones con artículos disponibles para entrega.', 'Sin fotografías de entrega.'].every(x => dhead.includes(x)) && (await page.getByTestId('delivery-photo-count').innerText()).trim() === '0 foto(s)'
+      && (await page.getByTestId('po-sign-status-deliverer').innerText()) === 'Sin firma' && (await page.getByTestId('po-sign-status-receiver').innerText()) === 'Sin firma');
+    await dfm.getByRole('button', { name: /Guardar y firmar formato/ }).click();
+    check('entrega: guardar sin cliente pide seleccionarlo', (await page.getByTestId('delivery-save-msg').innerText()).includes('Selecciona el cliente.'));
+    const dr = page.waitForResponse(r => r.url().includes(`/reception/deliverable?client=${dos.id}`));
+    await dfl('Cliente').selectOption(dos.id);
+    check('entrega: requisiciones del cliente consultadas (200)', (await dr).status() === 200);
+    await page.getByTestId('delivery-req').nth(dlv2.requisitions.length - 1).waitFor();
+    check('entrega: una tarjeta por requisición con material recibido', await page.getByTestId('delivery-req').count() === dlv2.requisitions.length);
+    const nb = page.getByTestId('delivery-req').filter({ hasText: noBal.folio });
+    check('entrega: requisición sin saldo bloqueada y con su entrega registrada', await nb.getByRole('checkbox').isDisabled() && flat(await nb.innerText()).includes('Sin saldo por entregar') && flat(await nb.innerText()).includes(noBal.deliveries[0].folio));
+    await nb.getByRole('button', { name: new RegExp(noBal.deliveries[0].folio) }).click();
+    await page.getByRole('dialog', { name: 'Formato de entrega' }).waitFor();
+    await page.frameLocator('iframe[title="Formato de entrega"]').getByText(`Acuse de entrega ${noBal.deliveries[0].folio}`).waitFor({ timeout: 60000 });
+    check('entrega: la entrega registrada abre su formato (acuse)', true);
+    await page.getByRole('button', { name: 'Cerrar', exact: true }).click();
+    await dfm.getByRole('button', { name: /Guardar y firmar formato/ }).click();
+    check('entrega: guardar sin requisición pide seleccionarla', (await page.getByTestId('delivery-requisitions').innerText()).includes('Selecciona una o varias requisiciones/solicitudes del cliente.'));
+    await page.getByTestId('delivery-req').filter({ hasText: withBal.folio }).getByRole('checkbox').check();
+    const line = withBal.items.find(i => i.available > 0);
+    await page.getByTestId('delivery-line').first().waitFor();
+    const lt2 = flat(await page.getByTestId('delivery-line').first().innerText());
+    check('entrega: partida con solicitado, recibido, entregado y disponible de MariaDB', page.getByTestId('delivery-line') && await page.getByTestId('delivery-line').count() === withBal.items.filter(i => i.available > 0).length
+      && [withBal.folio, line.description, line.unit_label].every(x => lt2.includes(x)) && (await page.getByTestId('delivery-lines-count').innerText()).trim() === `0 / ${withBal.items.filter(i => i.available > 0).length} partida(s)`, lt2);
+    const qIn = dfm.getByLabel(new RegExp(`Cantidad a entregar ${withBal.folio} #${line.line_number}`));
+    await qIn.fill(String(line.available + 1));
+    await dfm.getByRole('button', { name: /Guardar y firmar formato/ }).click();
+    check('entrega: cantidad mayor al saldo marcada en la partida', flat(await page.getByTestId('delivery-line').first().innerText()).includes(`Excede el saldo disponible (${line.available})`));
+    await dfl('Tipo de entrega').selectOption('complete');
+    const cmp = [await qIn.inputValue(), await qIn.getAttribute('readonly'), await dfl('Aceptación / condición de recepción').inputValue(), await dfl('Aceptación / condición de recepción').locator('option[value="partial_open"]').evaluate(o => o.disabled)];
+    check('entrega: Completa carga el saldo, bloquea la captura y cambia la aceptación', cmp[0] === String(line.available) && cmp[1] !== null && cmp[2] === 'accepted' && cmp[3], JSON.stringify(cmp));
+    await dfl('Lugar de entrega').fill('Almacén del cliente (prueba E2E)');
+    await dfl('Evidencia / remisión / acuse').fill('REM-E2E-ENT-01');
+    await dfl('Aceptación / condición de recepción').selectOption('accepted_obs');
+    await dfl('Entregó por el contratista').fill('Ana Pérez QA'); await dfl('Puesto de quien entrega').fill('Almacenista');
+    await dfl('Recibió por el cliente').fill('ana perez qa'); await dfl('Puesto de quien recibe').fill('Residente de obra');
+    await dfl('Correo del receptor').fill('residente@cliente.invalid');
+    await dfm.getByRole('button', { name: /Guardar y firmar formato/ }).click();
+    const dm1 = flat(await dfm.innerText());
+    check('entrega: observaciones obligatorias, firmantes distintos y firmas requeridas', ['Describe las observaciones o el motivo del rechazo', 'Quien entrega y quien recibe deben ser personas distintas.', 'Falta la firma de quien entrega.', 'Falta la firma de quien recibe.'].every(x => dm1.includes(x)), dm1.slice(-900));
+    await dfl('Observaciones').fill('Empaque exterior con raspaduras (prueba E2E)');
+    await dfl('Recibió por el cliente').fill('Luis Gómez QA');
+    check('entrega: confirmación de firma deshabilitada sin firma', await dfm.getByLabel('Confirmación: Firma de quien entrega').isDisabled());
+    for (const [role, path] of [['deliverer', [[60, 40], [90, 70], [130, 30], [170, 80]]], ['receiver', [[50, 70], [110, 30], [150, 90], [210, 40]]]]) {
+      const cv = page.getByTestId(`po-sign-${role}`).locator('canvas'); await cv.scrollIntoViewIfNeeded(); const bb = await cv.boundingBox();
+      await page.mouse.move(bb.x + 30, bb.y + 90); await page.mouse.down(); for (const [dx, dy] of path) await page.mouse.move(bb.x + dx, bb.y + dy, { steps: 4 }); await page.mouse.up();
+      await page.getByTestId(`po-sign-status-${role}`).filter({ hasText: 'Firma capturada' }).waitFor();
+    }
+    await dfm.getByRole('button', { name: /Guardar y firmar formato/ }).click();
+    check('entrega: cada firmante debe confirmar su firma electrónica', flat(await dfm.innerText()).includes('Quien entrega debe confirmar su firma electrónica.'));
+    await dfm.getByLabel('Confirmación: Firma de quien entrega').check(); await dfm.getByLabel('Confirmación: Firma de quien recibe').check();
+    await dfm.getByLabel('Fotografías de entrega').setInputFiles([{ name: 'entrega.png', mimeType: 'image/png', buffer: px }]);
+    await page.getByTestId('delivery-photo-count').filter({ hasText: '1 foto(s)' }).waitFor();
+    await dfm.getByRole('button', { name: /Guardar y firmar formato/ }).click();
+    const dsm = flat(await page.getByTestId('delivery-save-msg').innerText());
+    const h = flat(await page.getByTestId('delivery-hashes').innerText());
+    const hx = [...h.matchAll(/SHA-256: ([0-9a-f]{64})/g)].map(m => m[1]);
+    check('entrega: validado pero NO guardado ni firmado (resumen y huella)', dsm.startsWith(`Datos validados, pero no se guardó ni se firmó el formato de entrega (1 partida(s) de 1 requisición(es) de ${dos.name}, entrega completa, aceptado con observaciones)`) && dsm.includes(`Huella SHA-256 del contenido que se firmaría: ${hx[0]}`), dsm);
+    const { deliveryCanonical, sha256Hex } = await import(require('path').resolve(__dirname, '../../src/views/reception/deliveryForm.mjs'));
+    const expect = { client: dos.id, type: 'complete', date: todayB, place: 'Almacén del cliente (prueba E2E)', acceptance: 'accepted_obs', requisitions: [withBal.id], qty: { [`${withBal.id}:${line.id}`]: String(line.available) }, evidence: 'REM-E2E-ENT-01', notes: 'Empaque exterior con raspaduras (prueba E2E)', photos: [{}],
+      deliverer: 'Ana Pérez QA', delivererPosition: 'Almacenista', receiver: 'Luis Gómez QA', receiverPosition: 'Residente de obra', receiverCompany: '', receiverEmail: 'residente@cliente.invalid' };
+    const want = sha256Hex(deliveryCanonical(expect, dlv2.requisitions, dos.name));
+    check('entrega: huella del contenido = SHA-256 del formato canónico; firmas con huella propia', hx.length === 3 && hx[0] === want && hx[1] !== hx[2] && h.includes('no se registraron ni constituyen constancia NOM-151'), `${want} | ${h}`);
     await shot(page, 'rec_2_entrega');
+    await page.setViewportSize({ width: 390, height: 900 });
+    check('entrega: sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await dfm.getByRole('button', { name: 'Limpiar', exact: true }).last().click();
+    check('entrega: Limpiar reinicia cliente, partidas, firmas y fotografías', await dfl('Cliente').inputValue() === '' && await page.getByTestId('delivery-line').count() === 0 && (await page.getByTestId('po-sign-status-deliverer').innerText()) === 'Sin firma'
+      && (await page.getByTestId('delivery-photo-count').innerText()).trim() === '0 foto(s)' && await page.getByTestId('delivery-save-msg').count() === 0);
+    await dfm.getByRole('button', { name: /Matriz recepción/ }).click();
+    await page.getByText('Recepciones y entregas por cliente').waitFor();
+    check('entrega: "Matriz recepción" abre la matriz', true);
 
     // 4 · Semáforo de cierre
     const cl = page.waitForResponse(r => /\/reception\/closure$/.test(r.url()));

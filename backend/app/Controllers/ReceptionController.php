@@ -60,4 +60,6 @@ final class ReceptionController extends ReadOnlyModuleController
     public function receipt(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->receipt($o, $i)); }
     public function delivery(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->delivery($o, $i)); }
     public function closure(): ResponseInterface { return $this->run([], fn ($r, $o) => $r->closure($o), false); }
+    /** Card 2: requisitions of a client with received material and available balance per item (read-only). */
+    public function deliverable(): ResponseInterface { return $this->run(['client' => [self::UUID_OR_ALL, 'all']], fn ($r, $o, $f) => $r->deliverable($o, $f), false); }
 }

@@ -254,6 +254,121 @@ final class ReceptionReadRepository
     private function latest(): string { return self::LATEST; }
     private function cancelled(): string { return self::CANCELLED; }
 
+    /**
+     * Card 2 "Formato de entrega al cliente" (read-only). client=all → clients with received material (current, non-cancelled
+     * POs with at least one receipt). client=<uuid> → its requisitions with, per requisition item: requested, received
+     * (accepted = received − rejected on line receipts, matched by line number as in order(); header-only historical receipts
+     * count their % of the ordered quantity), already delivered (non-cancelled deliveries) and the available balance.
+     * PO lines map to requisition items through purchase_order_line_sources, else by line number. `deliveries` lists the
+     * delivery formats already recorded per requisition (cancelled ones flagged; they do not reduce the balance).
+     */
+    public function deliverable(int $org, array $f): array
+    {
+        $latest = self::LATEST; $cancelled = self::CANCELLED;
+        $withReceipt = "EXISTS (SELECT 1 FROM goods_receipts gr JOIN purchase_orders s2 ON s2.id=gr.purchase_order_id AND s2.organization_id=gr.organization_id WHERE gr.organization_id=po.organization_id AND s2.series_public_id=po.series_public_id)";
+        $clients = $this->rows(<<<SQL
+            SELECT ce.public_id AS id,c.legal_name AS name,COUNT(DISTINCT r.id) AS requisitions
+            FROM purchase_order_requisitions pr
+            JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
+            JOIN requisitions r ON r.id=pr.requisition_id AND r.organization_id=pr.organization_id
+            JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
+            JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+            JOIN business_entities ce ON ce.id=c.id AND ce.organization_id=c.organization_id
+            WHERE pr.organization_id=? AND re.archived_at IS NULL AND {$latest} AND NOT {$cancelled} AND {$withReceipt}
+            GROUP BY ce.public_id,c.legal_name ORDER BY c.legal_name
+            SQL, [$org]);
+        self::num($clients, ['requisitions']);
+        if ($f['client'] === 'all') {
+            return ['clients' => $clients, 'client' => null, 'requisitions' => []];
+        }
+        $reqs = $this->rows(<<<SQL
+            SELECT r.id AS db_id,re.public_id AS id,r.folio,r.project_reference_snapshot AS project,r.client_reference,c.legal_name AS client_name,
+              (SELECT GROUP_CONCAT(DISTINCT po.folio ORDER BY po.folio SEPARATOR ', ') FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
+                 WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id AND {$latest} AND NOT {$cancelled}) AS purchase_orders
+            FROM requisitions r
+            JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
+            JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+            JOIN business_entities ce ON ce.id=c.id AND ce.organization_id=c.organization_id
+            WHERE r.organization_id=? AND ce.public_id=? AND re.archived_at IS NULL
+              AND EXISTS (SELECT 1 FROM purchase_order_requisitions pr JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
+                          WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id AND {$latest} AND NOT {$cancelled} AND {$withReceipt})
+            ORDER BY r.folio LIMIT 200
+            SQL, [$org, $f['client']]);
+        if ($reqs === []) {
+            return ['clients' => $clients, 'client' => $f['client'], 'requisitions' => []];
+        }
+        $ids = array_map(static fn ($r) => (int) $r['db_id'], $reqs);
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $items = $this->rows("SELECT ri.id,ri.public_id,ri.requisition_id,ri.line_number,ri.description,ri.unit_label,ri.quantity FROM requisition_items ri WHERE ri.organization_id=? AND ri.requisition_id IN ({$in}) AND ri.cancelled_at IS NULL ORDER BY ri.requisition_id,ri.line_number,ri.id", [$org, ...$ids]);
+        $lines = $this->rows(<<<SQL
+            SELECT pr.requisition_id,po.folio,pi.id AS pi_id,pi.line_number,pi.description,pi.quantity,
+              (SELECT SUM(gi.received_quantity-COALESCE(gi.rejected_quantity,0)) FROM goods_receipt_items gi JOIN goods_receipts gr ON gr.id=gi.goods_receipt_id AND gr.organization_id=gi.organization_id
+                 JOIN purchase_orders s2 ON s2.id=gr.purchase_order_id AND s2.organization_id=gr.organization_id WHERE gi.organization_id=pi.organization_id AND s2.series_public_id=po.series_public_id AND gi.line_number=pi.line_number) AS accepted,
+              (SELECT MAX(gr.legacy_received_percent) FROM goods_receipts gr JOIN purchase_orders s2 ON s2.id=gr.purchase_order_id AND s2.organization_id=gr.organization_id
+                 WHERE gr.organization_id=po.organization_id AND s2.series_public_id=po.series_public_id AND gr.capture_grain='legacy_header_only') AS legacy_pct,
+              (SELECT ls.requisition_item_id FROM purchase_order_line_sources ls WHERE ls.organization_id=pi.organization_id AND ls.purchase_order_item_id=pi.id AND ls.requisition_id=pr.requisition_id ORDER BY ls.source_ordinal LIMIT 1) AS src_item
+            FROM purchase_order_requisitions pr
+            JOIN purchase_orders po ON po.id=pr.purchase_order_id AND po.organization_id=pr.organization_id
+            JOIN purchase_order_items pi ON pi.purchase_order_id=po.id AND pi.organization_id=po.organization_id
+            WHERE pr.organization_id=? AND pr.requisition_id IN ({$in}) AND {$latest} AND NOT {$cancelled}
+            ORDER BY po.folio,pi.line_number
+            SQL, [$org, ...$ids]);
+        $delivered = [];
+        foreach ($this->rows("SELECT di.requisition_item_id,SUM(di.delivery_quantity) AS q FROM delivery_items di JOIN deliveries d ON d.id=di.delivery_id AND d.organization_id=di.organization_id"
+            . " WHERE di.organization_id=? AND di.requisition_id IN ({$in}) AND LOWER(COALESCE(d.legacy_status,d.status_code,'')) NOT IN ('cancelada','cancelled') GROUP BY di.requisition_item_id", [$org, ...$ids]) as $d) {
+            $delivered[(int) $d['requisition_item_id']] = (float) $d['q'];
+        }
+        $deliveries = [];
+        foreach ($this->rows(<<<SQL
+            SELECT DISTINCT di.requisition_id,e.public_id AS id,d.id AS db_id,d.folio,d.delivery_date AS date,d.acceptance_status,COALESCE(d.status_code,d.legacy_status) AS status,
+                   (d.locked_at IS NOT NULL OR COALESCE(d.legacy_locked,0)=1) AS locked,
+                   LOWER(COALESCE(d.legacy_status,d.status_code,'')) IN ('cancelada','cancelled') AS cancelled
+            FROM delivery_items di JOIN deliveries d ON d.id=di.delivery_id AND d.organization_id=di.organization_id
+            JOIN business_entities e ON e.id=d.id AND e.organization_id=d.organization_id
+            WHERE di.organization_id=? AND di.requisition_id IN ({$in}) AND e.archived_at IS NULL
+            ORDER BY d.delivery_date,d.id
+            SQL, [$org, ...$ids]) as $d) {
+            $deliveries[(int) $d['requisition_id']][] = ['id' => $d['id'], 'folio' => $d['folio'], 'date' => $d['date'], 'acceptance_status' => $d['acceptance_status'], 'status' => $d['status'], 'locked' => (bool) $d['locked'], 'cancelled' => (bool) $d['cancelled']];
+        }
+        $byReq = [];
+        foreach ($items as $it) {
+            $byReq[(int) $it['requisition_id']][] = $it;
+        }
+        $received = []; $folios = [];
+        foreach ($lines as $l) {
+            $rid = (int) $l['requisition_id'];
+            $target = $l['src_item'] !== null ? (int) $l['src_item'] : null;
+            if ($target === null) {
+                foreach ($byReq[$rid] ?? [] as $it) {
+                    if ((int) $it['line_number'] === (int) $l['line_number']) { $target = (int) $it['id']; break; }
+                }
+            }
+            if ($target === null) {
+                continue;
+            }
+            $qtyLine = (float) $l['quantity'];
+            $acc = $l['accepted'] !== null ? (float) $l['accepted'] : null;
+            $legacy = $l['legacy_pct'] !== null ? round($qtyLine * min(100.0, (float) $l['legacy_pct']) / 100, 6) : null;
+            $got = max($acc ?? 0.0, $legacy ?? 0.0); // line receipts and header-only historical % may coexist in a series
+            $received[$target] = ($received[$target] ?? 0.0) + min($qtyLine, $got);
+            $folios[$target][$l['folio']] = true;
+        }
+        $out = [];
+        foreach ($reqs as $r) {
+            $rows = [];
+            foreach ($byReq[(int) $r['db_id']] ?? [] as $it) {
+                $rec = round($received[(int) $it['id']] ?? 0.0, 6); $del = round($delivered[(int) $it['id']] ?? 0.0, 6);
+                $rows[] = ['id' => $it['public_id'], 'line_number' => (int) $it['line_number'], 'description' => $it['description'], 'unit_label' => $it['unit_label'],
+                    'requested' => (float) $it['quantity'], 'received' => $rec, 'delivered' => $del, 'available' => max(0.0, round($rec - $del, 6)),
+                    'purchase_orders' => implode(', ', array_keys($folios[(int) $it['id']] ?? []))];
+            }
+            $deliv = $deliveries[(int) $r['db_id']] ?? [];
+            unset($r['db_id']);
+            $out[] = $r + ['items' => $rows, 'deliveries' => $deliv];
+        }
+        return ['clients' => $clients, 'client' => $f['client'], 'requisitions' => $out];
+    }
+
     /** PO header, ordered vs received per line (whole series) and its receipts (card 1 detail). */
     public function order(int $org, string $id): ?array
     {

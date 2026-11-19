@@ -2,25 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Lock, Search, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Printer, X } from 'lucide-react';
 import { receptionMatrix, receptionOrders, receptionOrder, receiptDetail, deliveryDetail, receptionClosure } from './api';
 import { label, tone, isAccepted, reasonLabel, pct, qty, shortHash, bytes, closureCards, deliveryHtml } from './model.mjs';
-import { RECEPTION_TYPES, QUALITY, DOCUMENTATION, PHOTO_MAX, emptyReception, withType, orderOptions, photoError, fitSize, validateReception, receptionLockedText, outstanding } from './receptionForm.mjs';
+import { RECEPTION_TYPES, QUALITY, DOCUMENTATION, PHOTO_MAX, emptyReception, withType, orderOptions, validateReception, receptionLockedText, outstanding } from './receptionForm.mjs';
+import { compressPhotos, openPhoto } from './photos.js';
+import { DeliveryFormat } from './DeliveryFormat.jsx';
+import { useLoad } from './useLoad.js';
 
 // Recepción y Entrega · diseño Grupo Gerez (4 tarjetas) conectado a MariaDB en modo consulta.
 // GET /api/v1/reception/* (Master Admin). Registrar recepciones, entregas, firmas o fotografías sigue bloqueado.
 const DASH = '—';
 const show = v => (v === null || v === undefined || String(v).trim() === '' ? DASH : String(v));
 const ymd = v => (v ? String(v).slice(0, 10) : DASH);
-
-function useLoad(fn, deps, enabled = true) {
-  const [st, setSt] = useState({ status: 'idle', data: null, error: null });
-  useEffect(() => {
-    if (!enabled) { setSt({ status: 'idle', data: null, error: null }); return undefined; }
-    const c = new AbortController();
-    setSt(x => ({ ...x, status: 'loading', error: null }));
-    fn(c.signal).then(d => !c.signal.aborted && setSt({ status: 'ready', data: d, error: null })).catch(e => !c.signal.aborted && setSt(x => ({ ...x, status: 'error', error: e })));
-    return () => c.abort();
-  }, [enabled, ...deps]); // eslint-disable-line react-hooks/exhaustive-deps
-  return st;
-}
 
 export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
   const en = Boolean(isEnglish || lang === 'en');
@@ -39,18 +30,16 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
   const [page, setPage] = useState(1);
   const [client, setClient] = useState(null); // null = matrix closed (design: opens on a client card)
   const [kind, setKind] = useState('all');
-  const [poId, setPoId] = useState(''); const [recId, setRecId] = useState(''); const [delId, setDelId] = useState('');
+  const [poId, setPoId] = useState(''); const [recId, setRecId] = useState('');
   const [format, setFormat] = useState('');
   const [closureKey, setClosureKey] = useState('po_without_receipt');
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
-  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setKind('all'); setDelId(''); };
+  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setKind('all'); };
 
   const matrix = useLoad(s => receptionMatrix({ page, q, kind, client: client || 'all' }, s), [page, q, kind, client, rev], tab === 3);
   const orders = useLoad(s => receptionOrders({ status: 'all' }, s), [rev], tab === 1);
   const order = useLoad(s => receptionOrder(poId, s), [poId, rev], tab === 1 && !!poId);
-  const receipts = useLoad(s => receptionMatrix({ kind: 'receipt', page_size: 50, q }, s), [q, rev], tab === 2);
-  const receipt = useLoad(s => receiptDetail(recId, s), [recId, rev], (tab === 1 || tab === 2) && !!recId);
-  const delivery = useLoad(s => deliveryDetail(delId, s), [delId, rev], !!delId);
+  const receipt = useLoad(s => receiptDetail(recId, s), [recId, rev], tab === 1 && !!recId);
   const fmt = useLoad(s => deliveryDetail(format, s), [format, rev], !!format);
   const closure = useLoad(s => receptionClosure(s), [rev], tab === 4);
 
@@ -81,13 +70,6 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
     {d.item.capture_grain === 'legacy_header_only' && <p className="text-[11px] text-slate-400">{tx('Recepción histórica importada a nivel encabezado: no tiene partidas capturadas.', 'Historical receipt imported at header level: no captured line items.')}</p>}
     {evidence(d)}
   </div>;
-  const deliveryView = d => <div data-testid="delivery-detail" className="space-y-3 border-t border-slate-100 pt-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-black text-slate-900">{d.item.folio}</h4>{pill(d.item.acceptance_status)}{pill(d.item.status)}{d.item.locked && pill('signed', tx('Firmada y bloqueada', 'Signed and locked'))}</div><button type="button" onClick={() => setFormat(d.item.id)} className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white text-[11px] font-bold rounded-xl">{tx('Ver formato', 'View format')}</button></div>
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">{[[tx('Fecha de entrega', 'Delivery date'), ymd(d.item.date)], [tx('Aceptación del cliente', 'Client acceptance'), label(d.item.acceptance_status, en)], [tx('Lugar de entrega', 'Delivery place'), show(d.item.delivery_place)], [tx('Control', 'Control'), show(d.item.control_reference)], [tx('Entregó (contratista)', 'Delivered by (contractor)'), show(d.item.delivered_by)], [tx('Recibió (cliente)', 'Received by (client)'), show(d.item.received_by)], [tx('Evidencia / acuse', 'Evidence / acknowledgment'), show(d.item.evidence_text)], [tx('Observaciones', 'Notes'), show(d.item.notes)]].map(([k, v]) => field(k, v))}</div>
-    {table(['#', tx('Requisición', 'Requisition'), tx('Descripción', 'Description'), tx('Entregado', 'Delivered'), tx('Solicitado', 'Requested'), tx('Recibido', 'Received'), tx('Entregado antes', 'Previously delivered'), tx('Saldo', 'Balance')], d.items.map((i, n) => <tr key={n}><td className="p-2.5">{i.line_number}</td><td className="p-2.5">{i.requisition}</td><td className="p-2.5 font-semibold">{i.description}</td><td className="p-2.5 font-bold">{qty(i.delivered)} {i.unit_label}</td><td className="p-2.5">{qty(i.requested)}</td><td className="p-2.5">{qty(i.received)}</td><td className="p-2.5">{qty(i.previously_delivered)}</td><td className="p-2.5">{qty(i.balance)}</td></tr>), tx('Sin partidas.', 'No items.'), 'min-w-[720px]')}
-    <p className="text-[11px] text-slate-500">{tx('Origen', 'Source')}: {d.sources.map(s => `${s.po_folio}${s.receipt_folio ? ` / ${s.receipt_folio}` : ''}`).join(' · ') || DASH}</p>
-    {evidence(d)}
-  </div>;
   // ---------- Tarjeta 1: registro de recepción (se valida; guardar y subir fotografías requieren endpoint autorizado) ----------
   const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
   const [rf, setRf] = useState(() => emptyReception(today));
@@ -96,24 +78,12 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
   const rv = useMemo(() => validateReception({ ...rf, po: poId }, { order: order.status === 'ready' ? order.data : null, today }, en), [rf, poId, order, today, en]);
   const setR = (k, v) => { setRf(f => ({ ...f, [k]: v })); setRMsg(null); };
   const resetReception = keepPo => { setRf(emptyReception(today)); setRTried(false); setRMsg(null); setPhotoMsg(''); if (photoRef.current) photoRef.current.value = ''; if (!keepPo) { setPoId(''); setRecId(''); } };
-  const compress = file => new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file); const img = new Image();
-    img.onload = () => { const { w, h } = fitSize(img.naturalWidth, img.naturalHeight); const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url);
-      const data = c.toDataURL('image/jpeg', 0.8); resolve({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name: file.name, original: file.size, size: Math.round(((data.length - 23) * 3) / 4), w, h, data }); };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(tx(`${file.name}: no se pudo leer la imagen.`, `${file.name}: the image could not be read.`))); };
-    img.src = url;
-  });
   const addPhotos = async files => {
-    const list = [...(files || [])]; const errs = []; const ok = [];
-    for (const file of list) { const err = photoError(file, en); if (err) errs.push(err); else ok.push(file); }
-    const room = Math.max(0, PHOTO_MAX - rf.photos.length);
-    if (ok.length > room) errs.push(tx(`Máximo ${PHOTO_MAX} fotografías: se omitieron ${ok.length - room}.`, `Maximum ${PHOTO_MAX} photos: ${ok.length - room} were skipped.`));
-    const done = [];
-    for (const file of ok.slice(0, room)) { try { done.push(await compress(file)); } catch (e) { errs.push(e.message); } }
-    setRf(f => ({ ...f, photos: [...f.photos, ...done].slice(0, PHOTO_MAX) })); setRMsg(null); setPhotoMsg(errs.join(' '));
+    const { photos, errors } = await compressPhotos(files, rf.photos.length, en);
+    setRf(f => ({ ...f, photos: [...f.photos, ...photos].slice(0, PHOTO_MAX) })); setRMsg(null); setPhotoMsg(errors.join(' '));
     if (photoRef.current) photoRef.current.value = '';
   };
-  const viewPhoto = p => { const a = document.createElement('a'); a.href = p.data; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.click(); };
+  const viewPhoto = openPhoto;
   const saveReception = () => {
     setRTried(true);
     if (!rv.ok) { setRMsg({ kind: 'error', text: rv.first }); return; }
@@ -193,18 +163,7 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
       </div>
     </div>}
 
-    {tab === 2 && <div className={box}>{head(tx('Entrega al cliente', 'Client delivery'), tx('Entregas, responsables, aceptación del cliente, evidencia y fotografías por recepción registrada.', 'Deliveries, managers, client acceptance, evidence and photos per recorded receipt.'), lockBtn(tx('Guardar entrega', 'Save delivery')))}
-      <div className="flex flex-wrap gap-2 items-center">{searchBox(tx('Buscar recepción, OC, requisición, proveedor o cliente...', 'Search receipt, PO, requisition, supplier or client...'))}<select aria-label={tx('Recepción registrada', 'Recorded receipt')} value={recId} onChange={e => { setRecId(e.target.value); setDelId(''); }} className="px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl min-w-[300px]"><option value="">{tx('Seleccionar recepción registrada…', 'Select recorded receipt…')}</option>{(receipts.data?.items || []).map(r => <option key={r.id} value={r.id}>{r.folio} · {r.po_folio} · {show(r.client_name)}</option>)}</select></div>
-      <Wait s={receipts} /><Err s={receipts} /><Wait s={receipt} /><Err s={receipt} />
-      {!recId && <div className="p-10 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500">{tx('Selecciona una recepción para consultar sus entregas al cliente.', 'Select a receipt to review its client deliveries.')}</div>}
-      {receipt.data && <div data-testid="receipt-deliveries" className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs"><strong>{receipt.data.item.folio}</strong><span className="text-slate-500">{receipt.data.item.po_folio} · {show(receipt.data.item.client_name)} · {pct(receipt.data.item.received_percent)}</span>{receipt.data.item.acceptance_source === 'legacy_receipt' && pill(receipt.data.item.acceptance, `${tx('Aceptación histórica', 'Historical acceptance')}: ${receipt.data.item.acceptance}`)}</div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">{receipt.data.deliveries.map(d => <button key={d.id} type="button" aria-pressed={delId === d.id} onClick={() => setDelId(d.id)} className={`text-left p-3 rounded-xl border text-xs ${delId === d.id ? 'border-purple-500 bg-purple-50/40' : 'border-slate-200 hover:border-purple-300'}`}><div className="flex justify-between gap-2"><strong>{d.folio}</strong>{pill(d.acceptance_status)}</div><div className="text-[11px] text-slate-500">{ymd(d.date)} · {qty(d.delivered_qty)} {tx('entregado', 'delivered')} · {d.item_count} {tx('partida(s)', 'item(s)')} · {label(d.delivery_type, en)}</div></button>)}</div>
-        {!receipt.data.deliveries.length && <p className="text-[11px] text-amber-700 font-semibold">{receipt.data.item.acceptance_source === 'legacy_receipt' ? tx('Entrega registrada solo como aceptación histórica en la recepción (sin formato de entrega).', 'Delivery recorded only as historical acceptance in the receipt (no delivery form).') : tx('Sin entrega registrada para esta recepción.', 'No delivery recorded for this receipt.')}</p>}
-        <Wait s={delivery} /><Err s={delivery} />
-        {delivery.data && deliveryView(delivery.data)}
-      </div>}
-    </div>}
+    {tab === 2 && <DeliveryFormat en={en} today={today} rev={rev} notify={notify} onMatrix={() => go(3)} onViewFormat={setFormat} />}
 
     {tab === 3 && <div className={box}>
       {head(tx('Matriz de recepción y entrega', 'Reception and delivery matrix'), tx('Registros de recepción de materiales y entregas a clientes con sus acuses y firmas.', 'Material receipts and client deliveries with acknowledgments and signatures.'), <div className="flex gap-2">{lockBtn(tx('Nueva recepción', 'New receipt'))}{lockBtn(tx('Nueva entrega', 'New delivery'))}</div>)}

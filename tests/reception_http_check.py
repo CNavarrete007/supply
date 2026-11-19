@@ -23,7 +23,7 @@ def logout(op):
     try:
         tok = json.loads(op.open(API + '/api/v1/auth/csrf').read())['csrf_token']; op.open(urllib.request.Request(API + '/api/v1/auth/logout', b'{}', {'Content-Type': 'application/json', 'X-SF-CSRF': tok}))
     except Exception: pass
-EPS = [R + p for p in ['/matrix', '/orders', '/closure']]
+EPS = [R + p for p in ['/matrix', '/orders', '/closure', '/deliverable']]
 anon = session(); check('sin sesión: 401', all(status(anon, p) == 401 for p in EPS + [f'{R}/receipts/{ZERO}']))
 if NONADMIN:
     o = session(NONADMIN); check('sin Master Admin: 403', all(status(o, p) == 403 for p in EPS)); logout(o)
@@ -31,10 +31,10 @@ adm = session(USER)
 try:
     get = lambda p: json.loads(adm.open(API + p).read())
     check('Master Admin: 200', all(status(adm, p) == 200 for p in EPS))
-    for bad in ['/matrix?x=1', '/matrix?page_size=51', '/matrix?kind=x', '/matrix?client=abc', '/orders?status=done', '/orders?q=%01x', '/closure?page=1', f'/receipts/{ZERO}?a=1']:
+    for bad in ['/matrix?x=1', '/matrix?page_size=51', '/matrix?kind=x', '/matrix?client=abc', '/orders?status=done', '/orders?q=%01x', '/closure?page=1', f'/receipts/{ZERO}?a=1', '/deliverable?client=abc', '/deliverable?x=1']:
         check(f'422 con parámetro inválido ({bad})', status(adm, R + bad) == 422)
     check('detalle con UUID inexistente: 404', all(status(adm, f'{R}{p}/{ZERO}') == 404 for p in ['/orders', '/receipts', '/deliveries']))
-    check('sin rutas de escritura (POST/PUT/DELETE ≠ 2xx)', all(status(adm, R + s, m) >= 400 for s in ['/matrix', '/orders', '/closure', f'/receipts/{ZERO}', f'/deliveries/{ZERO}'] for m in ['POST', 'PUT', 'DELETE']))
+    check('sin rutas de escritura (POST/PUT/DELETE ≠ 2xx)', all(status(adm, R + s, m) >= 400 for s in ['/matrix', '/orders', '/closure', '/deliverable', f'/receipts/{ZERO}', f'/deliveries/{ZERO}'] for m in ['POST', 'PUT', 'DELETE']))
 
     items, page = [], 1
     while True:
@@ -68,6 +68,25 @@ try:
     check('semáforo: entregas no registradas = recepciones sin aceptación', k['deliveries_missing'] == len([r for r in rec if r['acceptance'] is None]))
     check('semáforo: recepciones con pendientes', k['receipts_pending'] == len([r for r in rec if r['pending_reasons']]))
     check('semáforo: aceptaciones pendientes (entregas no aceptadas + históricas)', k['acceptance_pending'] == len([x for x in dl if not re.match(r'^(accepted|aceptad)', (x['acceptance_status'] or '').lower())]) + len([r for r in rec if r['acceptance_source'] == 'legacy_receipt' and not re.match(r'^(accepted|aceptad)', (r['acceptance'] or '').lower())]))
+    # Tarjeta 2 · formato de entrega: saldo por partida = recibido − entregado (entregas no canceladas)
+    dv = get(f'{R}/deliverable?client=all')
+    check('entregable: client=all solo lista clientes', dv['client'] is None and dv['requisitions'] == [] and all({'id', 'name', 'requisitions'} == set(c) for c in dv['clients']))
+    check('entregable: cliente inexistente → sin requisiciones', get(f'{R}/deliverable?client={ZERO}')['requisitions'] == [])
+    per = [(c, get(f'{R}/deliverable?client={c["id"]}')) for c in dv['clients']]
+    reqs = [r for _, d in per for r in d['requisitions']]
+    items = [i for r in reqs for i in r['items']]
+    check('entregable: requisiciones por cliente = conteo de la tarjeta', all(len(d['requisitions']) == c['requisitions'] and all(r['client_name'] == c['name'] for r in d['requisitions']) for c, d in per))
+    check('entregable: saldo = max(0, recibido − entregado) y cantidades no negativas', all(i['available'] == round(max(0.0, i['received'] - i['delivered']), 6) and min(i['received'], i['delivered'], i['available']) >= 0 for i in items))
+    check('entregable: sin identificadores internos', not re.search(r'"(db_id|requisition_id|pi_id|src_item)"', json.dumps(per)))
+    ok_sum = True
+    for r in reqs:
+        tot = 0.0
+        for d in r['deliveries']:
+            if d['cancelled']: continue
+            tot += sum(x['delivered'] for x in get(f'{R}/deliveries/{d["id"]}')['items'] if x['requisition'] == r['folio'])
+        ok_sum = ok_sum and abs(tot - sum(i['delivered'] for i in r['items'])) < 1e-6
+    check('entregable: entregado por requisición = partidas de sus formatos registrados', ok_sum and len(reqs) > 0)
+    check('entregable: hay saldo disponible para un formato nuevo (datos de prueba)', any(i['available'] > 0 for i in items) or not os.environ.get('SF_SYNTHETIC'))
 finally:
     logout(adm)
 w = max(len(n) for n, _, _ in results)

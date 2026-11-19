@@ -16,3 +16,4 @@ export const receptionOrder = (id, s) => one('/api/v1/reception/orders', id, s);
 export const receiptDetail = (id, s) => one('/api/v1/reception/receipts', id, s);
 export const deliveryDetail = (id, s) => one('/api/v1/reception/deliveries', id, s);
 export const receptionClosure = s => getJson('/api/v1/reception/closure', s);
+export const receptionDeliverable = (client = 'all', s) => (client === 'all' || /^[0-9a-f-]{36}$/i.test(String(client)) ? getJson(`/api/v1/reception/deliverable?${qs({ client })}`, s) : Promise.reject(new Error('Identificador inválido.')));
