@@ -218,13 +218,13 @@ export function ReceptionModule({ lang = 'es', isEnglish, onNotify }) {
           <td className="p-3 whitespace-nowrap">{chip(v.acceptance)}</td>
           <td className="p-3 whitespace-nowrap">{chip({ ...v.integrity, text: `${v.integrity.lock ? '🔒 ' : ''}${v.integrity.text}` })}{v.integrity.hash && <div className="text-[8.5px] font-mono text-slate-500 mt-1">{v.integrity.hash}</div>}</td>
           <td className="p-3"><div className="flex flex-wrap gap-1.5 min-w-[200px] text-[10px] font-black uppercase">{del ? <>
-            <button type="button" onClick={() => setFormat(r.id)} className="px-3 py-1.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-lg shadow-sm">{tx('Ver formato', 'View format')}</button>
-            <button type="button" disabled={pdfBusy === r.id} onClick={() => pdfOf(r.id)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg disabled:opacity-50">{pdfBusy === r.id ? '…' : 'PDF'}</button>
+            <button type="button" onClick={() => setFormat(r.id)} className="uppercase px-3 py-1.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-lg shadow-sm">{tx('Ver formato', 'View format')}</button>
+            <button type="button" disabled={pdfBusy === r.id} onClick={() => pdfOf(r.id)} className="uppercase px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg disabled:opacity-50">{pdfBusy === r.id ? '…' : 'PDF'}</button>
           </> : <>
-            <button type="button" onClick={() => { setTab(1); setPoId(r.po_id); setRecId(r.id); }} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg">{tx('Recepción', 'Receipt')}</button>
-            <button type="button" onClick={() => { go(2); setPreset(deliveryPreset(r)); }} className="px-3 py-1.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-lg shadow-sm">{tx('Nueva entrega', 'New delivery')}</button>
+            <button type="button" onClick={() => { setTab(1); setPoId(r.po_id); setRecId(r.id); }} className="uppercase px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg">{tx('Recepción', 'Receipt')}</button>
+            <button type="button" onClick={() => { go(2); setPreset(deliveryPreset(r)); }} className="uppercase px-3 py-1.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-lg shadow-sm">{tx('Nueva entrega', 'New delivery')}</button>
           </>}
-            <button type="button" onClick={() => { setActMsg(null); setDelDlg({ r, folio: '', reason: '', msg: null, block: deleteBlock(r, en) }); }} className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-sm">{tx('Eliminar', 'Delete')}</button></div></td>
+            <button type="button" onClick={() => { setActMsg(null); setDelDlg({ r, folio: '', reason: '', msg: null, block: deleteBlock(r, en) }); }} className="uppercase px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-sm">{tx('Eliminar', 'Delete')}</button></div></td>
         </tr>; }), tx('Sin datos registrados para este cliente.', 'No data recorded for this client.'), 'min-w-[1500px]')}
         {pager(matrix)}
       </>}

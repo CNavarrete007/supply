@@ -1,0 +1,13 @@
+// Contratista · cliente HTTP de SOLO LECTURA (GET con la sesión del servidor; sin datos de demostración).
+async function getJson(path, signal) {
+  const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' }, signal });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(response.status === 401 ? 'Tu sesión expiró. Inicia sesión nuevamente.' : response.status === 403 ? 'No tienes acceso a este módulo.' : body?.error?.message || 'No fue posible consultar MariaDB.');
+    error.status = response.status; throw error;
+  }
+  return body;
+}
+const qs = o => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]));
+export const listContractors = (o = {}, signal) => getJson(`/api/v1/contractors?${qs(o)}`, signal);
+export const contractorPersonnel = (id, signal) => (/^[0-9a-f-]{36}$/i.test(String(id)) ? getJson(`/api/v1/contractors/${encodeURIComponent(id)}/personnel`, signal) : Promise.reject(new Error('Identificador inválido.')));

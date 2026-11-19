@@ -1,4 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { listContractors, contractorPersonnel } from './contractors/api';
+import { STATUS_FILTERS, contractorRow, matrixBadge, deleteBlock, activeText, personRow, editPrefill } from './contractors/model.mjs';
 import { 
   HardHat, 
   FileSpreadsheet, 
@@ -14,7 +16,11 @@ import {
   Phone, 
   Mail, 
   MapPin, 
-  UserCheck 
+  UserCheck,
+  Lock,
+  Loader2,
+  AlertCircle,
+  X
 } from 'lucide-react';
 
 export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
@@ -48,36 +54,27 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
   // Estados de la Matriz
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [contractorsData, setContractorsData] = useState([
-    {
-      id: 'CON-001',
-      code: 'CTR-2026-01',
-      rfc: 'CME010101ABC',
-      companyName: 'Construcciones y Montajes Electromecánicos S.A.',
-      commercialName: 'CME Estructuras',
-      specialty: 'Estructuras Metálicas',
-      repseCode: 'REPSE-89123-2024',
-      status: 'Activo',
-      contacts: ['Ing. Roberto Morales'],
-      email: 'contacto@cmeestructuras.com',
-      phone: '+52 833 210 9876',
-      logo: null
-    },
-    {
-      id: 'CON-002',
-      code: 'CTR-2026-02',
-      rfc: 'ISA020202XYZ',
-      companyName: 'Ingeniería y Soldadura Aplicada S. de R.L.',
-      commercialName: 'ISA Piping',
-      specialty: 'Tuberías y Pailería',
-      repseCode: 'REPSE-45678-2025',
-      status: 'En regla',
-      contacts: ['Lic. Patricia Solís'],
-      email: 'ventas@isapiping.com',
-      phone: '+52 833 312 4567',
-      logo: null
-    }
-  ]);
+  // Matriz conectada a MariaDB (GET /api/v1/contractors): sin datos de demostración.
+  const [q, setQ] = useState('');
+  const [rev, setRev] = useState(0);
+  const [list, setList] = useState({ status: 'idle', data: null, error: null });
+  const [actMsg, setActMsg] = useState(null);
+  const [delDlg, setDelDlg] = useState(null);
+  const [staff, setStaff] = useState(null); // { contractor, status, data, error }
+  useEffect(() => { const t = setTimeout(() => setQ(searchTerm.trim()), 300); return () => clearTimeout(t); }, [searchTerm]);
+  useEffect(() => {
+    if (activeTab !== 'matrix') return undefined;
+    const c = new AbortController();
+    setList(x => ({ ...x, status: 'loading', error: null }));
+    listContractors({ q, status: statusFilter }, c.signal).then(d => !c.signal.aborted && setList({ status: 'ready', data: d, error: null }))
+      .catch(e => !c.signal.aborted && setList(x => ({ ...x, status: 'error', error: e })));
+    return () => c.abort();
+  }, [activeTab, q, statusFilter, rev]);
+  const openStaff = c => {
+    setStaff({ contractor: c, status: 'loading', data: null, error: null });
+    contractorPersonnel(c.id).then(d => setStaff(x => x && x.contractor.id === c.id ? { ...x, status: 'ready', data: d } : x))
+      .catch(e => setStaff(x => x && x.contractor.id === c.id ? { ...x, status: 'error', error: e } : x));
+  };
 
   // Configuración dinámica de las 3 tarjetas superiores según idioma
   const cards = useMemo(() => [
@@ -180,61 +177,15 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       return;
     }
 
-    const newContractor = {
-      id: `CON-00${contractorsData.length + 1}`,
-      code: formData.code || `CTR-2026-0${contractorsData.length + 1}`,
-      rfc: formData.rfc || 'XAXX010101000',
-      companyName: formData.companyName,
-      commercialName: formData.commercialName || formData.companyName,
-      specialty: formData.specialty,
-      repseCode: formData.repseCode || (isEs ? 'Sin REPSE' : 'No REPSE'),
-      status: formData.status,
-      contacts: contacts.filter((c) => c.trim() !== ''),
-      email: formData.email || (isEs ? 'Sin correo' : 'No email'),
-      phone: formData.phone || (isEs ? 'Sin teléfono' : 'No phone'),
-      logo: logoPreview
-    };
-
-    setContractorsData([...contractorsData, newContractor]);
-
+    // Registrar o editar contratistas es una escritura sin endpoint autorizado: se valida y no se guarda.
     if (onNotify) {
       onNotify(
-        isEs ? 'Contratista Registrado' : 'Contractor Registered', 
-        isEs ? `Se guardó "${formData.companyName}" correctamente.` : `"${formData.companyName}" saved successfully.`
+        isEs ? 'Contratista no guardado' : 'Contractor not saved',
+        isEs ? `Datos validados, pero no se guardó "${formData.companyName}": registrar o editar contratistas y su logotipo es una escritura bloqueada hasta su autorización.` : `Data validated, but "${formData.companyName}" was not saved: registering or editing contractors and their logo is a write blocked until authorized.`,
+        'warning'
       );
     }
-
-    handleResetForm();
   };
-
-  // Función para eliminar un contratista
-  const handleDeleteContractor = (id, companyName) => {
-    const confirmMsg = isEs
-      ? `¿Estás seguro de que deseas eliminar a "${companyName}"?`
-      : `Are you sure you want to delete "${companyName}"?`;
-
-    if (window.confirm(confirmMsg)) {
-      setContractorsData((prev) => prev.filter((item) => item.id !== id));
-      if (onNotify) {
-        onNotify(
-          isEs ? 'Contratista Eliminado' : 'Contractor Deleted',
-          isEs ? `Se eliminó "${companyName}" de la matriz.` : `"${companyName}" was removed from matrix.`
-        );
-      }
-    }
-  };
-
-  const filteredContractors = contractorsData.filter((contractor) => {
-    const matchesSearch =
-      contractor.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      contractor.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      contractor.rfc.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      contractor.specialty.toLowerCase().includes(searchTerm.toLowerCase());
-
-    const matchesStatus = statusFilter === 'all' || contractor.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
-  });
 
   return (
     <div className="space-y-6">
@@ -289,6 +240,9 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
           );
         })}
       </div>
+
+      {/* Estado de integración: la matriz lee MariaDB; las capturas validan y no guardan. */}
+      <div data-testid="contractors-lock" className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 flex items-start gap-2 text-[11px] text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{isEs ? 'Matriz de contratistas conectada a MariaDB (solo lectura). Datos del contratista e Identidad y logotipo validan la captura pero no la guardan: registrar o editar contratistas, su logotipo y su personal son escrituras bloqueadas hasta su autorización.' : 'Contractors matrix connected to MariaDB (read-only). Contractor details and Identity and logo validate the entry but do not save it: registering or editing contractors, their logo and personnel are writes blocked until authorized.'}</span></div>
 
       {/* Contenedor dinámico principal */}
       <div className="bg-white p-6 md:p-8 rounded-2xl border border-slate-200/80 shadow-sm min-h-[400px]">
@@ -459,146 +413,91 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
           </div>
         )}
 
-        {/* TARJETA 2: Matriz de contratistas */}
-        {activeTab === 'matrix' && (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-1">
-              <div>
-                <h3 className="text-base font-black text-slate-900">
-                  {isEs ? 'Matriz de contratistas' : 'Contractors Matrix'}
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  {isEs 
-                    ? 'Cada empresa conserva sus datos generales y logotipo. Selecciona una como activa para documentos y operaciones.' 
-                    : 'Each company retains its general data and logo. Select one as active for documents and operations.'}
-                </p>
+        {/* TARJETA 2: Matriz de contratistas (MariaDB, solo lectura) */}
+        {activeTab === 'matrix' && (() => {
+          const tx = (es, e) => (isEs ? es : e);
+          const TONES = { green: 'bg-emerald-50 text-emerald-700 border-emerald-200', amber: 'bg-amber-50 text-amber-800 border-amber-200', blue: 'bg-blue-50 text-blue-700 border-blue-200', gray: 'bg-slate-100 text-slate-600 border-slate-200', red: 'bg-rose-50 text-rose-700 border-rose-200' };
+          const chip = c => <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-black border whitespace-nowrap ${TONES[c.tone] || TONES.gray}`}>{c.text}</span>;
+          const items = list.data?.items || [];
+          return (
+          <div className="space-y-4" data-testid="contractors-matrix">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-4 border-b border-slate-100">
+              <div className="min-w-0">
+                <h3 className="text-base sm:text-lg font-black text-slate-900">{tx('Matriz de contratistas', 'Contractors Matrix')}</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">{tx('Cada empresa conserva sus datos generales y logotipo. Selecciona una como activa para documentos y operaciones.', 'Each company keeps its general data and logo. Select one as active for documents and operations.')}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => handleTabChange('contractorData', isEs ? 'Datos del contratista' : 'Contractor Details')}
-                className="px-4 py-2 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer hover:opacity-90"
-                style={{ backgroundColor: '#a221b7' }}
-              >
-                <span className="text-sm font-black">+</span>
-                <span>{isEs ? 'Nuevo contratista' : 'New Contractor'}</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2 shrink-0 text-sm font-black">
+                {list.data && <span data-testid="contractors-badge" className="text-[10.5px] font-black text-blue-800 bg-blue-50 border border-blue-200 rounded-full px-3 py-1">{matrixBadge(list.data, !isEs)}</span>}
+                <button type="button" onClick={() => { handleResetForm(); handleTabChange('contractorData', tx('Datos del contratista', 'Contractor Details')); }} className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md text-sm font-black">+ {tx('Nuevo contratista', 'New contractor')}</button>
+              </div>
             </div>
 
-            {/* Buscador general */}
-            <div>
-              <input
-                type="text"
-                placeholder={isEs ? "Buscar por empresa, RFC, correo o dirección..." : "Search by company, Tax ID, email or address..."}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 shadow-2xs"
-              />
-            </div>
+            <input type="search" aria-label={tx('Buscar contratista', 'Search contractor')} placeholder={tx('Buscar por empresa, RFC, correo o dirección...', 'Search by company, tax ID, email or address...')} value={searchTerm} maxLength={120} onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-4 py-3 text-sm bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none text-slate-700" />
+            <select aria-label={tx('Estatus', 'Status')} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full px-4 py-3 text-sm bg-white border border-slate-300 rounded-xl text-slate-700 outline-none focus:ring-2 focus:ring-purple-500/20">
+              {STATUS_FILTERS.map(([v, es, en]) => <option key={v} value={v}>{isEs ? es : en}</option>)}
+            </select>
 
-            {/* Selector de filtro por estatus */}
-            <div>
-              <select 
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl text-slate-700 outline-none shadow-2xs"
-              >
-                <option value="all">{isEs ? 'Todos los estatus' : 'All Statuses'}</option>
-                <option value="Activo">{isEs ? 'Activo' : 'Active'}</option>
-                <option value="Inactivo">{isEs ? 'Inactivo' : 'Inactive'}</option>
-              </select>
-            </div>
+            {list.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p>}
+            {list.error && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{list.error.message}</p>}
+            {actMsg && <p role="status" data-testid="contractors-msg" className="flex items-start gap-2 p-3 rounded-xl border text-xs bg-blue-50 border-blue-200 text-blue-900">{actMsg}</p>}
 
-            {/* Estructura de la Tabla de la Matriz */}
-            <div className="overflow-x-auto rounded-xl border border-slate-200/80 bg-white shadow-2xs mt-2">
-              <table className="w-full text-left border-collapse min-w-[1100px]">
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+              <table className="w-full text-left border-collapse min-w-[1280px] text-[11px]">
                 <thead>
-                  <tr className="bg-slate-50/80 text-[10px] font-black text-slate-700 uppercase tracking-wider border-b border-slate-200/80">
-                    <th className="py-3 px-3">{isEs ? 'Logo' : 'Logo'}</th>
-                    <th className="py-3 px-3">{isEs ? 'Empresa' : 'Company'}</th>
-                    <th className="py-3 px-3">{isEs ? 'RFC / Tax ID' : 'Tax ID / RFC'}</th>
-                    <th className="py-3 px-3">{isEs ? 'Contacto General' : 'General Contact'}</th>
-                    <th className="py-3 px-3">{isEs ? 'Dirección' : 'Address'}</th>
-                    <th className="py-3 px-3">{isEs ? 'Estatus' : 'Status'}</th>
-                    <th className="py-3 px-3">{isEs ? 'Uso' : 'Usage'}</th>
-                    <th className="py-3 px-3 text-center">{isEs ? 'Acciones' : 'Actions'}</th>
+                  <tr className="bg-slate-50 text-[10px] font-black text-slate-700 uppercase tracking-wider border-b border-slate-200">
+                    {[tx('Logo', 'Logo'), tx('Empresa', 'Company'), 'RFC / Tax ID', tx('Contacto general', 'General contact'), tx('Dirección', 'Address'), tx('Responsable', 'Manager'), tx('Personal', 'Personnel'), tx('Estatus', 'Status'), tx('Uso', 'Use'), tx('Acciones', 'Actions')].map(h => <th key={h} className="py-3 px-3 whitespace-nowrap">{h}</th>)}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredContractors.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="py-12 text-center text-slate-400">
-                        <p className="font-semibold text-slate-600 text-xs">
-                          {isEs ? 'Sin contratistas registrados' : 'No registered contractors'}
-                        </p>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          {isEs 
-                            ? 'Usa el botón "Nuevo contratista" para dar de alta una empresa en el sistema.' 
-                            : 'Use the "New Contractor" button to register a company in the system.'}
-                        </p>
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredContractors.map((c) => (
-                      <tr key={c.id} className="hover:bg-slate-50/50">
-                        <td className="py-2.5 px-3">
-                          {c.logo ? (
-                            <img src={c.logo} alt="Logo" className="w-8 h-8 object-contain rounded" />
-                          ) : (
-                            <div className="w-8 h-8 rounded bg-slate-100 text-slate-400 flex items-center justify-center font-bold text-[10px]">
-                              N/A
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3 font-bold text-slate-800">{c.companyName}</td>
-                        <td className="py-2.5 px-3 font-mono text-slate-600">{c.rfc}</td>
-                        <td className="py-2.5 px-3 text-slate-600">{c.phone} / {c.email}</td>
-                        <td className="py-2.5 px-3 text-slate-500">{c.address || 'N/A'}</td>
-                        <td className="py-2.5 px-3">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            c.status === 'Activo' || c.status === 'En regla' 
-                              ? 'bg-emerald-100 text-emerald-700' 
-                              : 'bg-slate-100 text-slate-600'
-                          }`}>
-                            {c.status === 'Activo' ? (isEs ? 'Activo' : 'Active') : c.status}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-400">{isEs ? 'General' : 'General'}</td>
-                        <td className="py-2.5 px-3 text-center">
-                          <div className="flex items-center justify-center gap-3">
-                            <button 
-                              type="button" 
-                              className="text-blue-600 hover:text-blue-800 font-bold cursor-pointer"
-                              onClick={() => {
-                                setFormData({
-                                  ...initialFormState,
-                                  companyName: c.companyName,
-                                  rfc: c.rfc,
-                                  phone: c.phone,
-                                  email: c.email,
-                                  status: c.status
-                                });
-                                handleTabChange('contractorData', isEs ? 'Datos del contratista' : 'Contractor Details');
-                              }}
-                            >
-                              {isEs ? 'Editar' : 'Edit'}
-                            </button>
-                            <button 
-                              type="button" 
-                              className="text-red-600 hover:text-red-800 font-bold cursor-pointer"
-                              onClick={() => handleDeleteContractor(c.id, c.companyName)}
-                            >
-                              {isEs ? 'Eliminar' : 'Delete'}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                <tbody className="divide-y divide-slate-100">
+                  {list.status === 'ready' && !items.length && <tr><td colSpan={10} className="py-12 text-center"><p className="font-semibold text-slate-600 text-xs">{tx('Sin contratistas con este filtro.', 'No contractors match this filter.')}</p><p className="text-[11px] text-slate-400 mt-1">{tx('Ajusta la búsqueda o el estatus.', 'Adjust the search or the status.')}</p></td></tr>}
+                  {items.map(c => { const v = contractorRow(c, !isEs); return (
+                    <tr key={c.id} data-testid="contractor-row" className="align-top hover:bg-slate-50/60">
+                      <td className="p-3"><div className="w-20 h-16 rounded-xl border border-slate-200 bg-white flex items-center justify-center p-1.5" title={v.logo.note}><img src={v.logo.src} alt={`${tx('Logotipo', 'Logo')} ${v.name}`} className="max-w-full max-h-full object-contain" /></div></td>
+                      <td className="p-3 min-w-[170px]"><div className="font-black text-slate-900 text-xs leading-snug">{v.name}</div><div className="text-[9.5px] text-slate-500 mt-1">{v.logo.note}</div></td>
+                      <td className="p-3 font-medium text-slate-700 whitespace-nowrap">{v.taxId}</td>
+                      <td className="p-3 text-slate-700 min-w-[150px]"><div>{v.phone || '—'}</div><div className="text-[10px] text-slate-500 break-all">{v.email || '—'}</div></td>
+                      <td className="p-3 text-slate-700 min-w-[200px] max-w-[260px]">{v.address}</td>
+                      <td className="p-3">{chip(v.responsible)}{v.responsible.sub && <div className="text-[9.5px] text-slate-500 mt-1">{v.responsible.sub}</div>}</td>
+                      <td className="p-3">{chip(v.personnel)}{v.personnel.sub && <div className="text-[9.5px] text-slate-500 mt-1 whitespace-nowrap">{v.personnel.sub}</div>}</td>
+                      <td className="p-3">{chip(v.status)}</td>
+                      <td className="p-3 min-w-[150px]">{chip(v.usage)}{v.usage.sub && <div className="text-[9.5px] text-slate-500 mt-1">{v.usage.sub}</div>}</td>
+                      <td className="p-3"><div className="flex flex-wrap gap-1.5 min-w-[220px] text-[11px] font-black uppercase">
+                        <button type="button" onClick={() => setActMsg(activeText(c, !isEs))} title={v.isActive ? tx('Contratista activo de esta sesión', 'Active contractor of this session') : ''} className={`uppercase px-3 py-2 rounded-lg ${v.isActive ? 'bg-slate-100 text-slate-500' : 'bg-slate-100 hover:bg-slate-200 text-slate-800'}`}>{v.isActive ? `✓ ${tx('Activo', 'Active')}` : tx('Activo', 'Active')}</button>
+                        <button type="button" onClick={() => { setFormData({ ...initialFormState, ...editPrefill(c) }); setContacts(['']); setActMsg(null); handleTabChange('contractorData', tx('Datos del contratista', 'Contractor Details')); }} className="uppercase px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg">{tx('Editar', 'Edit')}</button>
+                        <button type="button" onClick={() => openStaff(c)} className="uppercase px-3 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-lg shadow-sm">{tx('Personal', 'Personnel')}</button>
+                        <button type="button" onClick={() => setDelDlg(c)} className="uppercase px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-sm">{tx('Eliminar', 'Delete')}</button>
+                      </div></td>
+                    </tr>); })}
                 </tbody>
               </table>
             </div>
+            <p className="text-[10px] text-slate-400 flex items-start gap-1.5"><Lock className="w-3.5 h-3.5 shrink-0" />{tx('Fuente: MariaDB (organización de la sesión). Registrar, editar, activar o eliminar contratistas y su personal son escrituras bloqueadas hasta su autorización.', 'Source: MariaDB (session organization). Registering, editing, activating or deleting contractors and their personnel are writes blocked until authorized.')}</p>
+
+            {delDlg && <div role="dialog" aria-modal="true" aria-label={tx('Eliminar contratista', 'Delete contractor')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setDelDlg(null)}>
+              <div className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-3" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between"><h3 className="text-sm font-black text-rose-700">{tx('Eliminar', 'Delete')} {delDlg.legal_name}</h3><button type="button" aria-label={tx('Cerrar diálogo', 'Close dialog')} onClick={() => setDelDlg(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
+                <p role="alert" data-testid="contractor-delete-block" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">{deleteBlock(delDlg, !isEs)}</p>
+                <div className="flex justify-end text-xs font-black"><button type="button" onClick={() => setDelDlg(null)} className="px-4 py-2 border border-slate-200 rounded-xl">{tx('Cerrar', 'Close')}</button></div>
+              </div>
+            </div>}
+
+            {staff && <div role="dialog" aria-modal="true" aria-label={tx('Personal del contratista', 'Contractor personnel')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-3 sm:p-6" onClick={() => setStaff(null)}>
+              <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between gap-3 p-4 border-b border-slate-100"><div className="min-w-0"><h3 className="text-sm font-black text-slate-900">{tx('Personal / contactos', 'Personnel / contacts')} · {staff.contractor.legal_name}</h3><p className="text-[11px] text-slate-500">{tx('Personas registradas en la organización (MariaDB). El acceso proviene de su usuario del sistema.', 'People registered in the organization (MariaDB). Access comes from their system user.')}</p></div><button type="button" aria-label={tx('Cerrar personal', 'Close personnel')} onClick={() => setStaff(null)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button></div>
+                <div className="p-4 overflow-auto space-y-3">
+                  {staff.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p>}
+                  {staff.error && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{staff.error.message}</p>}
+                  {staff.data && <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full text-left text-[11px] min-w-[720px]" data-testid="contractor-personnel"><thead><tr className="bg-slate-50 text-[10px] font-black uppercase text-slate-600">{[tx('Nombre', 'Name'), tx('Puesto', 'Position'), tx('Correo', 'Email'), tx('Teléfono', 'Phone'), tx('Roles', 'Roles'), tx('Estado', 'State'), tx('Acceso', 'Access')].map(h => <th key={h} className="p-2.5 whitespace-nowrap">{h}</th>)}</tr></thead>
+                    <tbody className="divide-y divide-slate-100">{staff.data.items.map(p => { const r = personRow(p, !isEs); return <tr key={p.id}><td className="p-2.5 font-bold text-slate-900">{r.name}{r.responsible && <span className="ml-1.5">{chip({ text: tx('Responsable', 'Manager'), tone: 'green' })}</span>}</td><td className="p-2.5">{r.position}</td><td className="p-2.5 break-all">{r.email}</td><td className="p-2.5">{r.phone}</td><td className="p-2.5">{r.roles}</td><td className="p-2.5">{chip(r.active)}</td><td className="p-2.5">{chip(r.access)}</td></tr>; })}
+                      {!staff.data.items.length && <tr><td colSpan={7} className="p-6 text-center text-slate-400">{tx('Sin personal registrado.', 'No personnel recorded.')}</td></tr>}</tbody></table></div>}
+                  <p className="text-[10px] text-slate-400">{tx('Alta y edición de personal: módulo Usuarios y roles (escrituras sujetas a su autorización).', 'Adding and editing personnel: Users and roles module (writes subject to its authorization).')}</p>
+                </div>
+              </div>
+            </div>}
           </div>
-        )}
+          );
+        })()}
 
         {/* TARJETA 3: Identidad y logotipo */}
         {activeTab === 'identity' && (
