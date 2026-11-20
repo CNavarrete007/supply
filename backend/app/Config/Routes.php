@@ -16,6 +16,8 @@ $routes->get('api/v1/roles', 'UserDirectoryController::roles');
 $routes->get('api/v1/users/functions', 'UserDirectoryController::functions');
 $routes->get('api/v1/audit-events', 'UserDirectoryController::auditEvents');
 // Master Admin read-only catalogs; client portal credentials are NEVER exposed here.
+// Requisición › Catálogo de categorías: estatus y uso (solo lectura; sin rutas de escritura).
+$routes->get('api/v1/catalogs/categories', 'CategoryCatalogController::index');
 $routes->get('api/v1/catalogs/clients', 'CatalogDirectoryController::clients');
 $routes->get('api/v1/catalogs/clients/(:segment)', 'CatalogDirectoryController::client/$1');
 $routes->post('api/v1/catalogs/clients', 'ClientWriteController::create');

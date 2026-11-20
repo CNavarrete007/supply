@@ -1606,3 +1606,38 @@ radial-gradient(circle at 100% 10%,rgba(124,58,237,.13),transparent 30%),var(--b
 .sf-rf1 .sf-reg-modal .sf-prov179-banner{margin-top:12px}
 @media (max-width:650px){.sf-rf1 .sf-reg-actions{min-width:0}.sf-rf1 .sf-reg-table{min-width:760px}}
 .sf-rf1 .sf-reg-table th,.sf-rf1 .sf-reg-table td:nth-child(5){white-space:nowrap}
+
+/* Requisición › Catálogo de categorías con el diseño del Apps Script original (alcance .sf-cat). */
+.sf-rf1 .sf-cat-switch{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:8px;margin-bottom:16px;background:rgba(255,255,255,.75);border:1px solid var(--line);border-radius:18px;box-shadow:0 8px 22px rgba(15,35,70,.05)}
+.sf-rf1 .sf-cat-switch button{border:1px solid transparent;border-radius:14px;padding:12px 15px;background:#eef3fa;color:#1f3554;text-align:left;transition:border-color .15s,box-shadow .15s;min-width:0}
+.sf-rf1 .sf-cat-switch button:hover{border-color:#b9cff3}
+.sf-rf1 .sf-cat-switch button.active{color:#fff;background:linear-gradient(135deg,#0b63f6,#6438d7 58%,#b128a7);box-shadow:0 10px 24px rgba(59,74,190,.22)}
+.sf-rf1 .sf-cat-switch strong{display:flex;gap:7px;align-items:center;font-size:14px;font-weight:900}
+.sf-rf1 .sf-cat-switch small{display:block;margin-top:5px;font-size:10px;opacity:.82}
+.sf-rf1 .sf-cat-badge{background:#f1e8ff;color:#6d28d9}
+.sf-rf1 .sf-cat-mode{display:flex;align-items:center;gap:12px;padding:13px 16px;border-radius:12px;font-size:12px;margin:2px 0 16px}
+.sf-rf1 .sf-cat-mode.ok{background:#eafaf4;border:1px solid #95e2bd;color:#065f46}
+.sf-rf1 .sf-cat-mode.warn{background:#fff7e5;border:1px solid #f7cc70;color:#835309}
+.sf-rf1 .sf-cat-mode .dot{width:17px;height:17px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 35%,#6ee7b7,#059669);box-shadow:0 2px 6px rgba(5,150,105,.35)}
+.sf-rf1 .sf-cat-mode.warn .dot{background:radial-gradient(circle at 35% 35%,#fcd34d,#d97706);box-shadow:0 2px 6px rgba(217,119,6,.35)}
+.sf-rf1 .sf-cat-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:12px 14px}
+.sf-rf1 .sf-cat-grid .span-all{grid-column:1/-1}
+.sf-rf1 .sf-cat-search{width:100%;min-width:0;margin:0 0 12px;font-size:14px;padding:11px 13px}
+.sf-rf1 .sf-cat-chip{display:inline-flex;padding:4px 9px;border-radius:999px;font-size:10px;font-weight:900;background:#e0ecff;color:#1e4fa3}
+.sf-rf1 .sf-cat-chip.off{background:#eef1f5;color:#5b6b80}
+.sf-rf1 .sf-cat-table td{font-size:12px}
+.sf-rf1 .sf-cat-table td:nth-child(3),.sf-rf1 .sf-cat-table td:nth-child(4),.sf-rf1 .sf-cat-table th{white-space:nowrap}
+.sf-rf1 .sf-cat-actions{min-width:170px}
+.sf-rf1 .sf-cat-actions .btn{font-weight:900}
+.sf-rf1 .sf-cat-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px}
+.sf-rf1 .sf-cat-card{border-radius:14px;padding:14px 16px;border-left:4px solid}
+.sf-rf1 .sf-cat-card.info{background:#eef5ff;border-color:#1769ff}
+.sf-rf1 .sf-cat-card.warn{background:#fff7e6;border-color:#f59e0b}
+.sf-rf1 .sf-cat-card.ok{background:#eafaf4;border-color:#0f9f6e}
+.sf-rf1 .sf-cat-card b{display:block;font-size:12px;margin-bottom:5px;color:#12213a}
+.sf-rf1 .sf-cat-card p{margin:0;font-size:12px;color:#334155;line-height:1.5}
+.sf-rf1 .sf-cat-rule{border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-top:10px}
+.sf-rf1 .sf-cat-rule h4{margin:0;padding:13px 16px;background:#f6f8fc;font-size:14px;font-weight:900}
+.sf-rf1 .sf-cat-rule p{margin:0;padding:13px 16px;font-size:12px;color:#475569;line-height:1.55}
+.sf-rf1 .sf-cat-del{width:min(560px,96vw)}
+@media (max-width:860px){.sf-rf1 .sf-cat-switch,.sf-rf1 .sf-cat-cards,.sf-rf1 .sf-cat-grid{grid-template-columns:1fr}.sf-rf1 .sf-cat-table{min-width:640px}}

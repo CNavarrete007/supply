@@ -12,6 +12,8 @@ const results = [];
 const check = (name, ok, detail = '') => results.push([name, !!ok, detail]);
 const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` }); };
 const flat = s => String(s).replace(/\s+/g, ' ');
+// Waits (up to 5 s) until the rendered text starts with the expected value: avoids reading before React paints the response.
+const settled = async (page, loc, prefix) => { let t = ''; for (let i = 0; i < 25; i++) { t = flat(await loc.innerText()); if (t.startsWith(prefix)) break; await page.waitForTimeout(200); } return t; };
 const pct = v => `${Number(v).toLocaleString('es-MX', { maximumFractionDigits: 2 })}%`;
 
 (async () => {
@@ -306,7 +308,7 @@ const pct = v => `${Number(v).toLocaleString('es-MX', { maximumFractionDigits: 2
     await page.getByRole('button', { name: /Semáforo de cierre/ }).click();
     check('semáforo consulta MariaDB (200)', (await cl).status() === 200);
     for (const [k, t] of [['po_without_receipt', 'OC sin recepción'], ['receipts_pending', 'Recepciones con pendientes'], ['deliveries_missing', 'Entregas no registradas'], ['acceptance_pending', 'Aceptaciones pendientes'], ['ready_to_invoice', 'Listos para facturar']])
-      check(`semáforo: ${t} = ${closure.counters[k]}`, flat(await page.getByRole('button', { name: new RegExp(t) }).innerText()).startsWith(String(closure.counters[k])));
+      check(`semáforo: ${t} = ${closure.counters[k]}`, (await settled(page, page.getByRole('button', { name: new RegExp(t) }), String(closure.counters[k]))).startsWith(String(closure.counters[k])));
     await page.getByRole('button', { name: /Recepciones con pendientes/ }).click();
     const lt = flat(await page.getByTestId('closure-list').innerText());
     check('lista de recepciones con pendientes', closure.receipts_pending.every(r => lt.includes(r.folio)) && lt.includes('Recepción parcial'), lt.slice(0, 300));

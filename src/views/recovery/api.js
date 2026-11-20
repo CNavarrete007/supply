@@ -47,3 +47,10 @@ async function readChanges(path,signal){
 }
 export const changeOverview=(query,signal)=>readChanges('?'+query,signal);
 export const changeCandidates=(query,signal)=>readChanges('/candidates?'+query,signal);
+// Catálogo de categorías (solo lectura, cuenta API de solo SELECT): estatus y uso por partida.
+export async function categoryCatalog(signal){
+ const response=await fetch('/api/v1/catalogs/categories',{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'},signal});
+ const body=await response.json().catch(()=>({}));
+ if(!response.ok){const error=new Error(body?.error?.message||'No se pudo consultar el catálogo de categorías.');error.status=response.status;error.code=body?.error?.code;throw error;}
+ return body;
+}

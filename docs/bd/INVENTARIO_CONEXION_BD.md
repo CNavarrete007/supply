@@ -41,7 +41,7 @@ Leyenda:
 | Requisición | Matriz | Sí | N/A | — | — |
 | Requisición | Control de cambios | Parcial | R3A real (desde Cotizaciones); **R3B y R3C1 sin pantalla** | `requisition_change_*` | Pantalla de revisión independiente (`decision`, `withdraw`) y aplicación de partidas nuevas. **El backend ya existe y pasó INT02.** Desde `33af1cd` también existe la lectura `GET requisition-changes` y `/candidates`, con el cliente en `recovery/api.js` y el modelo `changeControl.mjs`; falta la pantalla |
 | Requisición | Crear desde historial | Sí (historial) | **No migrada** | `requisitions`, `requisition_items` | Solo frontend: copiar a un registro **nuevo** usando el `POST recovery/requisitions` existente. No toca el histórico |
-| Requisición | Catálogo de categorías | Sí | **Sin endpoint** | `categories` | Endpoint nuevo y 2 grants (`INSERT`/`UPDATE categories`) a `catalogwrite` |
+| Requisición | Catálogo de categorías | Sí: `GET /api/v1/catalogs/categories` con estatus y uso (20 nov 2026) | Bloqueada (valida alta, edición, estatus y eliminación) | `categories` | Endpoint de escritura y permisos SQL (`INSERT`/`UPDATE`, y `DELETE` si se habilita eliminar) a `catalogwrite`: requiere autorización |
 | Gestión del Contratista | Registro de validación | Sí | Bloqueada | `requisition_reviews`, `workflow_events` | Endpoint de revisión, regla de que el revisor no sea el solicitante, y grants |
 | Gestión del Contratista | Estrategia y lotificación | Sí | Bloqueada | `sourcing_plans`, `sourcing_lots`, `sourcing_lot_items`, `sourcing_lot_suppliers` | Endpoint y grants. Es la antesala de la RFQ |
 | Gestión del Contratista | Matriz y Reglas | Sí | Bloqueada | `requisition_reviews`, `organization_settings` | Editar reglas depende de Configuración |
