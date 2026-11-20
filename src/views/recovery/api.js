@@ -25,3 +25,25 @@ export async function createChange(operation) {
  const token=await getCsrf();
  return request('/requisitions/'+encodeURIComponent(operation.id)+'/changes',{method:'POST',headers:{'Content-Type':'application/json','X-SF-CSRF':token,'Idempotency-Key':operation.key,'If-Match':`"${operation.version}"`},body:JSON.stringify(operation.data)});
 }
+// Control de cambios (R3A/R3B/R3C1; R3C2/R3C3 solo consulta). Escrituras con CSRF + If-Match (versión del cambio) + Idempotency-Key.
+const chg=id=>'/changes/'+encodeURIComponent(id);
+export const getChange=(id,signal)=>request(chg(id),{signal});
+export const getChangeReview=(id,signal)=>request(chg(id)+'/review',{signal});
+export const getChangeImpact=(id,signal)=>request(chg(id)+'/impact',{signal});
+export const getCommercialReconciliation=(id,signal)=>request(chg(id)+'/commercial-reconciliation',{signal});
+export const getCommercialExecutions=(id,signal)=>request(chg(id)+'/commercial-executions',{signal});
+async function changeWrite(path,operation){
+ const token=await getCsrf();
+ return request(chg(operation.id)+path,{method:'POST',headers:{'Content-Type':'application/json','X-SF-CSRF':token,'Idempotency-Key':operation.key,'If-Match':`"${operation.version}"`},body:JSON.stringify(operation.data)});
+}
+export const withdrawChange=operation=>changeWrite('/withdraw',operation);
+export const decideChange=operation=>changeWrite('/decision',operation);
+// Lectura complementaria (cuenta API de solo SELECT): historial completo y requisiciones candidatas.
+async function readChanges(path,signal){
+ const response=await fetch('/api/v1/requisition-changes'+path,{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'},signal});
+ const body=await response.json().catch(()=>({}));
+ if(!response.ok){const error=new Error(body?.error?.message||'No se pudo consultar el control de cambios.');error.status=response.status;error.code=body?.error?.code;throw error;}
+ return body;
+}
+export const changeOverview=(query,signal)=>readChanges('?'+query,signal);
+export const changeCandidates=(query,signal)=>readChanges('/candidates?'+query,signal);
