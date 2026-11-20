@@ -39,7 +39,7 @@ Leyenda:
 | Requisición | Registro | Sí | **Real** (RF1) | `requisitions`, `requisition_items` | — |
 | Requisición | Regularización | Sí | **Real** (R2) | `requisitions` y evidencias | — |
 | Requisición | Matriz | Sí | N/A | — | — |
-| Requisición | Control de cambios | Parcial | R3A real (desde Cotizaciones); **R3B y R3C1 sin pantalla** | `requisition_change_*` | Pantalla de revisión independiente (`decision`, `withdraw`) y aplicación de partidas nuevas. **El backend ya existe y pasó INT02** |
+| Requisición | Control de cambios | Parcial | R3A real (desde Cotizaciones); **R3B y R3C1 sin pantalla** | `requisition_change_*` | Pantalla de revisión independiente (`decision`, `withdraw`) y aplicación de partidas nuevas. **El backend ya existe y pasó INT02.** Desde `33af1cd` también existe la lectura `GET requisition-changes` y `/candidates`, con el cliente en `recovery/api.js` y el modelo `changeControl.mjs`; falta la pantalla |
 | Requisición | Crear desde historial | Sí (historial) | **No migrada** | `requisitions`, `requisition_items` | Solo frontend: copiar a un registro **nuevo** usando el `POST recovery/requisitions` existente. No toca el histórico |
 | Requisición | Catálogo de categorías | Sí | **Sin endpoint** | `categories` | Endpoint nuevo y 2 grants (`INSERT`/`UPDATE categories`) a `catalogwrite` |
 | Gestión del Contratista | Registro de validación | Sí | Bloqueada | `requisition_reviews`, `workflow_events` | Endpoint de revisión, regla de que el revisor no sea el solicitante, y grants |
@@ -56,6 +56,22 @@ Leyenda:
 | Usuarios y roles | Usuarios, roles, matriz, actividad | Sí | Bloqueada | `people`, `users`, `user_roles`, `roles`, `role_permissions`, `user_permissions` | Cuenta SQL nueva, hash de contraseñas, protección contra escalamiento de privilegios. El servidor hoy solo distingue `master_admin`, **no evalúa permisos por sección** |
 | Configuración | Pestañas 1 a 5: identidad, parámetros, aprobaciones, condiciones, correos | **No** (demo y `localStorage`) | Demo | `organizations`, `organization_settings`, `approval_policy_versions`, `currencies`, `units`, `document_sequences`, `notifications`, `outbox_messages`, `email_delivery_logs` | Primero lectura; después escritura con versión de políticas (afecta aprobaciones y folios) |
 | Configuración | Pestañas 6 y 7: Respaldo y Reinicio | No | **No deben conectarse a la BD** | — | Los respaldos se hacen con las herramientas INT03, fuera de la interfaz. «Reinicio» solo debe limpiar la caché local del navegador |
+
+### Código sin uso (revisado el 20 nov. 2026)
+
+Hay 8 vistas antiguas con datos de demostración que **ya no se importan** en `App.jsx`, porque las reemplazaron los módulos conectados:
+- `src/views/Clients.jsx`
+- `src/views/Suppliers.jsx`
+- `src/views/SupplierSupply.jsx`
+- `src/views/Requisition.jsx`
+- `src/views/Quotes.jsx`
+- `src/views/PurchaseOrders.jsx`
+- `src/views/ReceptionDelivery.jsx`
+- `src/views/Invoice.jsx`
+
+En total son unas 16,000 líneas. No son conexiones pendientes. También es residual el estado `quotes` que `App.jsx` guarda en `localStorage` (`grupo_gerez_quotes`): ningún módulo actual lo usa. Retirar ambos es una limpieza independiente y requiere autorización.
+
+Los módulos que todavía muestran el aviso genérico «Módulo pendiente de integración» son **Portal del Cliente**, **Configuración** y **Flujo del Proceso**.
 
 ## 3. Requisitos de toda escritura nueva
 
