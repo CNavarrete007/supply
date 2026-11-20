@@ -54,3 +54,10 @@ export async function categoryCatalog(signal){
  if(!response.ok){const error=new Error(body?.error?.message||'No se pudo consultar el catálogo de categorías.');error.status=response.status;error.code=body?.error?.code;throw error;}
  return body;
 }
+// Crear desde historial (solo lectura): política de recompra y catálogo histórico del cliente.
+export async function historyCatalog(clientId,signal){
+ const response=await fetch('/api/v1/requisition-history/catalog?client='+encodeURIComponent(clientId),{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'},signal});
+ const body=await response.json().catch(()=>({}));
+ if(!response.ok){const error=new Error(body?.error?.message||'No se pudo consultar el historial del cliente.');error.status=response.status;error.code=body?.error?.code;throw error;}
+ return body;
+}
