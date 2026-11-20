@@ -22,7 +22,10 @@ export function amount(value,currency){if(value===null||value===''||value===unde
 export const priorityLabel=x=>({normal:'Normal',high:'Alta',urgent:'Crítica'}[x]||x||'Normal');
 // INT03-D1 · R2 Sin requisición / Regularización. Pure helpers mirroring the backend contract
 // (RequisitionRegularizationInput + RequisitionRecoveryRepository::regularize). The server stays authoritative.
-export const REG_METHODS=[['formal','Requisición formal del cliente'],['po','PO / orden de compra del cliente'],['email','Correo de autorización del cliente'],['portal','Registro en portal del cliente'],['contract','Base contractual / Call-off'],['management','Autorización de gerencia'],['emergency','Soporte de emergencia'],['other','Otra evidencia']];
+// Labels follow the original Apps Script modal; the codes are the ones RequisitionRegularizationInput::METHODS accepts.
+export const REG_METHODS=[['formal','Requisición formal recibida'],['po','PO del cliente'],['email','Correo de autorización'],['portal','Confirmación en portal del cliente'],['contract','Contrato / Call-off vigente'],['management','Autorización gerencial'],['emergency','Emergencia documentada'],['other','Otra evidencia autorizada']];
+// Status filter of the original card. "open" = pendientes de regularización (incluye las vencidas).
+export const REG_FILTERS=[['','Todos los estados'],['open','Pendientes'],['overdue','Vencidas'],['done','Regularizadas']];
 export const REG_REQUIREMENTS={formal:'Debe recibirse requisición formal',alternative:'Puede regularizarse con evidencia alternativa',contract:'Base contractual / Call-off (sin requisición formal)'};
 export const REG_FILE_TYPES=['application/pdf','image/png','image/jpeg','image/webp'];
 export const REG_FILE_LIMIT=8388608;
@@ -34,10 +37,27 @@ export function regMethodFor(requirement){return requirement==='contract'?'contr
 export function regRows(rows,{query='',state='',day=today()}={}){
  const order={overdue:0,pending:1,done:2};const q=query.toLocaleLowerCase().trim();
  return rows.filter(r=>r.is_provisional).map(r=>({...r,reg_state:regState(r,day)}))
-  .filter(r=>(!state||r.reg_state===state)&&(!q||[r.folio,r.provisional_folio,r.client,r.client_code,r.project,r.contract,r.request_source_type,r.request_source_reference,r.regularization_owner_snapshot,r.requester_name].join(' ').toLocaleLowerCase().includes(q)))
+  .filter(r=>(!state||r.reg_state===state||(state==='open'&&r.reg_state!=='done'))&&(!q||[r.folio,r.provisional_folio,r.client,r.client_code,r.project,r.contract,r.client_reference,r.request_source_type,r.request_source_reference,r.regularization_owner_snapshot,r.requester_name,r.requester_email].join(' ').toLocaleLowerCase().includes(q)))
   .sort((a,b)=>order[a.reg_state]-order[b.reg_state]||(a.reg_state==='done'?String(b.updated_at||'').localeCompare(String(a.updated_at||'')):String(a.regularization_due_date||'9999').localeCompare(String(b.regularization_due_date||'9999'))||String(a.folio).localeCompare(String(b.folio),'es',{numeric:true})));
 }
 export function regKpis(rows,day=today()){const out={total:0,pending:0,overdue:0,done:0};for(const r of rows){const s=regState(r,day);if(!s)continue;out.total++;out[s]++;}return out;}
+// Chip under the folio: the server status while pending, "Regularización vencida" past the deadline.
+export function regChip(row,day=today()){const s=regState(row,day);if(!s)return null;if(s==='overdue')return ['overdue','Regularización vencida'];if(s==='done')return ['ok',row.regularization_status||'Regularizada'];return ['pending',row.regularization_status||'Pendiente de regularización'];}
+// "Regularización" column: deadline (when recorded) plus the recorded requirement.
+export function regDeadline(row){return {limit:row?.regularization_due_date||null,requirement:REG_REQUIREMENTS[row?.regularization_requirement]||row?.regularization_requirement||'—'};}
+export const stageNumber=row=>Number.isInteger(row?.stage_index)?`Etapa ${row.stage_index+1}`:'—';
+// CONTINUAR: the module where the next activity of the eight-stage flow is worked (stage_index = furthest stage reached).
+export const NEXT_STEPS=[
+ {module:'contractor_mgmt',label:'Gestión del Contratista',activity:'Validación interna'},
+ {module:'quotes',label:'Cotizaciones y Comparativo',activity:'Solicitud de cotización'},
+ {module:'quotes',label:'Cotizaciones y Comparativo',activity:'Comparativo y autorización'},
+ {module:'purchase_orders',label:'Órdenes de Compra',activity:'Orden de compra'},
+ {module:'reception',label:'Recepción y Entrega',activity:'Recepción'},
+ {module:'reception',label:'Recepción y Entrega',activity:'Entrega y aceptación'},
+ {module:'invoice',label:'Factura',activity:'Factura'},
+];
+export function nextStep(stageIndex){return Number.isInteger(stageIndex)&&stageIndex>=0&&stageIndex<NEXT_STEPS.length?NEXT_STEPS[stageIndex]:null;}
+export function continueBlock(row){if(!Number.isInteger(row?.stage_index))return 'Etapa pendiente de equivalencia: no se puede inferir el siguiente paso.';if(!nextStep(row.stage_index))return 'Expediente completo: la factura ya está registrada.';return null;}
 export function emptyRegularization(requirement){return {method:regMethodFor(requirement),date:today(),reference:'',notes:'',evidence:null};}
 const chars=v=>[...String(v??'')].length;
 const control=/[\x00-\x08\x0b\x0c\x0e-\x1f]/;

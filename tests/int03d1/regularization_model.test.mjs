@@ -1,7 +1,7 @@
 // INT03-D1 · Unit tests for the pure R2 regularization helpers. Run: node --test tests/int03d1/
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { regState, regRows, regKpis, regMethodFor, emptyRegularization, validateRegularization, regularizationPayload, regOutcome, validRegDate, isImportedRestriction, regMethodLabel, REG_METHODS } from '../../src/views/recovery/model.mjs';
+import { regState, regRows, regKpis, regMethodFor, emptyRegularization, validateRegularization, regularizationPayload, regOutcome, validRegDate, isImportedRestriction, regMethodLabel, REG_METHODS, REG_FILTERS, regChip, regDeadline, stageNumber, nextStep, continueBlock } from '../../src/views/recovery/model.mjs';
 
 const DAY = '2026-11-09';
 const row = (o) => ({ id: o.id || 'x', folio: o.folio || 'SOL-PROV-2026-0001', client: 'Cliente', is_provisional: true, regularization_status: 'Pendiente de requisición formal', regularization_due_date: '2026-11-20', regularization_requirement: 'formal', ...o });
@@ -9,7 +9,8 @@ const evidence = { name: 'req.pdf', data: 'JVBERi0=', mime: 'application/pdf', s
 
 test('methods mirror backend RequisitionRegularizationInput::METHODS', () => {
   assert.deepEqual(REG_METHODS.map(x => x[0]), ['formal', 'po', 'email', 'portal', 'contract', 'management', 'emergency', 'other']);
-  assert.equal(regMethodLabel('contract'), 'Base contractual / Call-off');
+  assert.equal(regMethodLabel('contract'), 'Contrato / Call-off vigente');
+  assert.deepEqual(REG_METHODS.map(x => x[1]), ['Requisición formal recibida', 'PO del cliente', 'Correo de autorización', 'Confirmación en portal del cliente', 'Contrato / Call-off vigente', 'Autorización gerencial', 'Emergencia documentada', 'Otra evidencia autorizada']);
 });
 
 test('state: pending, overdue, done, non-provisional', () => {
@@ -81,4 +82,39 @@ test('HTTP outcomes: keep key only when the result is uncertain or retry-safe', 
 test('imported history is never offered for regularization', () => {
   assert.equal(isImportedRestriction({ restriction: 'Histórico importado: edición pendiente de conciliación.' }), true);
   assert.equal(isImportedRestriction({ restriction: 'Requiere Control de cambios.' }), false);
+});
+
+test('original card: "Pendientes" filter includes overdue; search by reference and requester e-mail', () => {
+  const rows = [row({ id: 'a', regularization_due_date: '2026-11-30', requester_email: 'compras@cliente.invalid' }),
+    row({ id: 'b', regularization_due_date: '2026-11-01', client_reference: 'PO-77' }),
+    row({ id: 'c', regularization_status: 'Regularizada · Evidencia alternativa' })];
+  assert.deepEqual(REG_FILTERS.map(x => x[0]), ['', 'open', 'overdue', 'done']);
+  assert.deepEqual(regRows(rows, { day: DAY, state: 'open' }).map(r => r.id), ['b', 'a']);
+  assert.deepEqual(regRows(rows, { day: DAY, query: 'po-77' }).map(r => r.id), ['b']);
+  assert.deepEqual(regRows(rows, { day: DAY, query: 'COMPRAS@' }).map(r => r.id), ['a']);
+  const k = regKpis(rows, DAY);
+  assert.equal(k.pending + k.overdue, 2); // KPI "Pendientes de regularización"
+});
+
+test('chip, regularization column and stage follow the original matrix', () => {
+  assert.deepEqual(regChip(row({ regularization_due_date: '2026-11-01' }), DAY), ['overdue', 'Regularización vencida']);
+  assert.deepEqual(regChip(row({ regularization_requirement: 'contract', regularization_due_date: null, regularization_status: 'Pendiente validar base contractual' }), DAY), ['pending', 'Pendiente validar base contractual']);
+  assert.deepEqual(regChip(row({ regularization_status: 'Regularizada · Requisición formal' }), DAY), ['ok', 'Regularizada · Requisición formal']);
+  assert.equal(regChip({ is_provisional: false }, DAY), null);
+  assert.deepEqual(regDeadline(row({ regularization_due_date: '2026-09-30' })), { limit: '2026-09-30', requirement: 'Debe recibirse requisición formal' });
+  assert.deepEqual(regDeadline(row({ regularization_requirement: 'contract', regularization_due_date: null })), { limit: null, requirement: 'Base contractual / Call-off (sin requisición formal)' });
+  assert.equal(stageNumber({ stage_index: 2 }), 'Etapa 3');
+  assert.equal(stageNumber({ stage_index: null }), '—');
+});
+
+test('CONTINUAR goes to the module of the next activity; complete or unmapped stages are blocked', () => {
+  assert.deepEqual(nextStep(0), { module: 'contractor_mgmt', label: 'Gestión del Contratista', activity: 'Validación interna' });
+  assert.equal(nextStep(2).module, 'quotes');
+  assert.equal(nextStep(3).module, 'purchase_orders');
+  assert.equal(nextStep(6).module, 'invoice');
+  assert.equal(nextStep(7), null);
+  assert.equal(nextStep(null), null);
+  assert.match(continueBlock({ stage_index: 7 }), /factura/i);
+  assert.match(continueBlock({ stage_index: null }), /equivalencia/);
+  assert.equal(continueBlock({ stage_index: 4 }), null);
 });

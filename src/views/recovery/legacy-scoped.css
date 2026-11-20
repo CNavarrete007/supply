@@ -1587,3 +1587,22 @@ radial-gradient(circle at 100% 10%,rgba(124,58,237,.13),transparent 30%),var(--b
 
 .sf-rf1 .req-matrix-table-wrap table{min-width:1450px;}
 .sf-rf1 a{color:#1d4ed8;text-decoration:underline;}
+
+/* INT03-D1 · Sin requisición / Regularización con el diseño del Apps Script original (alcance .sf-reg). */
+.sf-rf1 .sf-reg .subsection-header{align-items:flex-start}
+.sf-rf1 .sf-reg .subsection-header .badge.warn{padding:6px 11px;font-size:10px}
+.sf-rf1 .sf-reg-kpi{display:flex;flex-direction:column;justify-content:flex-end;gap:3px;min-height:74px;text-align:left;cursor:pointer;transition:box-shadow .15s}
+.sf-rf1 .sf-reg-kpi:hover{box-shadow:0 6px 16px rgba(15,35,70,.08)}
+.sf-rf1 .sf-reg-kpi.active{box-shadow:0 0 0 2px #1769ff}
+.sf-rf1 .sf-reg-kpi .n{line-height:1}
+.sf-rf1 .sf-reg-filters{display:grid;gap:10px;margin:4px 0 14px}
+.sf-rf1 .sf-reg-filters .search,.sf-rf1 .sf-reg-filters select{min-width:0;font-size:14px;padding:11px 13px}
+.sf-rf1 .sf-reg-table td{font-size:12px}
+.sf-rf1 .sf-reg-table td .sf-prov179-chip{display:table;margin:5px 0 0}
+.sf-rf1 .sf-reg-client{display:block;color:#12213a;font-weight:900}
+.sf-rf1 .sf-reg-actions{min-width:300px}
+.sf-rf1 .sf-reg-actions .btn{letter-spacing:.02em;font-weight:900}
+.sf-rf1 .sf-reg-modal{width:min(900px,96vw)}
+.sf-rf1 .sf-reg-modal .sf-prov179-banner{margin-top:12px}
+@media (max-width:650px){.sf-rf1 .sf-reg-actions{min-width:0}.sf-rf1 .sf-reg-table{min-width:760px}}
+.sf-rf1 .sf-reg-table th,.sf-rf1 .sf-reg-table td:nth-child(5){white-space:nowrap}
