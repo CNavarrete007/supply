@@ -9,7 +9,8 @@ use CodeIgniter\HTTP\ResponseInterface;
 use Throwable;
 
 /**
- * Servicios Operativos · read-only (Master Admin). Section 3 "Matriz de servicios" and the service request view.
+ * Servicios Operativos · read-only (Master Admin). Section 3 "Matriz de servicios", the service request view and the
+ * data of section 4 "Reportes" (matrix filtered by request date range).
  * Registering, editing or deleting services is NOT exposed (no write routes).
  */
 final class ServiceController extends ReadOnlyModuleController
@@ -24,7 +25,11 @@ final class ServiceController extends ReadOnlyModuleController
                 'client' => [self::UUID_OR_ALL, 'all'],
                 'buyer' => ['/^(all|unassigned|legacy-[0-9a-f]{16}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/D', 'all'],
                 'service' => [self::TEXT, ''], 'status' => [self::TEXT, ''], 'q' => [self::TEXT, ''],
+                'from' => ['/^(|\d{4}-\d{2}-\d{2})$/D', ''], 'to' => ['/^(|\d{4}-\d{2}-\d{2})$/D', ''],
             ]);
+            if ($f !== null && ((($f['from'] !== '') && ! self::validDate($f['from'])) || (($f['to'] !== '') && ! self::validDate($f['to'])) || ($f['from'] !== '' && $f['to'] !== '' && $f['from'] > $f['to']))) {
+                $f = null;
+            }
             if ($f === null) {
                 return $this->fail(422, 'INVALID_FILTER', 'Parámetros de consulta inválidos.');
             }
@@ -53,5 +58,11 @@ final class ServiceController extends ReadOnlyModuleController
             log_message('error', 'SupplyFlow service detail unavailable.');
             return $this->fail(503, 'SERVICES_UNAVAILABLE', 'No se pudo consultar el servicio.');
         }
+    }
+
+    private static function validDate(string $d): bool
+    {
+        $x = \DateTimeImmutable::createFromFormat('!Y-m-d', $d);
+        return $x !== false && $x->format('Y-m-d') === $d;
     }
 }

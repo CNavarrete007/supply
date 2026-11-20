@@ -30,7 +30,7 @@ adm = session(USER)
 try:
     get = lambda p: json.loads(adm.open(API + p).read())
     check('Master Admin: 200', status(adm, M) == 200)
-    check('422 con parámetros inválidos', all(status(adm, M + b) == 422 for b in ['?x=1', '?client=abc', '?buyer=nadie', '?page_size=51', '?q=%01']) and status(adm, f'{R}/{ZERO}?a=1') == 422)
+    check('422 con parámetros inválidos', all(status(adm, M + b) == 422 for b in ['?x=1', '?client=abc', '?buyer=nadie', '?page_size=51', '?q=%01', '?from=2026-02-30', '?to=20261101', '?from=2026-11-10&to=2026-11-01']) and status(adm, f'{R}/{ZERO}?a=1') == 422)
     check('servicio inexistente o id inválido → 404', status(adm, f'{R}/{ZERO}') == 404 and status(adm, f'{R}/abc') == 404)
     check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [M, R, f'{R}/{ZERO}'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
     a = get(M + '?page_size=50'); cl = a['summary']['clients']
@@ -51,6 +51,12 @@ try:
         check('filtros de servicio, estatus y búsqueda en el servidor', all(y['service'] == x0['service'] for y in get(M + '?page_size=50&service=' + urllib.parse.quote(x0['service']))['items'])
               and all(y['status'] == x0['status'] for y in get(M + '?page_size=50&status=' + urllib.parse.quote(x0['status']))['items'])
               and any(y['folio'] == x0['folio'] for y in get(M + '?q=' + urllib.parse.quote(x0['folio']))['items']) and get(M + '?q=zzz-no-existe')['total'] == 0)
+        dates = sorted(str(y['date'])[:10] for y in a['items'] if y['date'])
+        if dates:
+            mid = dates[len(dates) // 2]
+            lo = get(M + f'?page_size=50&to={mid}'); hi = get(M + f'?page_size=50&from={mid}'); one = get(M + f'?page_size=50&from={mid}&to={mid}')
+            check('reportes: rango de fechas (from/to) en el servidor', all(str(y['date'])[:10] <= mid for y in lo['items']) and all(str(y['date'])[:10] >= mid for y in hi['items']) and one['total'] == sum(1 for d in dates if d == mid)
+                  and lo['total'] + hi['total'] - one['total'] == len(dates))
         p1 = get(M + '?page_size=1&page=1'); p2 = get(M + '?page_size=1&page=2') if a['total'] > 1 else {'items': []}
         check('paginación', len(p1['items']) == 1 and (a['total'] < 2 or p1['items'][0]['id'] != p2['items'][0]['id']))
         dd = get(f"{R}/{x0['id']}")

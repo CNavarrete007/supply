@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Lock, Loader2, AlertCircle, X, Printer } from 'lucide-react';
 import { servicesMatrix, serviceDetail } from './api';
-import { SERVICE_TYPES, STATUSES, PAGE_SIZES, mergeOptions, clientsChip, clientCards, buyerCards, serviceRow, servicesCsv, editForm, validateEdit, editLockedText, deleteBlock, deleteError, deleteLockedText, rangeText, serviceRequestHtml } from './serviceMatrix.mjs';
+import { SERVICE_TYPES, STATUSES, PAGE_SIZES, mergeOptions, clientsChip, clientCards, buyerCards, serviceRow, servicesCsv, editForm, validateEdit, editLockedText, deleteBlock, deleteError, deleteLockedText, rangeText } from './serviceMatrix.mjs';
+import { serviceRequestHtml } from './serviceReports.mjs';
 import { useLoad } from '../reception/useLoad.js';
 
 // Servicios Operativos · sección 3 "Matriz de servicios" (diseño Grupo Gerez), conectada a MariaDB en modo lectura

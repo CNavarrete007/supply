@@ -82,13 +82,15 @@ final class ServiceReadRepository
     private function closed(): string { return self::CLOSED; }
     private function done(): string { return self::DONE; }
 
-    /** @param array{client:string,buyer:string,service:string,status:string,q:string,page:int,page_size:int} $f */
+    /** @param array{client:string,buyer:string,service:string,status:string,q:string,from?:string,to?:string,page:int,page_size:int} $f (from/to: request date range, section 4 Reportes) */
     public function matrix(int $org, array $f): array
     {
         $base = $this->base();
         $w = ''; $b = [$org];
         if ($f['service'] !== '') { $w .= ' AND V.service=?'; $b[] = $f['service']; }
         if ($f['status'] !== '') { $w .= ' AND V.status=?'; $b[] = $f['status']; }
+        if (($f['from'] ?? '') !== '') { $w .= ' AND V.date>=?'; $b[] = $f['from']; }
+        if (($f['to'] ?? '') !== '') { $w .= ' AND V.date<=?'; $b[] = $f['to']; }
         if ($f['q'] !== '') {
             $l = '%' . strtr($f['q'], ['!' => '!!', '%' => '!%', '_' => '!_']) . '%';
             $w .= " AND (V.folio LIKE ? ESCAPE '!' OR V.requisition LIKE ? ESCAPE '!' OR V.internal_reference LIKE ? ESCAPE '!' OR V.client_name LIKE ? ESCAPE '!' OR V.project LIKE ? ESCAPE '!' OR V.authorization_reference LIKE ? ESCAPE '!' OR V.responsible LIKE ? ESCAPE '!')";

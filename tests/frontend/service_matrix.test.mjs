@@ -1,7 +1,8 @@
 // Servicios Operativos · sección 3 "Matriz de servicios": lógica pura (node --test).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SERVICE_TYPES, STATUSES, PAGE_SIZES, mergeOptions, money, clientsChip, clientCards, buyerCards, serviceRow, servicesCsv, editForm, validateEdit, editLockedText, deleteBlock, deleteError, deleteLockedText, rangeText, serviceRequestHtml } from '../../src/views/services/serviceMatrix.mjs';
+import { SERVICE_TYPES, STATUSES, PAGE_SIZES, mergeOptions, money, clientsChip, clientCards, buyerCards, serviceRow, servicesCsv, editForm, validateEdit, editLockedText, deleteBlock, deleteError, deleteLockedText, rangeText } from '../../src/views/services/serviceMatrix.mjs';
+import { serviceRequestHtml } from '../../src/views/services/serviceReports.mjs';
 
 // Filas sintéticas con la forma de GET /api/v1/services/matrix.
 const X = { id: 's1', folio: 'SRV-2026-00002', requisition: 'HOL-0001', internal_reference: 'HOL-0001', service: 'Last Mile Deliveries', client_name: 'Hool Energy de Mexico', project: 'TRION', date: '2026-08-05', required_date: '2026-08-10',
@@ -43,6 +44,8 @@ test('Excel/CSV: encabezados, escapado y protección contra fórmulas', () => {
   assert.ok(csv.includes('SRV-2026-00002,HOL-0001,HOL-0001,Last Mile Deliveries'));
   assert.ok(csv.includes(`"'=HYPERLINK(""x"")"`) && csv.includes('"A, ""B"""'));
   assert.equal(csv.split('\r\n').length, 3);
+  const cl = servicesCsv([X], false, { internal: false }).split('\r\n')[0];
+  assert.ok(!/Costo|Margen|OC proveedor|Comprador/.test(cl) && cl.includes('Venta'), 'exportación al cliente sin costo interno, margen, OC ni comprador');
 });
 
 test('editar: cambios, validación, advertencias y no guarda', () => {

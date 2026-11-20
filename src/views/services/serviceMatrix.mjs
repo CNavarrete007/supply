@@ -1,9 +1,8 @@
 // Servicios Operativos · sección 3 "Matriz de servicios" · lógica pura (sin red).
 // Datos: GET /api/v1/services/matrix (servicios de service_orders con tarjetas por cliente y por comprador; el comprador es
 // el de la validación interna vigente de la requisición vinculada) y GET /api/v1/services/{id} (expediente para la vista
-// "Solicitud"). Editar y eliminar servicios son escrituras sin endpoint: se validan y se informa que no se guardaron.
-import { escapeHtml } from '../generalMatrix/model.mjs';
-import { PO_FORMAT } from '../purchaseOrders/poPdf.mjs';
+// "Solicitud", generada con serviceReports.mjs). Editar y eliminar servicios son escrituras sin endpoint: se validan y se
+// informa que no se guardaron.
 
 const clean = v => String(v ?? '').trim();
 const fold = v => clean(v).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -59,13 +58,14 @@ export function serviceRow(x, en = false) {
 }
 
 /** Excel/CSV of the filtered services (UTF-8 with BOM for Excel). */
-export function servicesCsv(items = [], en = false) {
+export function servicesCsv(items = [], en = false, { internal = true } = {}) {
   const h = en ? ['Folio', 'Requisition', 'Internal reference', 'Service', 'Client', 'Project', 'Date', 'Client authorization', 'Authorization reference', 'Supplier PO', 'Billing', 'Status', 'Quantity', 'Unit', 'Cost', 'Sale', 'Margin', 'Currency', 'Responsible', 'Buyer', 'Evidence']
     : ['Folio', 'Requisición', 'Referencia interna', 'Servicio', 'Cliente', 'Proyecto', 'Fecha', 'Autorización cliente', 'Referencia de autorización', 'OC proveedor', 'Facturación', 'Estatus', 'Cantidad', 'Unidad', 'Costo', 'Venta', 'Margen', 'Moneda', 'Responsable', 'Comprador', 'Evidencias'];
+  const keep = r => (internal ? r : r.filter((_, i) => ![9, 14, 16, 19].includes(i))); // client export: no supplier PO, cost, margin or buyer
   const q = v => { const s = clean(v); return /[",\n;]/.test(s) || /^[=+\-@]/.test(s) ? `"${(/^[=+\-@]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"` : s; };
   const rows = items.map(x => { const v = serviceRow(x, en); return [x.folio, x.requisition, x.internal_reference, x.service, x.client_name, x.project, clean(x.date).slice(0, 10), x.authorization_type, x.authorization_reference,
     x.supplier_po || v.po.text, v.billing.text, x.status, x.quantity, x.unit_label, x.cost, x.price, x.margin, x.currency, x.responsible, x.buyer, x.evidence_count]; });
-  return `﻿${[h, ...rows].map(r => r.map(q).join(',')).join('\r\n')}`;
+  return `\uFEFF${[h, ...rows].map(r => keep(r).map(q).join(',')).join('\r\n')}`;
 }
 
 /** "Editar": editable fields of a service (the folio, client and requisition are not editable). */
@@ -115,39 +115,4 @@ export function rangeText(data, en = false) {
   const t = Number(data?.total) || 0; const p = Number(data?.page) || 1; const s = Number(data?.page_size) || 10;
   const a = t ? (p - 1) * s + 1 : 0; const b = Math.min(t, p * s);
   return en ? `${a}-${b} of ${t} records` : `${a}-${b} de ${t} registros`;
-}
-
-const humanKey = k => clean(k).replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
-const scalar = v => (v === null || v === undefined || v === '' ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v));
-
-/** "Solicitud": printable service request (Grupo Gerez), every value escaped. */
-export function serviceRequestHtml(d, en = false, { logoUrl = '/image_923273.svg' } = {}) {
-  const x = d?.item || {}; const v = serviceRow(x, en);
-  const L = (es, e) => (en ? e : es); const e = escapeHtml;
-  const box = (title, pairs) => `<div class="box"><div class="lbl">${e(title)}</div><table class="kv">${pairs.map(([k, val]) => `<tr><th>${e(k)}</th><td>${e(val)}</td></tr>`).join('')}</table></div>`;
-  const details = Object.entries(d?.details || {});
-  return `<!DOCTYPE html><html lang="${en ? 'en' : 'es'}"><head><meta charset="utf-8"><title>${e(x.folio)}</title><style>
-@page { size: letter; margin: 1.2cm; } * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-body { margin: 0; padding: 24px 30px; font-family: Arial, Helvetica, sans-serif; color: #0f172a; font-size: 10px; }
-.hd { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 3px solid #1e385c; }
-.brand { display: flex; align-items: center; gap: 10px; } .brand img { width: 44px; height: 44px; } .brand .n { font-size: 16px; font-weight: 900; color: #ea580c; } .brand .t { font-size: 7px; font-weight: 700; color: #64748b; letter-spacing: 1px; }
-h1 { margin: 0; font-size: 18px; text-align: center; } .sub { text-align: center; color: #1e385c; font-size: 8.5px; margin-top: 3px; } .meta { text-align: right; font-size: 8.5px; color: #475569; line-height: 1.7; } .meta .f { font-size: 11px; font-weight: 800; color: #1d4ed8; }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; } .box { border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 3px; padding: 9px 11px; }
-.lbl { font-size: 8px; font-weight: 800; color: #1e385c; text-transform: uppercase; margin-bottom: 5px; } .kv { width: 100%; border-collapse: collapse; } .kv th { text-align: left; width: 42%; font-weight: 700; color: #475569; padding: 2px 6px 2px 0; vertical-align: top; } .kv td { padding: 2px 0; vertical-align: top; word-break: break-word; }
-.full { margin-top: 12px; } .foot { margin-top: 18px; text-align: center; font-size: 7.5px; color: #94a3b8; }
-</style></head><body>
-<div class="hd"><div class="brand"><img src="${e(logoUrl)}" alt="Grupo Gerez"><div><div class="n">${e(PO_FORMAT.company)}</div><div class="t">${PO_FORMAT.tagline.map(e).join('<br>')}</div></div></div>
-<div><h1>${L('SOLICITUD DE SERVICIO', 'SERVICE REQUEST')}</h1><div class="sub">${e(v.service)}</div></div>
-<div class="meta"><div class="f">${e(x.folio)}</div><div>${L('Fecha', 'Date')}: ${e(v.date)}</div><div>${L('Estatus', 'Status')}: ${e(v.status.text)}</div></div></div>
-<div class="grid">
-${box(L('Cliente y requisición', 'Client and requisition'), [[L('Cliente', 'Client'), x.client_name], [L('Proyecto', 'Project'), v.project], [L('Contrato', 'Contract'), scalar(x.contract)], [L('Requisición', 'Requisition'), v.requisition], [L('Referencia interna', 'Internal reference'), v.reference], [L('Comprador', 'Buyer'), scalar(x.buyer)], [L('Responsable', 'Responsible'), scalar(x.responsible)]])}
-${box(L('Autorización del cliente', 'Client authorization'), [[L('Tipo', 'Type'), scalar(x.authorization_type)], [L('Estatus', 'Status'), scalar(x.authorization_status)], [L('Referencia', 'Reference'), scalar(x.authorization_reference)], [L('Fecha', 'Date'), scalar(x.authorization_date)], [L('Monto', 'Amount'), x.authorization_amount === null || x.authorization_amount === undefined ? '—' : money(x.authorization_amount, x.authorization_currency)], [L('Vigencia', 'Valid until'), scalar(x.authorization_valid_until)]])}
-${box(L('Ejecución', 'Execution'), [[L('Fecha requerida', 'Required date'), scalar(clean(x.required_date).slice(0, 10))], [L('Cantidad', 'Quantity'), v.qty], [L('Proveedor / OC', 'Supplier / PO'), x.supplier_po ? `${x.supplier_po} · ${scalar(x.supplier_name)}` : v.po.text], [L('Evidencias', 'Evidence'), String(v.evidence)]])}
-${box(L('Importes', 'Amounts'), [[L('Costo', 'Cost'), money(x.cost, x.currency)], [L('Venta', 'Sale'), money(x.price, x.currency)], [L('Margen', 'Margin'), money(x.margin, x.currency)], [L('Facturación', 'Billing'), `${v.billing.text}${v.billing.sub ? ` (${v.billing.sub})` : ''}`]])}
-</div>
-<div class="box full"><div class="lbl">${L('Descripción / alcance', 'Description / scope')}</div><div>${e(scalar(x.description))}</div>${clean(x.notes) ? `<div style="margin-top:4px"><strong>${L('Observaciones', 'Notes')}:</strong> ${e(x.notes)}</div>` : ''}</div>
-${details.length ? `<div class="box full"><div class="lbl">${L('Datos operativos', 'Operational data')}</div><table class="kv">${details.map(([k, val]) => `<tr><th>${e(humanKey(k))}</th><td>${e(scalar(val))}</td></tr>`).join('')}</table></div>` : ''}
-${(d?.files || []).length ? `<div class="box full"><div class="lbl">${L('Evidencias registradas', 'Recorded evidence')}</div>${d.files.map(f => `<div>${e(f.name || '—')} · ${e(f.role || '')}</div>`).join('')}<div style="color:#64748b;margin-top:3px">${L('Los archivos privados no se descargan desde esta vista.', 'Private files are not downloaded from this view.')}</div></div>` : ''}
-<div class="foot">${e(PO_FORMAT.company)} · ${e(PO_FORMAT.address)}</div>
-</body></html>`;
 }
