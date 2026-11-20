@@ -69,7 +69,7 @@ Mismo patrón que R2 y R3:
 - Una cuenta SQL con los grants mínimos por módulo, en su propio overlay.
 - Pruebas con datos sintéticos en el sandbox: unitarias, HTTP (401, 403, 409, 422, idempotencia) y E2E de interfaz.
 
-Las 77 tablas ya existen. En principio no hace falta DDL nuevo, pero ninguna tabla tiene columna de versión dedicada (`row_version`). Para cada módulo hay que definir el token de concurrencia con base en las columnas reales antes de escribir.
+Las 77 tablas ya existen. En principio no hace falta DDL nuevo. Para la concurrencia optimista existe `business_entities.row_version`, común a todas las entidades de negocio que comparten su `id` (requisición, RFQ, cotización, OC, recepción, entrega, servicio…), y también `users.row_version`. Ese es el token para `If-Match`. *(Corregido el 20 nov. 2026: la versión anterior de este documento decía que no había columna de versión.)*
 
 **Requieren autorización explícita del usuario antes de ejecutarse:**
 - Cualquier `GRANT` nuevo o cuenta SQL.
