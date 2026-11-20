@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { Lock } from 'lucide-react';
+import { ServiceMatrix } from './services/ServiceMatrix.jsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { 
@@ -1055,6 +1057,14 @@ export function OperationalServices({ onNotify, lang = 'es', language, isEnglish
         </div>
       </div>
 
+      {/* Aviso propio del módulo: solo la sección Matriz está conectada a MariaDB */}
+      <div data-testid="services-notice" className={`rounded-xl border px-4 py-3 flex items-start gap-2 text-[11px] ${activeTab === 3 ? 'border-amber-200 bg-amber-50/70 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-900 font-semibold'}`}>
+        <Lock className="w-4 h-4 shrink-0 mt-0.5" />
+        <span>{activeTab === 3
+          ? (isEn ? 'Services matrix connected to MariaDB (read-only): services, clients, buyers, authorizations, supplier POs, billing, amounts and evidence are real data. Editing and deleting services validate the capture but do not store it: they are operational writes blocked until authorized.' : 'Matriz de servicios conectada a MariaDB (solo lectura): servicios, clientes, compradores, autorizaciones, OC de proveedor, facturación, importes y evidencias son datos reales. Editar y eliminar servicios validan la captura pero no la almacenan: son escrituras operativas bloqueadas hasta su autorización.')
+          : (isEn ? 'Section pending integration: it may show demo data and its forms do not save operations in MariaDB.' : 'Sección pendiente de integración: puede mostrar datos de demostración y sus formularios no guardan operaciones en MariaDB.')}</span>
+      </div>
+
       {/* CONTENEDOR DINÁMICO */}
       <div className="mt-6">
         
@@ -1870,192 +1880,7 @@ export function OperationalServices({ onNotify, lang = 'es', language, isEnglish
 
         {/* TARJETA 3: MATRIZ DE SERVICIOS CON TARJETAS CLICKABLES */}
         {activeTab === 3 && (
-          <div className="bg-white rounded-3xl shadow-xs border border-slate-200/80 p-6 text-slate-700">
-            
-            {/* ENCABEZADO DE SERVICIOS POR CLIENTE */}
-            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">{t.matrix.clientSectionTitle}</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  {t.matrix.clientSectionSubtitle}
-                </p>
-              </div>
-              <div className="bg-blue-50 text-blue-800 text-xs font-bold px-3 py-1.5 rounded-full whitespace-nowrap border border-blue-100">
-                {t.matrix.badge}
-              </div>
-            </div>
-
-            {/* GRID DE TARJETAS CLICKABLES */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-6">
-              
-              {/* Tarjeta 1: HOOL ENERGY */}
-              <div 
-                onClick={() => setSelectedClient(selectedClient === 'HE' ? null : 'HE')}
-                className={`relative p-5 rounded-2xl border cursor-pointer transition-all duration-200 group ${
-                  selectedClient === 'HE' 
-                    ? 'border-blue-500 shadow-md bg-slate-50/30' 
-                    : 'border-slate-200 hover:border-blue-300 shadow-sm bg-white'
-                }`}
-              >
-                {/* Borde izquierdo degradado */}
-                <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b from-blue-600 to-purple-600 rounded-l-2xl"></div>
-                
-                <div className="flex items-center gap-3 mb-4 pl-2">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-sm shrink-0">
-                    HE
-                  </div>
-                  <div>
-                    <h4 className="text-[11px] font-black text-slate-900 uppercase leading-tight">
-                      HOOL ENERGY DE MEXICO S. DE R.L. DE C.V.
-                    </h4>
-                    <span className="text-[10px] text-slate-400 font-medium">TRION</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 mb-4 pl-2">
-                  <div className="border border-slate-100 rounded-xl p-2 text-center bg-slate-50/80">
-                    <div className="text-sm font-black text-slate-800">1</div>
-                    <div className="text-[9px] text-slate-500 font-medium">{t.matrix.cards.services}</div>
-                  </div>
-                  <div className="border border-slate-100 rounded-xl p-2 text-center bg-slate-50/80">
-                    <div className="text-sm font-black text-slate-800">1</div>
-                    <div className="text-[9px] text-slate-500 font-medium">{t.matrix.cards.buyers}</div>
-                  </div>
-                  <div className="border border-slate-100 rounded-xl p-2 text-center bg-slate-50/80">
-                    <div className="text-sm font-black text-slate-800">1</div>
-                    <div className="text-[9px] text-slate-500 font-medium">{t.matrix.cards.open}</div>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center pl-2 pt-3 border-t border-slate-100">
-                  <span className="text-[11px] font-bold text-blue-700">{t.matrix.cards.withEvidence}</span>
-                  <span className="text-blue-700 font-bold group-hover:translate-x-1 transition-transform">→</span>
-                </div>
-              </div>
-
-              {/* Tarjeta 2: HORNBECK OFFSHORE */}
-              <div 
-                onClick={() => setSelectedClient(selectedClient === 'HO' ? null : 'HO')}
-                className={`relative p-5 rounded-2xl border cursor-pointer transition-all duration-200 group ${
-                  selectedClient === 'HO' 
-                    ? 'border-blue-500 shadow-md bg-slate-50/30' 
-                    : 'border-slate-200 hover:border-blue-300 shadow-sm bg-white'
-                }`}
-              >
-                <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b from-blue-600 to-purple-600 rounded-l-2xl"></div>
-                
-                <div className="flex items-center gap-3 mb-4 pl-2">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-sm shrink-0">
-                    HO
-                  </div>
-                  <div>
-                    <h4 className="text-[11px] font-black text-slate-900 uppercase leading-tight">
-                      HORNBECK OFFSHORE SERVICES DE MEXICO, S. DE R.L. DE C.V.
-                    </h4>
-                    <span className="text-[10px] text-slate-400 font-medium">TRION</span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 mb-4 pl-2">
-                  <div className="border border-slate-100 rounded-xl p-2 text-center bg-slate-50/80">
-                    <div className="text-sm font-black text-slate-800">2</div>
-                    <div className="text-[9px] text-slate-500 font-medium">{t.matrix.cards.services}</div>
-                  </div>
-                  <div className="border border-slate-100 rounded-xl p-2 text-center bg-slate-50/80">
-                    <div className="text-sm font-black text-slate-800">2</div>
-                    <div className="text-[9px] text-slate-500 font-medium">{t.matrix.cards.buyers}</div>
-                  </div>
-                  <div className="border border-slate-100 rounded-xl p-2 text-center bg-slate-50/80">
-                    <div className="text-sm font-black text-slate-800">2</div>
-                    <div className="text-[9px] text-slate-500 font-medium">{t.matrix.cards.open}</div>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center pl-2 pt-3 border-t border-slate-100">
-                  <span className="text-[11px] font-bold text-blue-700">{t.matrix.cards.withEvidence}</span>
-                  <span className="text-blue-700 font-bold group-hover:translate-x-1 transition-transform">→</span>
-                </div>
-              </div>
-
-            </div>
-
-            {/* MATRIZ DE SERVICIOS - SE MUESTRA AL SELECCIONAR UNA TARJETA */}
-            {selectedClient && (
-              <div className="mt-8 pt-6 border-t border-slate-200/80 animate-in fade-in slide-in-from-top-4 duration-300">
-                
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                  <div>
-                    <h3 className="text-lg font-bold text-slate-900">{t.matrix.matrixTitle}</h3>
-                    <p className="text-xs text-slate-400">{t.matrix.matrixSubtitle}</p>
-                  </div>
-                  <button 
-                    type="button" 
-                    onClick={() => exportToCSV([])}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-colors self-start sm:self-auto cursor-pointer shadow-xs"
-                  >
-                    <span>↓</span> {t.matrix.btnExcel}
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-6">
-                  <div className="md:col-span-6">
-                    <input 
-                      type="text" 
-                      placeholder={t.matrix.searchPlaceholder} 
-                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs"
-                    />
-                  </div>
-                  <div className="md:col-span-3">
-                    <select className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs">
-                      <option>{t.matrix.allServices}</option>
-                      <option>Suministro de agua</option>
-                      <option>Transporte</option>
-                      <option>Transporte de personal</option>
-                      <option>Gestión Rise X</option>
-                      <option>Servicio de grúa</option>
-                      <option>Montacargas</option>
-                      <option>Recarga de gasolina</option>
-                      <option>Last Mile Deliveries</option>
-                    </select>
-                  </div>
-                  <div className="md:col-span-3">
-                    <select className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs">
-                      <option>{t.matrix.allStatuses}</option>
-                      <option>Solicitado</option>
-                      <option>Programado</option>
-                      <option>En ejecución</option>
-                      <option>Pendiente de información</option>
-                      <option>Pendiente de aprobación</option>
-                      <option>Completado</option>
-                      <option>Facturado</option>
-                      <option>Cancelado</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto border border-slate-100 rounded-2xl shadow-2xs">
-                  <table className="w-full text-[11px] text-left border-collapse min-w-[1200px]">
-                    <thead>
-                      <tr className="bg-blue-50/50 border-b border-slate-100 text-slate-600 uppercase font-bold tracking-wider text-[10px]">
-                        {t.matrix.headers.map((head, idx) => (
-                          <th key={idx} className={`p-3 ${idx === t.matrix.headers.length - 1 ? 'text-center' : ''}`}>
-                            {head}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td colSpan={18} className="p-12 text-center text-slate-400 font-medium">
-                          {t.matrix.emptyText}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
+          <ServiceMatrix en={isEn} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} />
         )}
 
         {/* TARJETA 4: REPORTES */}
