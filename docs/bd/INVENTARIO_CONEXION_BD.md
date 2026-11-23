@@ -1,9 +1,21 @@
 # SupplyFlow — Inventario de conexión a MariaDB por módulo
 
-**Fecha:** 20 nov. 2026 · **Base del análisis:** commit `2f79193` (código, DDL versionado de 77 tablas y contratos de cuentas SQL).
-**Alcance:** solo análisis de código. No se ejecutaron migraciones, grants ni escrituras.
+**Fecha:** 23 nov. 2026 · **Base del análisis:** commit `c280023` (código, DDL versionado de 77 tablas y contratos de cuentas SQL) y el respaldo `supplyflow_dev.sql` del 9 nov. 2026 (77 tablas; el archivo compartido el 23 nov. es idéntico byte a byte al del 20 nov.).
+**Alcance:** análisis de código y del respaldo. No se ejecutaron migraciones, grants ni escrituras. Los recuentos de datos del respaldo se guardan fuera del repositorio.
 
-## 1. Cómo está conectado hoy el sistema
+## 1. Resumen
+
+| Estado | Módulos |
+|---|---|
+| **Conectados (lectura con datos reales)** | Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles |
+| **Parcialmente conectado** | Inicio y Dashboard: 11 indicadores (tarjetas, paneles o mini-indicadores) muestran «Pendiente de integración» o «—»: servicios (3), Service Fee (2), proveedores con mayor actividad, recompra (3), enmiendas de OC y estatus de pago |
+| **Pendientes (datos fijos o de demostración)** | Configuración (7 pestañas, demo y `localStorage`), Portal del Cliente (`mockQuote`, `mockPO`; el acceso no autentica), Flujo del Proceso (23 contadores fijos por etapa), campana de Notificaciones (solo notificaciones locales del navegador) |
+| **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
+| **Validan pero no guardan** | Todo lo demás: termina con «Datos validados, pero no se guardó…» |
+
+`App.jsx` muestra el aviso genérico «Módulo pendiente de integración» solo en **Flujo del Proceso**, **Portal del Cliente** y **Configuración**.
+
+## 2. Cuentas SQL
 
 | Cuenta SQL (overlay) | Qué puede escribir | La usan |
 |---|---|---|
@@ -13,90 +25,124 @@
 | `supplyflow_reqwrite_local` (`compose.supply-reqwrite.yml`) | Borradores v0.7: `requisitions`, `requisition_items`, snapshots, `workflow_events`, `document_sequences` | `requisitions/drafts` |
 | `supplyflow_recovery_local` (`compose.supply-recovery.yml`, contrato 52) | Requisiciones RF1, R2, R3A/R3B/R3C1 y bitácoras R3C2/R3C3 | Requisición y Control de cambios |
 
-Rutas de escritura que existen en `backend/app/Config/Routes.php` (19): login/logout; `catalogs/clients`, `catalogs/suppliers` y `catalogs/supplier-offerings` (POST/PUT); `requisitions/drafts` (POST/PUT); `recovery/requisitions` (POST/PUT) y `regularization` (POST); `recovery/.../changes` (crear, `decision`, `withdraw`, `commercial-reconciliation`, `commercial-executions` y su `review`).
+Rutas de escritura en `backend/app/Config/Routes.php` (19): login/logout; `catalogs/clients`, `catalogs/suppliers` y `catalogs/supplier-offerings` (POST/PUT); `requisitions/drafts` (POST/PUT); `recovery/requisitions` (POST/PUT) y `regularization` (POST); `recovery/.../changes` (crear, `decision`, `withdraw`, `commercial-reconciliation`, `commercial-executions` y su `review`).
 
-**Todo lo demás es de solo lectura.** Las pantallas validan la captura y terminan con «Datos validados, pero no se guardó…».
+El servidor solo distingue el rol `master_admin`; **no evalúa permisos por sección** (`role_permissions`, `user_permissions` se leen pero no se aplican).
 
-Tablas del DDL que ningún código del backend usa todavía: `units`, `contracts`, `customer_quote_adjustments`, `delivery_item_allocations`, `outbox_messages`, `email_delivery_logs`, `ai_runs`, `import_batches`, `import_records`, `import_issues`, `legacy_id_map`. `portal_access_tokens` solo aparece en una lista de campos prohibidos.
+Tablas del DDL que ninguna pantalla consulta todavía: `units`, `contracts`, `projects`, `customer_quote_adjustments`, `delivery_item_allocations`, `outbox_messages`, `email_delivery_logs`, `ai_runs`, `portal_access_tokens`, `import_batches`, `import_records`, `import_issues`, `legacy_id_map`. `notifications` solo se cuenta en Órdenes de Compra (no leídas); la campana no la usa.
 
-## 2. Inventario módulo por módulo
+## 3. Inventario módulo por módulo
 
-Leyenda:
-- **Real**: guarda en MariaDB.
-- **Bloqueada**: valida la captura pero no guarda.
-- **Demo**: muestra datos fijos en el código.
-- **N/A**: el módulo no requiere guardar.
+Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Demo** datos fijos en el código · **N/A** no requiere guardar.
 
-| Módulo | Sección o tarjeta | Lectura de BD | Escritura | Tablas destino | Qué falta |
+| Módulo | Sección o tarjeta | Lectura de BD | Escritura | Tablas | Qué falta |
 |---|---|---|---|---|---|
-| Inicio y Dashboard | KPIs | Sí | N/A | — | Nada |
-| Flujo del Proceso | Guía | No (es estática) | N/A | — | Opcional: mostrar contadores reales con `analytics` |
-| Portal del Cliente | Acceso y seguimiento | **No** (`mockQuote`, `mockPO`) | Demo | `portal_access_tokens` y vistas filtradas por cliente | Diseñar la autenticación por cliente, emitir y revocar tokens, filtrar todo por cliente en el servidor. Es nueva superficie de seguridad |
+| Inicio y Dashboard | KPIs de requisiciones, estatus, alertas, importes, clientes, provisionales, Change Requests, segregación de funciones | Sí (`analytics/overview`, `recovery`) | N/A | `requisitions` y documentos del proceso | — |
+| Inicio y Dashboard | Servicios (Service-to-Cash), panel «Servicios Operativos», «Service-to-Cash · 8 etapas» | **No** (pendiente) | N/A | `service_orders`, `service_types`, `invoices`, `entity_files` | Ver §4.A |
+| Inicio y Dashboard | Service Fee (tarjeta y «Cotización + Service Fee»: con Service Fee, aprobadas por cliente, acumulado) | **No** (pendiente) | N/A | `customer_quote_versions.service_fee_*`, `customer_quote_decisions` | Ver §4.A |
+| Inicio y Dashboard | Proveedores con mayor actividad | **No** (pendiente) | N/A | `rfqs.supplier_id`, `supplier_quotes`, `awards` | Ver §4.A |
+| Inicio y Dashboard | Recompra: precios respetados, partidas por recotizar, precio comercial pendiente; Enmiendas de OC | **No** (pendiente) | N/A | `requisition_items.repeat_*`, `fixed_client_*`; `purchase_orders` (versiones), `purchase_order_modification_requests` | Ver §4.A |
+| Inicio y Dashboard | Estatus de pago de facturas | **No**: el esquema no registra pagos (solo `due_date`, `payment_terms`, estatus) | N/A | — | Definir el registro de pagos (DDL nuevo): requiere autorización |
+| Flujo del Proceso | Mapa, flujo de servicios, detalle por etapa, matriz, indicadores | **No**: 23 contadores fijos («N proceso(s)») | N/A | Documentos de cada etapa | Ver §4.B |
+| Portal del Cliente | Acceso y seguimiento | **No** (`mockQuote`, `mockPO`; el acceso no valida credenciales) | Demo | `portal_access_tokens`, `clients.portal_enabled`/`portal_locked` y vistas filtradas por cliente | Ver §4.E |
+| Campana (encabezado) | Notificaciones | **No**: solo notificaciones locales de la sesión | — | `notifications` | Ver §4.D |
 | Clientes | Alta y edición | Sí | **Real** | `clients` y contactos | Eliminar e importar siguen bloqueados |
 | Proveedores | Alta y edición | Sí | **Real** | `suppliers` y contactos | Eliminar e importar siguen bloqueados |
 | Suministros | Alta y edición | Sí | **Real** | `supplier_offerings` | Eliminar sigue bloqueado |
 | Contratista | Matriz y personal | Sí | Bloqueada | `people`, `users`, `user_roles` | Depende de la escritura de Usuarios y roles |
 | Requisición | Registro | Sí | **Real** (RF1) | `requisitions`, `requisition_items` | — |
-| Requisición | Regularización | Sí | **Real** (R2) | `requisitions` y evidencias | — |
-| Requisición | Matriz | Sí | N/A | — | — |
-| Requisición | Control de cambios | Sí: tablero `GET /api/v1/requisition-changes` con estados del original derivados de R3 (23 nov 2026) | **Real**: R3A desde la Matriz (SOLICITAR MODIFICACIÓN), R3B revisión independiente y retiro; R3C2/R3C3 solo consulta | `requisition_change_*` | Escrituras comerciales R3C2/R3C3 siguen bloqueadas. La revisión independiente requiere un segundo Master Admin activo |
-| Requisición | Crear desde historial | Sí: `GET /api/v1/requisition-history/catalog` con política de recompra y cotizaciones aprobadas (20 nov 2026) | Bloqueada (valida la requisición y la ruta por partida) | `requisitions` (`history_based`, `repeat_policy_snapshot`), `requisition_items` (`history_*`, `repeat_*_mode`, `fixed_client_*`) | El alta RF1 no guarda origen histórico ni ruta por partida: endpoint propio con la cuenta `recovery` (sin permisos nuevos) **y confirmar las reglas del Apps Script**: requiere autorización |
-| Requisición | Catálogo de categorías | Sí: `GET /api/v1/catalogs/categories` con estatus y uso (20 nov 2026) | Bloqueada (valida alta, edición, estatus y eliminación) | `categories` | Endpoint de escritura y permisos SQL (`INSERT`/`UPDATE`, y `DELETE` si se habilita eliminar) a `catalogwrite`: requiere autorización |
-| Gestión del Contratista | Registro de validación | Sí | Bloqueada | `requisition_reviews`, `workflow_events` | Endpoint de revisión, regla de que el revisor no sea el solicitante, y grants |
-| Gestión del Contratista | Estrategia y lotificación | Sí | Bloqueada | `sourcing_plans`, `sourcing_lots`, `sourcing_lot_items`, `sourcing_lot_suppliers` | Endpoint y grants. Es la antesala de la RFQ |
+| Requisición | Sin requisición / Regularización | Sí | **Real** (R2) | `requisitions` y evidencias | — |
+| Requisición | Matriz | Sí | N/A (SOLICITAR MODIFICACIÓN es R3A real) | — | — |
+| Requisición | Catálogo de categorías | Sí (`catalogs/categories`) | Bloqueada | `categories` | Endpoint y grants `INSERT`/`UPDATE` (y `DELETE`) para `catalogwrite` |
+| Requisición | Crear desde historial | Sí (`requisition-history/catalog`) | Bloqueada | `requisitions` (`history_based`, `repeat_policy_snapshot`), `requisition_items` (`history_*`, `repeat_*`, `fixed_client_*`) | Endpoint propio con la cuenta `recovery` (sin grants nuevos) y confirmar las reglas del Apps Script |
+| Requisición | Control de cambios | Sí (`requisition-changes`) | **Real**: R3A, R3B y retiro; R3C2/R3C3 solo consulta | `requisition_change_*` | Escrituras R3C2/R3C3 bloqueadas; la revisión independiente requiere un segundo Master Admin activo |
+| Gestión del Contratista | Registro de validación | Sí | Bloqueada | `requisition_reviews`, `workflow_events` | Endpoint, regla revisor ≠ solicitante y grants |
+| Gestión del Contratista | Estrategia y lotificación | Sí | Bloqueada | `sourcing_plans`, `sourcing_lots`, `sourcing_lot_items`, `sourcing_lot_suppliers` | Endpoint y grants |
 | Gestión del Contratista | Matriz y Reglas | Sí | Bloqueada | `requisition_reviews`, `organization_settings` | Editar reglas depende de Configuración |
-| Cotizaciones | 10 tarjetas: RFQ, cotización de proveedor, comparativo, cotización y decisión del cliente, adjudicación | Sí | Bloqueada (**comercial**) | `rfqs`, `rfq_items`, `supplier_quotes*`, `customer_quote*`, `awards`, `approval_policy_versions` | Cadena completa de endpoints, aprobaciones por política, folios (`document_sequences`) y pruebas integrales |
-| Órdenes de Compra | Emisión, autorización, enmiendas, firmas | Sí | Bloqueada (**comercial**) | `purchase_orders*`, `purchase_order_modification_requests`, `signature_evidence` | Endpoints, segregación de funciones, firmas y archivos privados |
-| Recepción y Entrega | Recepción, entrega y fotos | Sí | Bloqueada (**comercial**) | `goods_receipts*`, `deliveries`, `delivery_*`, `signature_evidence`, `entity_files` | Endpoints, control de cantidades acumuladas, evidencias privadas |
-| Factura | Registro, edición y acuse | Sí | Bloqueada (**comercial**) | `invoices`, `invoice_purchase_orders`, `invoice_acknowledgments` | Endpoints. Faltan respuestas de negocio: emisor/razón social y reglas de acumulados |
-| Servicios Operativos | Dashboard | Sí (23 nov 2026): reutiliza `GET /services/matrix`; encabezado con los tipos activos de `service_types` | N/A | `service_orders`, `service_types`, `invoices`, `entity_files`, `purchase_orders` | Nada (sin endpoint ni permisos nuevos). "Con documento adjunto" no tiene dato: el original no guardó documentos de autorización como archivo propio |
-| Servicios Operativos | Nueva solicitud y Nuevo servicio | Sí (23 nov 2026): clientes, tipos de servicio, ⚙ Generar folio y referencia, disponibilidad del folio; en el expediente, estatus y autorizaciones registradas, proveedores y OC vigentes | Bloqueada (valida y no crea; los archivos no se suben) | `requisitions` (`route_code 'service'`, `service_type_id`), `requisition_items`, después `service_orders` | Endpoint de alta de la requisición maestra de servicio: puede usar la cuenta `recovery` (ya tiene INSERT en `requisitions`, `requisition_items`, `business_entities`, snapshots, auditoría e idempotencia) pero **le falta SELECT en `service_types`**. El expediente (formulario "Nuevo servicio") requiere endpoint de escritura con INSERT en `service_orders` (grant nuevo), almacenamiento privado de evidencias (`files`, `entity_files`) y las capturas de "Datos específicos" de Transporte de personal, Grúa, Montacargas, Gasolina y Otro servicio |
+| Cotizaciones | 10 tarjetas (RFQ, cotización de proveedor, comparativo, cotización y decisión del cliente, adjudicación) | Sí | Bloqueada (**comercial**) | `rfqs`, `rfq_items`, `supplier_quotes*`, `customer_quote*`, `awards`, `approval_policy_versions` | Endpoints, aprobaciones por política, folios (`document_sequences`) y pruebas integrales |
+| Órdenes de Compra | Emisión, matriz, autorización, enmiendas, revisión, formato | Sí | Bloqueada (**comercial**) | `purchase_orders*`, `purchase_order_modification_requests`, `signature_evidence` | Endpoints, segregación de funciones, firmas y archivos privados |
+| Recepción y Entrega | Recepción, entrega, matriz | Sí | Bloqueada (**comercial**) | `goods_receipts*`, `deliveries`, `delivery_*`, `signature_evidence`, `entity_files` | Endpoints, cantidades acumuladas, evidencias privadas |
+| Factura | Registro, edición y acuse | Sí | Bloqueada (**comercial**) | `invoices`, `invoice_purchase_orders`, `invoice_acknowledgments` | Endpoints; emisor/razón social y reglas de acumulados |
+| Servicios Operativos | Dashboard y encabezado «Servicios configurados» | Sí (`services/matrix`, `services/new-request`) | N/A | `service_orders`, `service_types` | — |
+| Servicios Operativos | Nueva solicitud y Nuevo servicio | Sí (`services/new-request*`, `recovery/catalogs`, `recovery/folio`) | Bloqueada | `requisitions` (`route_code 'service'`), `requisition_items`, `service_orders`, `files`, `entity_files` | Endpoint de la requisición maestra (cuenta `recovery` + `SELECT service_types`) y del expediente (`INSERT service_orders`, evidencias privadas); capturas de «Datos específicos» de 5 tipos |
 | Servicios Operativos | Matriz y Reportes | Sí | Bloqueada | `service_orders` | Edición y borrado dependen del endpoint anterior |
-| Matriz General y Reportes | Consolidado | Sí | N/A | — | Nada |
-| Usuarios y roles | Usuarios, roles, matriz, actividad | Sí | Bloqueada | `people`, `users`, `user_roles`, `roles`, `role_permissions`, `user_permissions` | Cuenta SQL nueva, hash de contraseñas, protección contra escalamiento de privilegios. El servidor hoy solo distingue `master_admin`, **no evalúa permisos por sección** |
-| Configuración | Pestañas 1 a 5: identidad, parámetros, aprobaciones, condiciones, correos | **No** (demo y `localStorage`) | Demo | `organizations`, `organization_settings`, `approval_policy_versions`, `currencies`, `units`, `document_sequences`, `notifications`, `outbox_messages`, `email_delivery_logs` | Primero lectura; después escritura con versión de políticas (afecta aprobaciones y folios) |
-| Configuración | Pestañas 6 y 7: Respaldo y Reinicio | No | **No deben conectarse a la BD** | — | Los respaldos se hacen con las herramientas INT03, fuera de la interfaz. «Reinicio» solo debe limpiar la caché local del navegador |
+| Matriz General y Reportes | Consolidado | Sí | N/A | — | — |
+| Usuarios y roles | Usuarios, roles, matriz de permisos, actividad | Sí | Bloqueada | `people`, `users`, `user_roles`, `roles`, `role_permissions`, `user_permissions` | Cuenta SQL nueva, hash de contraseñas, protección contra escalamiento y evaluación de permisos por sección en el servidor |
+| Configuración | Pestañas 1 a 5 | **No** (demo y `localStorage`) | Demo | `organizations`, `organization_settings`, `approval_policy_versions`, `currencies`, `units`, `document_sequences`, `email_delivery_logs`, `files` | Ver §4.C |
+| Configuración | Pestañas 6 y 7 (Respaldo y Reinicio) | No | **No deben conectarse** | — | Los respaldos se hacen con las herramientas INT03 fuera de la interfaz; «Reinicio» solo debe limpiar la caché local |
 
-### Código sin uso (revisado el 20 nov. 2026)
+## 4. Cómo conectar lo pendiente para que muestre datos reales
 
-Hay 8 vistas antiguas con datos de demostración que **ya no se importan** en `App.jsx`, porque las reemplazaron los módulos conectados:
-- `src/views/Clients.jsx`
-- `src/views/Suppliers.jsx`
-- `src/views/SupplierSupply.jsx`
-- `src/views/Requisition.jsx`
-- `src/views/Quotes.jsx`
-- `src/views/PurchaseOrders.jsx`
-- `src/views/ReceptionDelivery.jsx`
-- `src/views/Invoice.jsx`
+Todo lo de esta sección es **solo lectura**: se resuelve con endpoints aditivos `GET`, Master Admin, `Cache-Control: no-store`, parámetros en lista blanca (422 si no) y la cuenta `supplyflow_api_local`, que ya tiene `SELECT` sobre el esquema. **No requiere grants, migraciones ni cambios de datos.** Cada uno se entrega con pruebas unitarias, HTTP (401/403/422, sin rutas de escritura, sin ids internos) y E2E de interfaz que calcula las cifras esperadas por separado.
 
-En total son unas 16,000 líneas. No son conexiones pendientes. También es residual el estado `quotes` que `App.jsx` guarda en `localStorage` (`grupo_gerez_quotes`): ningún módulo actual lo usa. Retirar ambos es una limpieza independiente y requiere autorización.
+### A. Inicio y Dashboard (11 indicadores)
+Extender `GET /api/v1/analytics/overview` (`AnalyticsReadRepository`) con bloques nuevos que respeten los filtros actuales de periodo y cliente:
+- **Servicios / Service-to-Cash y panel «Servicios Operativos»**: totales, abiertos, ejecutados, venta, costo y margen desde `service_orders`, con las mismas reglas que el Dashboard de Servicios (`dashboardModel.mjs`).
+- **«Service-to-Cash · 8 etapas»**: etapa por servicio derivada de los criterios del Flujo del Proceso (datos mínimos → autorización confirmada → programado → OC vinculada o «no requiere proveedor» → ejecutado → evidencia → listo para facturar → factura). Las reglas se toman de esos criterios; los casos ambiguos se confirman con el Apps Script.
+- **Service Fee**: versiones vigentes de `customer_quote_versions` con `service_fee_enabled`, suma de `service_fee_total_amount` por moneda y cuántas están aprobadas por el cliente (`client_decision_status` / `customer_quote_decisions`). `QuoteReadRepository` ya lee esas columnas.
+- **Proveedores con mayor actividad**: por proveedor, RFQs (`rfqs.supplier_id`), ofertas (`supplier_quotes`) y adjudicaciones (`awards`).
+- **Recompra**: partidas de requisiciones desde historial por `repeat_client_price_mode` y `repeat_sourcing_mode` (precio respetado, por recotizar, precio comercial pendiente).
+- **Enmiendas de OC**: versiones posteriores de `purchase_orders` y `purchase_order_modification_requests` (solo conteo; las escrituras siguen bloqueadas).
+- **Estatus de pago**: no tiene fuente. Se queda como pendiente hasta definir cómo registrar pagos (requeriría DDL y autorización).
 
-Los módulos que todavía muestran el aviso genérico «Módulo pendiente de integración» son **Portal del Cliente**, **Configuración** y **Flujo del Proceso**.
+### B. Flujo del Proceso (23 contadores fijos)
+Endpoint `GET /api/v1/analytics/process-flow` que cuente procesos por etapa:
+- **Compra / renta (15 etapas)**: cada requisición en la etapa más avanzada con evidencia documental (`requisition_reviews`, `sourcing_plans`/`sourcing_lots`, `rfqs`, `supplier_quotes`, `awards`, `customer_quote_versions` y sus decisiones, `purchase_orders`, `goods_receipts`, `deliveries`, `invoices`). Debe ser coherente con la política de 8 etapas que el servidor ya calcula (`RequisitionRecoveryRepository::STAGES`).
+- **Servicios (8 etapas)**: misma derivación que §4.A.
+- Las pestañas «Matriz del proceso» e «Indicadores y cuellos de botella» toman los mismos conteos (tiempo en etapa con `workflow_events`).
 
-## 3. Requisitos de toda escritura nueva
+### C. Configuración (pestañas 1 a 5)
+Endpoint `GET /api/v1/settings` que devuelva los grupos de `organization_settings` que ya existen en la base:
+
+| Pestaña | Fuente |
+|---|---|
+| 1 Identidad y formatos | `legacy_branding` (empresa, nombre y lema), `legacy_localization` (idioma de documentos), `legacy_organization` (contratista activo) y logotipo (`files`) |
+| 2 Matriz de parámetros | `legacy_purchasing` (moneda, IVA, prefijos REQ/OC, días de alerta, cotizaciones mínimas), `currencies`, `units`, `legacy_counters`/`document_sequences` |
+| 3 Aprobaciones de cotización | `legacy_quote_policy` y `approval_policy_versions` (versión vigente) |
+| 4 Condiciones de cotización | `legacy_quote_conditions` (ES/EN) |
+| 5 Correos automáticos | `legacy_email` y el historial de envíos `email_delivery_logs` (paginado, sin cuerpos de correo) |
+
+La escritura viene después y requiere autorización: una cuenta `settingswrite` con `UPDATE organization_settings` e `INSERT approval_policy_versions`, versionando la política (cambia aprobaciones y folios) y con auditoría. Pestañas 6 y 7: no se conectan.
+
+### D. Campana de notificaciones
+`GET /api/v1/notifications` con solo las notificaciones **del usuario en sesión** (`recipient_user_id`), paginado. Marcar como leída es una escritura mínima (`UPDATE notifications (is_read, read_at)`) y requiere autorización para el grant.
+
+### E. Portal del Cliente (seguridad externa)
+No se puede conectar solo con lectura: hoy el acceso no autentica. Requiere diseñar un acceso independiente del de usuarios internos:
+- Tokens en `portal_access_tokens` (solo hash, caducidad, revocación) habilitados con `clients.portal_enabled` / `portal_locked`.
+- Sesión de cliente separada, límite de intentos y auditoría.
+- Todas las consultas filtradas por cliente en el servidor, sin costos internos, márgenes ni datos de otros clientes.
+
+Es nueva superficie expuesta: requiere autorización y revisión de seguridad antes de cualquier código.
+
+## 5. Requisitos de toda escritura nueva
 
 Mismo patrón que R2 y R3:
 - Sesión y rol verificados en el servidor.
 - Encabezado `X-SF-CSRF`.
 - `Idempotency-Key` (tabla `idempotency_keys`).
-- Concurrencia optimista con `If-Match`.
+- Concurrencia optimista con `If-Match` sobre `business_entities.row_version` (o `users.row_version`).
 - Motivo obligatorio cuando aplique.
 - `audit_events` en la misma transacción.
 - Una cuenta SQL con los grants mínimos por módulo, en su propio overlay.
-- Pruebas con datos sintéticos en el sandbox: unitarias, HTTP (401, 403, 409, 422, idempotencia) y E2E de interfaz.
-
-Las 77 tablas ya existen. En principio no hace falta DDL nuevo. Para la concurrencia optimista existe `business_entities.row_version`, común a todas las entidades de negocio que comparten su `id` (requisición, RFQ, cotización, OC, recepción, entrega, servicio…), y también `users.row_version`. Ese es el token para `If-Match`. *(Corregido el 20 nov. 2026: la versión anterior de este documento decía que no había columna de versión.)*
+- Pruebas con datos sintéticos en el sandbox: unitarias, HTTP (401, 403, 409, 412, 422, idempotencia) y E2E de interfaz.
 
 **Requieren autorización explícita del usuario antes de ejecutarse:**
 - Cualquier `GRANT` nuevo o cuenta SQL.
 - Cualquier escritura comercial: Cotizaciones, OC, Recepción, Factura, y escrituras R3C2/R3C3.
-- Cualquier migración.
+- Cualquier migración o DDL (p. ej. registro de pagos).
 
-## 4. Orden recomendado
+## 6. Orden recomendado
 
 | Fase | Trabajo | Grants nuevos | Riesgo |
 |---|---|---|---|
-| **0 · Sin grants nuevos** | 1. Servicios Dashboard (lectura). 2. Configuración pestañas 1 a 5 (lectura). 3. Requisición «Crear desde historial» con `POST recovery/requisitions`. 4. Requisición «Control de cambios»: pantalla R3B y R3C1 sobre endpoints ya probados en INT02; R3C2/R3C3 solo en consulta | No | Bajo |
-| **1 · Operativo, no comercial** | 5. Categorías. 6. Gestión del Contratista: validación, después estrategia y lotes. 7. Servicios: nueva solicitud y edición. 8. Usuarios y roles, incluida la evaluación de permisos por sección en el servidor | Sí, por módulo | Medio; Usuarios es alto |
-| **2 · Comercial** (bloqueado hasta autorizar) | 9. Cotizaciones. 10. OC. 11. Recepción y Entrega. 12. Factura. 13. Escrituras R3C2/R3C3 | Sí | Alto |
-| **3 · Seguridad externa** | 14. Portal del Cliente con tokens propios | Sí | Alto |
+| **0 · Solo lectura** (sin grants) | 1. Inicio y Dashboard: 10 de los 11 indicadores (todos menos el estatus de pago, §4.A). 2. Configuración pestañas 1 a 5 (§4.C). 3. Flujo del Proceso (§4.B). 4. Campana: lectura (§4.D) | No | Bajo |
+| **1 · Operativo, no comercial** | 5. Categorías. 6. Crear desde historial. 7. Servicios: requisición maestra y expediente. 8. Gestión del Contratista: validación, estrategia y lotes. 9. Configuración: escritura versionada. 10. Usuarios y roles, con permisos por sección en el servidor. 11. Notificaciones: marcar como leídas | Sí, por módulo | Medio; Usuarios es alto |
+| **2 · Comercial** (bloqueado hasta autorizar) | 12. Cotizaciones. 13. OC. 14. Recepción y Entrega. 15. Factura (y registro de pagos si se define). 16. Escrituras R3C2/R3C3 | Sí | Alto |
+| **3 · Seguridad externa** | 17. Portal del Cliente con tokens propios | Sí | Alto |
+
+Ya completado de la fase 0 anterior: Dashboard de Servicios (23 nov.) y Control de cambios R3A/R3B (23 nov.).
+
+## 7. Código sin uso
+
+Hay 8 vistas antiguas con datos de demostración que **ya no se importan** en `App.jsx` (las reemplazaron los módulos conectados): `src/views/Clients.jsx`, `Suppliers.jsx`, `SupplierSupply.jsx`, `Requisition.jsx`, `Quotes.jsx`, `PurchaseOrders.jsx`, `ReceptionDelivery.jsx` e `Invoice.jsx` (unas 15,800 líneas). No son conexiones pendientes. También es residual el estado `quotes` que `App.jsx` guarda en `localStorage` (`grupo_gerez_quotes`). Retirar ambos es una limpieza independiente y requiere autorización.
