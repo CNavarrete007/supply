@@ -5,7 +5,7 @@ import { FORMAL, SOURCES, STAGES, TABS, emptyForm, hydrate, payload, draftPayloa
 import { Regularization } from './Regularization';
 import { CategoryCatalog } from './CategoryCatalog';
 import { HistoryRequisition } from './HistoryRequisition';
-import { ChangeControl } from './ChangeControl';
+import { ChangeControl } from './ChangeControl.jsx'; // extensión explícita: changeControl.mjs existe y Windows no distingue mayúsculas
 import { ChangeRequestModal } from './ChangeRequestModal';
 import { createPortal } from 'react-dom';
 import './legacy-scoped.css';
