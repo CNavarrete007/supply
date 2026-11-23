@@ -45,8 +45,7 @@ const TEXTS = {
       supplierDocsLang: "Documentos para proveedores",
       docNoticeTitle: "Selección por documento:",
       docNoticeText: "En las secciones de formatos aparecerá un selector Español / English. El idioma elegido se conserva para la siguiente generación, sin cambiar el idioma de toda la interfaz.",
-      btnSave: "Guardar identidad e idiomas",
-      saveAlert: "¡Identidad e idiomas guardados correctamente!"
+      btnSave: "Guardar identidad e idiomas"
     },
     tab2: {
       title: "Matriz de parámetros operativos",
@@ -65,8 +64,7 @@ const TEXTS = {
       appAlertDays: "Semáforos y vencimientos",
       appMinQuotes: "Control previo al comparativo",
       appDefaultVat: "Cotizaciones y órdenes",
-      btnSave: "Guardar parámetros",
-      saveAlert: "¡Matriz de parámetros actualizada con éxito!"
+      btnSave: "Guardar parámetros"
     },
     tab3: {
       title: "Aprobaciones de Cotización al Cliente",
@@ -95,8 +93,7 @@ const TEXTS = {
       notRequired: "No requerido",
       appClientQuote: "Cotización al cliente",
       appPoIndependent: "Orden de Compra · regla independiente",
-      btnSave: "Guardar límites de aprobación",
-      saveAlert: "¡Límites de aprobación guardados correctamente!"
+      btnSave: "Guardar límites de aprobación"
     },
     tab4: {
       title: "Condiciones predeterminadas de Cotización al Cliente",
@@ -116,8 +113,7 @@ const TEXTS = {
       confirmReset: "¿Deseas restablecer las condiciones registradas en MariaDB? Se descartarán los cambios no guardados de esta pestaña.",
       newEs: "Nueva condición comercial.",
       newEn: "New commercial condition.",
-      emptyList: "No hay condiciones registradas en MariaDB.",
-      saveAlert: "¡Condiciones de cotización guardadas con éxito!"
+      emptyList: "No hay condiciones registradas en MariaDB."
     },
     tab5: {
       internalTitle: "Notificaciones internas automáticas",
@@ -153,7 +149,6 @@ const TEXTS = {
       maxRecipients: "Máximo de destinatarios por evento",
       btnSave: "Guardar correos automáticos",
       btnCheckQuota: "Consultar cuota disponible",
-      saveAlert: "¡Configuración de correos automáticos guardada correctamente!",
       quotaAlert: "No hay un servicio de envío de correos conectado a SupplyFlow; la cuota del original (MailApp de Google) no aplica. El historial muestra los envíos registrados en MariaDB.",
       historyLoading: "Cargando historial de correos...",
       historyError: "No se pudo leer el historial de correos.",
@@ -240,8 +235,7 @@ const TEXTS = {
       supplierDocsLang: "Supplier Documents",
       docNoticeTitle: "Selection per document:",
       docNoticeText: "A Spanish / English selector will appear in format sections. The chosen language is saved for the next generation without changing the whole interface language.",
-      btnSave: "Save Identity & Languages",
-      saveAlert: "Identity and languages saved successfully!"
+      btnSave: "Save Identity & Languages"
     },
     tab2: {
       title: "Operational Parameters Matrix",
@@ -260,8 +254,7 @@ const TEXTS = {
       appAlertDays: "Traffic lights and expirations",
       appMinQuotes: "Pre-comparison control",
       appDefaultVat: "Quotes and orders",
-      btnSave: "Save Parameters",
-      saveAlert: "Parameters matrix updated successfully!"
+      btnSave: "Save Parameters"
     },
     tab3: {
       title: "Customer Quote Approvals",
@@ -290,8 +283,7 @@ const TEXTS = {
       notRequired: "Not required",
       appClientQuote: "Customer quotation",
       appPoIndependent: "Purchase Order · independent rule",
-      btnSave: "Save Approval Limits",
-      saveAlert: "Approval limits saved successfully!"
+      btnSave: "Save Approval Limits"
     },
     tab4: {
       title: "Default Customer Quotation Conditions",
@@ -311,8 +303,7 @@ const TEXTS = {
       confirmReset: "Restore the conditions stored in MariaDB? Unsaved changes in this tab will be discarded.",
       newEs: "Nueva condición comercial.",
       newEn: "New commercial condition.",
-      emptyList: "There are no conditions stored in MariaDB.",
-      saveAlert: "Quote conditions saved successfully!"
+      emptyList: "There are no conditions stored in MariaDB."
     },
     tab5: {
       internalTitle: "Automatic Internal Notifications",
@@ -348,7 +339,6 @@ const TEXTS = {
       maxRecipients: "Max recipients per event",
       btnSave: "Save Automatic Emails",
       btnCheckQuota: "Check Available Quota",
-      saveAlert: "Automatic email settings saved successfully!",
       quotaAlert: "No mail delivery service is connected to SupplyFlow; the original quota (Google MailApp) does not apply. The log shows the deliveries stored in MariaDB.",
       historyLoading: "Loading email log...",
       historyError: "The email log could not be read.",

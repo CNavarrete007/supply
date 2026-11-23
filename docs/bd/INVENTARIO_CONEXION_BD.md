@@ -29,7 +29,7 @@
 - **Regresión completa**: 24 suites de interfaz, 17 HTTP, 385 pruebas unitarias e INT03-D1, todas en verde.
 - **Hallazgos**:
   1. **Guardado de catálogos en la PC del usuario.** El arranque documentado en `CLAUDE.md` no incluye `compose.supply-catalogwrite.yml`, y la cuenta `supplyflow_catalogwrite_local` no está en el contrato 77/52. Sin aprovisionarla (requiere autorización), el alta y edición de Clientes, Proveedores y Suministros avisa que no está habilitada y no guarda.
-  2. **Código sin uso, sin efecto en la operación (limpieza pendiente):**
+  2. **Código sin uso, sin efecto en la operación (eliminado el 23 nov, a petición del usuario):**
      - 8 vistas antiguas con datos de demostración (unas 15,800 líneas) y `src/views/clients/clientWriteApi.js`.
      - El estado `quotes` que `App.jsx` guarda en `localStorage` y que ningún módulo usa.
      - El estado de ejemplo que `ContractorManagement.jsx` conserva sin mostrarlo (partidas y 2 validaciones ficticias).
@@ -178,4 +178,10 @@ Ya completado de la fase 0: Dashboard de Servicios (23 nov.), Control de cambios
 
 ## 7. Código sin uso
 
-Hay 8 vistas antiguas con datos de demostración que **ya no se importan** en `App.jsx` (las reemplazaron los módulos conectados): `src/views/Clients.jsx`, `Suppliers.jsx`, `SupplierSupply.jsx`, `Requisition.jsx`, `Quotes.jsx`, `PurchaseOrders.jsx`, `ReceptionDelivery.jsx` e `Invoice.jsx` (unas 15,800 líneas). No son conexiones pendientes. También es residual el estado `quotes` que `App.jsx` guarda en `localStorage` (`grupo_gerez_quotes`). Retirar ambos es una limpieza independiente y requiere autorización.
+Eliminado el 23 nov 2026:
+- Las 8 vistas antiguas con datos de demostración (`Clients.jsx`, `Suppliers.jsx`, `SupplierSupply.jsx`, `Requisition.jsx`, `Quotes.jsx`, `PurchaseOrders.jsx`, `ReceptionDelivery.jsx` e `Invoice.jsx`) y `clients/clientWriteApi.js`.
+- El estado `quotes` que `App.jsx` guardaba en `localStorage` (`grupo_gerez_quotes`).
+- El estado de ejemplo oculto de `ContractorManagement.jsx`.
+- Los textos `saveAlert` de Configuración.
+
+Quedan en el historial de Git.

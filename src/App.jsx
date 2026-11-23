@@ -24,7 +24,6 @@ import { Reports } from './views/Reports';
 import { UsersRoles } from './views/UsersRoles';
 import { getSession, endSession } from './apiAuth';
 
-const defaultQuotes = [];
 
 export default function App() {
   const queryParams = new URLSearchParams(window.location.search);
@@ -51,15 +50,6 @@ export default function App() {
   const [language, setLanguage] = useState('es');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  const [quotes, setQuotes] = useState(() => {
-    const saved = localStorage.getItem('grupo_gerez_quotes');
-    return saved ? JSON.parse(saved) : defaultQuotes;
-  });
-
-  // Guardado automático de cotizaciones en localStorage
-  useEffect(() => {
-    localStorage.setItem('grupo_gerez_quotes', JSON.stringify(quotes));
-  }, [quotes]);
 
   // Manejador central de navegación
   const handleNavigate = (viewName, clientData = null, openInNewTab = false) => {
@@ -227,7 +217,7 @@ export default function App() {
                 )}
                 <nav className="px-2.5 space-y-1">
                   {group.items.map((item) => {
-                    const isActive = activeTab === item.id || (item.id === 'quotes' && activeTab === 'new');
+                    const isActive = activeTab === item.id;
                     return (
                       <button
                         key={item.id}
@@ -343,7 +333,6 @@ export default function App() {
           )}
           {activeTab === 'dashboard' && (
             <Dashboard 
-             quotes={quotes} 
              onNavigate={handleNavigate} 
              lang={language}
              language={language}
@@ -361,8 +350,6 @@ export default function App() {
           {/* CONEXIÓN CON VISTA QUOTES (SE ENVÍAN TANTO 'lang' COMO 'language' PARA PREVENIR ERRORES) */}
           {activeTab === 'quotes'  && (
             <Quotes 
-              quotes={quotes} 
-              setQuotes={setQuotes} 
               onNavigate={handleNavigate} 
               onNotify={pushNotification} 
               lang={language}
