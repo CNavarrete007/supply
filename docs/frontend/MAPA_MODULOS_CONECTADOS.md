@@ -83,7 +83,16 @@ Diseño, colores, estructura y orden de las 14 secciones del archivo de referenc
 - **Etapas P2P**: 8 etapas calculadas por el servidor (`stage_index` de `/recovery/matrix`, política `apps-script-eight-stage-matrix`). El diseño original mostraba 15/14 etapas con datos fijos; no existen esas etapas en la base.
 - **Reglas**: abierto = etapa < Factura; vencido = `need_date` < hoy y etapa < Entrega y aceptación; cerrado = Factura; las requisiciones desde historial o con cambio controlado tienen etapa "pendiente de equivalencia" y se informan aparte.
 - **Filtros** (cliente, desde/hasta) aplican a la analítica en el servidor y a las filas de etapas en el cliente con la misma regla.
-- **Pendiente de integración** (sin cifras): lotes/rutas paralelas, ahorro, proveedores con mayor actividad, servicios / Service-to-Cash, Service Fee, estatus de pago, recompra/precios, enmiendas de OC, compradores y segregación de OC.
+- **Indicadores ampliados** (conexión del 23 nov 2026): `GET /analytics/overview` añade, con los mismos filtros de periodo y cliente y solo `SELECT`, los bloques `services`, `service_fee`, `sourcing`, `supplier_activity`, `repeat` (con `client_policies`), `po_amendments`, `buyers`, `po_roles` e `invoices`, cada uno con su regla en `definitions`. Se conectaron:
+  - tarjetas **Servicios** (total y abiertos) y **Service fee** (moneda seleccionada, «N de M cotizaciones»); lectura ejecutiva «servicio(s) activo(s)»;
+  - **Abastecimiento por lotes y rutas paralelas**: por lotificar, requisiciones lotificadas, partidas con RFQ, proveedores asignados, RFQ pendientes y rutas paralelas (reglas de Gestión del Contratista: última validación y «puede cotizar», expuestas como constantes públicas de `ContractorManagementReadRepository`);
+  - **Valor económico integral**: barras de Service Fee y Facturación por moneda;
+  - **Proveedores con mayor actividad** (RFQ, ofertas y partidas adjudicadas, top 8) y **Evaluados** (proveedores con calificación);
+  - **Servicios Operativos**, **Service-to-Cash · 8 etapas** (etapa = primer criterio del Flujo del Proceso que el servicio aún no cumple) y «Servicios autorizados»;
+  - **Cotización + Service Fee** (con Service Fee, aprobadas por cliente con la regla de Crear desde historial, Service Fee acumulado) y **Avance del ciclo** (Service-to-Cash con la escala de 8 etapas de Procure-to-Pay; Service fee aplicado);
+  - **Recompra**: precios respetados, partidas por recotizar, precio comercial pendiente, **rutas de precio**, **rutas de abastecimiento** y **políticas de clientes**; **Enmiendas de OC** (versiones posteriores y solicitudes de modificación, solo conteo);
+  - **Dashboard de compradores** (comprador de la validación interna; comprador de la OC) y **Segregación de funciones** (comprador, preparó/revisó, autorizó; «Sin asignar» si la OC no tiene usuario).
+- **Siguen sin cifra**, porque no hay fuente o regla: estatus de pago / «Pagadas» (el esquema no registra pagos), ahorro potencial y costo promedio (falta la regla de comparación del original).
 - `Change Requests` muestra solo las solicitudes del usuario que consulta (alcance del endpoint) y la cola de revisión independiente.
 
 ## Clientes (rediseño 10 nov 2026)

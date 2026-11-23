@@ -7,8 +7,8 @@
 
 | Estado | Módulos |
 |---|---|
-| **Conectados (lectura con datos reales)** | Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles |
-| **Parcialmente conectado** | Inicio y Dashboard: 11 indicadores (tarjetas, paneles o mini-indicadores) muestran «Pendiente de integración» o «—»: servicios (3), Service Fee (2), proveedores con mayor actividad, recompra (3), enmiendas de OC y estatus de pago |
+| **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles |
+| **Inicio y Dashboard** | Conectado (23 nov 2026) salvo 3 cifras sin fuente o regla: estatus de pago / «Pagadas» (no hay registro de pagos), ahorro potencial y costo promedio (falta la regla del original) |
 | **Pendientes (datos fijos o de demostración)** | Configuración (7 pestañas, demo y `localStorage`), Portal del Cliente (`mockQuote`, `mockPO`; el acceso no autentica), Flujo del Proceso (23 contadores fijos por etapa), campana de Notificaciones (solo notificaciones locales del navegador) |
 | **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
 | **Validan pero no guardan** | Todo lo demás: termina con «Datos validados, pero no se guardó…» |
@@ -38,11 +38,8 @@ Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Dem
 | Módulo | Sección o tarjeta | Lectura de BD | Escritura | Tablas | Qué falta |
 |---|---|---|---|---|---|
 | Inicio y Dashboard | KPIs de requisiciones, estatus, alertas, importes, clientes, provisionales, Change Requests, segregación de funciones | Sí (`analytics/overview`, `recovery`) | N/A | `requisitions` y documentos del proceso | — |
-| Inicio y Dashboard | Servicios (Service-to-Cash), panel «Servicios Operativos», «Service-to-Cash · 8 etapas» | **No** (pendiente) | N/A | `service_orders`, `service_types`, `invoices`, `entity_files` | Ver §4.A |
-| Inicio y Dashboard | Service Fee (tarjeta y «Cotización + Service Fee»: con Service Fee, aprobadas por cliente, acumulado) | **No** (pendiente) | N/A | `customer_quote_versions.service_fee_*`, `customer_quote_decisions` | Ver §4.A |
-| Inicio y Dashboard | Proveedores con mayor actividad | **No** (pendiente) | N/A | `rfqs.supplier_id`, `supplier_quotes`, `awards` | Ver §4.A |
-| Inicio y Dashboard | Recompra: precios respetados, partidas por recotizar, precio comercial pendiente; Enmiendas de OC | **No** (pendiente) | N/A | `requisition_items.repeat_*`, `fixed_client_*`; `purchase_orders` (versiones), `purchase_order_modification_requests` | Ver §4.A |
-| Inicio y Dashboard | Estatus de pago de facturas | **No**: el esquema no registra pagos (solo `due_date`, `payment_terms`, estatus) | N/A | — | Definir el registro de pagos (DDL nuevo): requiere autorización |
+| Inicio y Dashboard | Servicios, Service-to-Cash (8 etapas), Service Fee, abastecimiento por lotes, proveedores con mayor actividad y evaluados, recompra (rutas y políticas), enmiendas de OC, compradores, segregación de funciones de OC, facturación por moneda | Sí (23 nov 2026): bloques ampliados de `analytics/overview` | N/A | `service_orders`, `customer_quote_versions.service_fee_*`, `sourcing_*`, `rfqs`, `supplier_quotes`, `awards`, `requisition_items.repeat_*`, `clients.repeat_*_policy`, `purchase_orders`, `purchase_order_modification_requests`, `requisition_reviews`, `invoices` | — |
+| Inicio y Dashboard | Estatus de pago / «Pagadas»; ahorro potencial y costo promedio | **No** | N/A | — | Pagos: definir su registro (DDL nuevo, requiere autorización). Ahorro y costo promedio: compartir la regla de comparación del sistema original |
 | Flujo del Proceso | Mapa, flujo de servicios, detalle por etapa, matriz, indicadores | **No**: 23 contadores fijos («N proceso(s)») | N/A | Documentos de cada etapa | Ver §4.B |
 | Portal del Cliente | Acceso y seguimiento | **No** (`mockQuote`, `mockPO`; el acceso no valida credenciales) | Demo | `portal_access_tokens`, `clients.portal_enabled`/`portal_locked` y vistas filtradas por cliente | Ver §4.E |
 | Campana (encabezado) | Notificaciones | **No**: solo notificaciones locales de la sesión | — | `notifications` | Ver §4.D |
@@ -75,7 +72,7 @@ Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Dem
 
 Todo lo de esta sección es **solo lectura**: se resuelve con endpoints aditivos `GET`, Master Admin, `Cache-Control: no-store`, parámetros en lista blanca (422 si no) y la cuenta `supplyflow_api_local`, que ya tiene `SELECT` sobre el esquema. **No requiere grants, migraciones ni cambios de datos.** Cada uno se entrega con pruebas unitarias, HTTP (401/403/422, sin rutas de escritura, sin ids internos) y E2E de interfaz que calcula las cifras esperadas por separado.
 
-### A. Inicio y Dashboard (11 indicadores)
+### A. Inicio y Dashboard — conectado el 23 nov 2026 (salvo pagos, ahorro y costo promedio)
 Extender `GET /api/v1/analytics/overview` (`AnalyticsReadRepository`) con bloques nuevos que respeten los filtros actuales de periodo y cliente:
 - **Servicios / Service-to-Cash y panel «Servicios Operativos»**: totales, abiertos, ejecutados, venta, costo y margen desde `service_orders`, con las mismas reglas que el Dashboard de Servicios (`dashboardModel.mjs`).
 - **«Service-to-Cash · 8 etapas»**: etapa por servicio derivada de los criterios del Flujo del Proceso (datos mínimos → autorización confirmada → programado → OC vinculada o «no requiere proveedor» → ejecutado → evidencia → listo para facturar → factura). Las reglas se toman de esos criterios; los casos ambiguos se confirman con el Apps Script.
@@ -136,12 +133,12 @@ Mismo patrón que R2 y R3:
 
 | Fase | Trabajo | Grants nuevos | Riesgo |
 |---|---|---|---|
-| **0 · Solo lectura** (sin grants) | 1. Inicio y Dashboard: 10 de los 11 indicadores (todos menos el estatus de pago, §4.A). 2. Configuración pestañas 1 a 5 (§4.C). 3. Flujo del Proceso (§4.B). 4. Campana: lectura (§4.D) | No | Bajo |
+| **0 · Solo lectura** (sin grants) | 1. ~~Inicio y Dashboard~~ (hecho el 23 nov). 2. Configuración pestañas 1 a 5 (§4.C). 3. Flujo del Proceso (§4.B). 4. Campana: lectura (§4.D) | No | Bajo |
 | **1 · Operativo, no comercial** | 5. Categorías. 6. Crear desde historial. 7. Servicios: requisición maestra y expediente. 8. Gestión del Contratista: validación, estrategia y lotes. 9. Configuración: escritura versionada. 10. Usuarios y roles, con permisos por sección en el servidor. 11. Notificaciones: marcar como leídas | Sí, por módulo | Medio; Usuarios es alto |
 | **2 · Comercial** (bloqueado hasta autorizar) | 12. Cotizaciones. 13. OC. 14. Recepción y Entrega. 15. Factura (y registro de pagos si se define). 16. Escrituras R3C2/R3C3 | Sí | Alto |
 | **3 · Seguridad externa** | 17. Portal del Cliente con tokens propios | Sí | Alto |
 
-Ya completado de la fase 0 anterior: Dashboard de Servicios (23 nov.) y Control de cambios R3A/R3B (23 nov.).
+Ya completado de la fase 0: Dashboard de Servicios (23 nov.), Control de cambios R3A/R3B (23 nov.) e Inicio y Dashboard (23 nov.).
 
 ## 7. Código sin uso
 

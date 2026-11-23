@@ -8,11 +8,16 @@ import { regKpis } from './recovery/model.mjs';
 import {
   P2P_STAGES, localToday, pct, scopeRows, stageDistribution, processStatus, priorityDistribution, clientActivity,
   nextActions, alerts, recentMoves, averageProgress, moneyByCurrency, documentsOf, activeCount, changeSummary, historyBased,
+  servicesSummary, s2cStages, supplierScore, s2cProgress,
 } from './dashboard/model.mjs';
+import { PRICE_MODES, SOURCING_MODES } from './recovery/historyModel.mjs';
+import { SALES_POLICIES, SOURCING_POLICIES, policyCode } from './clients/form.mjs';
 
 // Inicio y Dashboard · diseño "Grupo Gerez · Control integral" con datos REALES de MariaDB.
 // Regla: nunca datos de demostración. Si una métrica no tiene fuente en la API, la tarjeta conserva su
-// diseño y muestra "Pendiente de integración".
+// diseño y muestra "Pendiente de integración" (hoy solo el estatus de pago: el esquema no registra pagos).
+// Indicadores ampliados de analytics/overview (23 nov 2026): servicios, Service-to-Cash, Service Fee, proveedores con
+// mayor actividad, abastecimiento por lotes, recompra, enmiendas de OC y facturación (mismos filtros de periodo y cliente).
 
 const DASH = '—';
 const formatCount = (value) => new Intl.NumberFormat('es-MX').format(Number(value) || 0);
@@ -63,6 +68,12 @@ function VBar({ value, label, percent, color, sub, tall = 'h-64' }) {
     {sub && <span className="text-[9px] font-bold text-slate-400 text-center mt-0.5">{sub}</span>}
   </div>;
 }
+/** Lista ordenada con barras (compradores, funciones de OC, rutas y políticas). items: [{ label, n, sub? }]. */
+function RankList({ items, empty, testid, color = 'bg-gradient-to-r from-blue-500 to-indigo-600' }) {
+  const max = Math.max(1, ...items.map(x => x.n));
+  return items.length ? <div data-testid={testid} className="space-y-2.5">{items.map(x => <div key={x.label}><HBar label={x.label} count={x.n} max={max} color={color} wide />{x.sub && <p className="text-[9px] text-slate-400 mt-0.5 pl-1">{x.sub}</p>}</div>)}</div>
+    : <Pending text={empty} />;
+}
 function SourceState({ state, t }) {
   if (state.loading) return <p className="text-[11px] text-slate-400 flex items-center gap-1.5"><Loader2 size={13} className="animate-spin" />{t('Consultando MariaDB…', 'Querying MariaDB…')}</p>;
   if (state.error) return <p role="alert" className="text-[11px] text-rose-700 flex items-center gap-1.5"><AlertCircle size={13} />{state.error}</p>;
@@ -73,7 +84,6 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
   const activeLang = lang || language || 'es';
   const isEn = activeLang === 'en' || activeLang === 'English' || activeLang === 'EN';
   const t = (es, en) => (isEn ? en : es);
-  const PENDING = t('Pendiente de integración: esta información aún no tiene fuente conectada en MariaDB.', 'Pending integration: no MariaDB source is connected for this information yet.');
   const day = localToday();
 
   const [clients, setClients] = useState([]);
@@ -143,7 +153,19 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
   const avg = useMemo(() => averageProgress(rows), [rows]);
   const prov = useMemo(() => regKpis(rows, day), [rows, day]);
   const hist = useMemo(() => historyBased(rows, 8), [rows]);
-  const money = useMemo(() => moneyByCurrency(data?.financial), [data]);
+  const money = useMemo(() => moneyByCurrency(data?.financial, { invoices: data?.invoices, service_fee: data?.service_fee?.by_currency }), [data]);
+  const svc = useMemo(() => servicesSummary(data?.services), [data]);
+  const s2c = useMemo(() => s2cStages(data?.services), [data]);
+  const fee = data?.service_fee || null;
+  const src = data?.sourcing || null;
+  const rep = data?.repeat || null;
+  const poa = data?.po_amendments || null;
+  const sup = data?.supplier_activity?.suppliers || [];
+  const n0 = x => (x === null || x === undefined ? DASH : formatCount(x));
+  const label3 = (list, code, none) => { if (!code) return none; const k = policyCode(code, list) || code; const f = list.find(p => p[0] === k); return f ? (isEn ? (f[2] || f[1]) : f[1]) : code; };
+  const modeItems = (rows, list) => (rows || []).map(x => ({ label: x.code ? (list.find(p => p[0] === x.code)?.[1] || x.code) : t('Sin tratamiento definido', 'No treatment defined'), n: x.n }));
+  const policyItems = (rows, list, kind) => (rows || []).map(x => ({ label: `${kind} · ${label3(list, x.code, t('Sin política definida', 'No policy defined'))}`, n: x.n }));
+  const personItems = (rows, key) => (rows || []).map(x => ({ label: x.name || t('Sin asignar', 'Unassigned'), n: x[key] }));
   const chs = useMemo(() => changeSummary(chg.list, chg.queue), [chg.list, chg.queue]);
   const cur = money.currencies.includes(currency) ? currency : money.currencies[0] || '';
   const m = money.byCurrency[cur] || {};
@@ -188,7 +210,7 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
         </div>
         <div className="w-full lg:w-80 bg-white/10 backdrop-blur-md border border-white/15 rounded-2xl p-4 shrink-0 space-y-2">
           <h3 className="text-xs font-extrabold text-white tracking-wide">{t('Lectura ejecutiva en tiempo real', 'Real-time Executive Overview')}</h3>
-          <p className="text-[11px] text-blue-100 leading-relaxed font-medium"><strong className="text-white font-bold">{v(status.open)}</strong> {t('compra(s) abierta(s)', 'open purchase(s)')} · <strong className="text-white font-bold">{DASH}</strong> {t('servicio(s) activo(s)', 'active service(s)')} · <strong className="text-white font-bold">{v(status.overdue)}</strong> {t('vencido(s)', 'overdue')}.</p>
+          <p className="text-[11px] text-blue-100 leading-relaxed font-medium"><strong className="text-white font-bold">{v(status.open)}</strong> {t('compra(s) abierta(s)', 'open purchase(s)')} · <strong className="text-white font-bold">{svc ? formatCount(svc.open) : DASH}</strong> {t('servicio(s) activo(s)', 'active service(s)')} · <strong className="text-white font-bold">{v(status.overdue)}</strong> {t('vencido(s)', 'overdue')}.</p>
           <p className="text-[10px] text-blue-200/90 font-medium pt-1 border-t border-white/10">{t('Mayor concentración P2P:', 'Highest P2P concentration:')} <strong className="text-white">{opsReady && topStage.i >= 0 ? `${stageName(topStage.i)} (${formatCount(topStage.n)})` : DASH}</strong></p>
           <p className="text-[10px] text-blue-200/90 font-medium">{t('Alcance:', 'Scope:')} <strong className="text-white break-words">{scopeLabel}</strong> · {filters.from || t('sin fecha inicial', 'no start date')} — {filters.to || t('sin fecha final', 'no end date')}</p>
         </div>
@@ -214,11 +236,11 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           [formatCount(total), t('Requisiciones', 'Requisitions'), 'Procure-to-Pay', 'border-t-blue-500', 'text-blue-600', 'bg-blue-100/50'],
-          [DASH, t('Servicios', 'Services'), t('Service-to-Cash · pendiente de integración', 'Service-to-Cash · pending integration'), 'border-t-purple-500', 'text-purple-600', 'bg-purple-100/50'],
+          [svc ? formatCount(svc.total) : DASH, t('Servicios', 'Services'), svc ? t(`Service-to-Cash · ${formatCount(svc.open)} abierto(s)`, `Service-to-Cash · ${formatCount(svc.open)} open`) : 'Service-to-Cash', 'border-t-purple-500', 'text-purple-600', 'bg-purple-100/50'],
           [v(status.open), t('Procesos abiertos', 'Open processes'), t('Etapa anterior a Factura', 'Stage before Invoice'), 'border-t-teal-500', 'text-teal-600', 'bg-teal-100/50'],
           [v(status.overdue), t('Vencidos', 'Overdue'), t('Requieren atención', 'Require attention'), 'border-t-rose-500', 'text-rose-600', 'bg-rose-100/50'],
           [formatCount(summary.with_customer_quote), t('Cotizaciones cliente', 'Client quotes'), t(`${formatCount(cq)} versión(es) registradas`, `${formatCount(cq)} recorded version(s)`), 'border-t-pink-500', 'text-pink-600', 'bg-pink-100/50'],
-          [DASH, 'Service fee', t('Pendiente de integración', 'Pending integration'), 'border-t-indigo-500', 'text-indigo-600', 'bg-indigo-100/50'],
+          [fee ? formatAmount(m.fee?.amount || 0, cur || 'MXN', activeLang) : DASH, 'Service fee', fee ? t(`${formatCount(fee.with_fee)} de ${formatCount(fee.versions)} cotización(es)${cur ? ` · ${cur}` : ''}`, `${formatCount(fee.with_fee)} of ${formatCount(fee.versions)} quote(s)${cur ? ` · ${cur}` : ''}`) : DASH, 'border-t-indigo-500', 'text-indigo-600', 'bg-indigo-100/50'],
           [formatCount(summary.with_purchase_order), t('Órdenes de compra', 'Purchase orders'), m.po ? formatAmount(m.po.amount, cur, activeLang) : t('Sin importes', 'No amounts'), 'border-t-amber-500', 'text-amber-600', 'bg-amber-100/50'],
           [formatCount(summary.with_invoice), t('Facturación', 'Invoicing'), t('Requisiciones con factura', 'Requisitions with invoice'), 'border-t-emerald-500', 'text-emerald-600', 'bg-emerald-100/50'],
         ].map(([value, label, hint, border, tone, glow]) => <div key={label} className={`bg-white rounded-2xl p-4 border border-slate-100 shadow-xs relative overflow-hidden flex flex-col justify-between hover:shadow-md transition-shadow border-t-4 ${border}`}>
@@ -236,10 +258,10 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
           <button onClick={() => setRefresh(n => n + 1)} className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs shadow-sm transition-all active:scale-95 cursor-pointer self-start sm:self-auto"><span>↻</span><span>{t('Actualizar', 'Refresh')}</span></button>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-3">
-          {[[t('Por lotificar', 'To be batched'), 'border-l-amber-500'], [t('Requisiciones lotificadas', 'Batched requisitions'), 'border-l-purple-500'], [t('Partidas con RFQ', 'Items with RFQ'), 'border-l-blue-500'], [t('Proveedores asignados', 'Assigned suppliers'), 'border-l-indigo-500'], [t('RFQ pendientes', 'Pending RFQs'), 'border-l-rose-500'], [t('Rutas paralelas', 'Parallel routes'), 'border-l-emerald-500']].map(([label, border]) =>
-            <div key={label} className={`bg-white rounded-2xl p-3.5 border border-slate-100 shadow-xs border-l-4 ${border}`}><p className="text-xl font-black text-slate-300">{DASH}</p><p className="text-[11px] font-bold text-slate-700 leading-tight">{label}</p><p className="text-[9px] text-slate-400 mt-0.5">{t('Pendiente de integración', 'Pending integration')}</p></div>)}
+          {[[t('Por lotificar', 'To be batched'), 'border-l-amber-500', src?.to_batch, t('Validadas, sin plan ni OC', 'Validated, no plan or PO')], [t('Requisiciones lotificadas', 'Batched requisitions'), 'border-l-purple-500', src?.batched, t('Con lotes en su último plan', 'With lots in latest plan')], [t('Partidas con RFQ', 'Items with RFQ'), 'border-l-blue-500', src?.items_with_rfq, t('Partidas incluidas en RFQ', 'Items included in RFQs')], [t('Proveedores asignados', 'Assigned suppliers'), 'border-l-indigo-500', src?.assigned_suppliers, t('Seleccionados en lotes', 'Selected in lots')], [t('RFQ pendientes', 'Pending RFQs'), 'border-l-rose-500', src?.pending_rfqs, t('Sin oferta registrada', 'No offer recorded')], [t('Rutas paralelas', 'Parallel routes'), 'border-l-emerald-500', src?.parallel, t('Requisiciones con 2+ lotes', 'Requisitions with 2+ lots')]].map(([label, border, n, sub]) =>
+            <div key={label} data-testid="dash-sourcing-card" className={`bg-white rounded-2xl p-3.5 border border-slate-100 shadow-xs border-l-4 ${border}`}><p className={`text-xl font-black ${src ? 'text-slate-900' : 'text-slate-300'}`}>{n0(n)}</p><p className="text-[11px] font-bold text-slate-700 leading-tight">{label}</p><p className="text-[9px] text-slate-400 mt-0.5">{sub}</p></div>)}
         </div>
-        <p className="text-[10px] text-slate-400 mb-6">{t('El esquema incluye planes y lotes de abastecimiento, pero todavía no hay un endpoint de consulta; no se muestran cifras estimadas.', 'The schema includes sourcing plans and lots, but no read endpoint exists yet; no estimated figures are shown.')}</p>
+        <p className="text-[10px] text-slate-400 mb-6">{t('Planes, lotes, proveedores seleccionados y RFQ por lote registrados en Gestión del Contratista y Cotizaciones (mismas reglas: última validación y criterio «puede cotizar»).', 'Plans, lots, selected suppliers and RFQs per lot recorded in Contractor Management and Quotes (same rules: latest validation and the "can quote" criterion).')}</p>
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           <div className="lg:col-span-7 bg-white rounded-2xl p-5 border border-slate-100 shadow-xs flex flex-col justify-between space-y-4">
             <div><h3 className="text-sm font-extrabold text-slate-900 mb-3">{t('Mapa del abastecimiento', 'Procurement Map')}</h3>
@@ -250,7 +272,7 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
                 </React.Fragment>)}
               </div>
             </div>
-            <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100 text-[11px] text-slate-600">{t('Mapa de referencia del proceso. Las cifras por lote y partida se mostrarán cuando exista la consulta de planes de abastecimiento.', 'Reference process map. Batch and line-item figures will be shown once the sourcing plan query exists.')}</div>
+            <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100 text-[11px] text-slate-600">{t('Mapa de referencia del proceso. Las cifras reales por lote, partida, proveedor y RFQ están en las tarjetas de arriba.', 'Reference process map. Real figures per batch, line, supplier and RFQ are shown in the cards above.')}</div>
           </div>
           <div className="lg:col-span-5 bg-white rounded-2xl p-5 border border-slate-100 shadow-xs space-y-3">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100"><h3 className="text-sm font-extrabold text-slate-900">{t('Siguientes acciones guiadas', 'Next Guided Actions')}</h3><span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-extrabold text-[10px] rounded-full">{v(actions.total)} {t('pendiente(s)', 'pending')}</span></div>
@@ -287,10 +309,10 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
             <div><h3 className="font-extrabold text-slate-900 text-sm">{t('Ahorro y Desempeño', 'Savings & Performance')}</h3><p className="text-[11px] text-slate-400 font-medium">{t('Evaluaciones de proveedores', 'Supplier evaluations')}</p></div></div>
             <span className="bg-purple-50 text-purple-600 font-extrabold text-[11px] px-3 py-1 rounded-full border border-purple-100">{t('Ahorro: pendiente', 'Savings: pending')}</span></div>
           <div className="grid grid-cols-4 gap-2 relative z-10">
-            {[[DASH, t('Ahorro pot.', 'Pot. savings')], [DASH, t('Evaluados', 'Evaluated')], [DASH, t('Costo prom.', 'Avg. cost')], [`${pct(summary.with_invoice, total)}%`, t('Facturados', 'Invoiced')]].map(([n, label]) =>
+            {[[DASH, t('Ahorro pot.', 'Pot. savings')], [n0(data?.supplier_activity?.evaluated), t('Evaluados', 'Evaluated')], [DASH, t('Costo prom.', 'Avg. cost')], [`${pct(summary.with_invoice, total)}%`, t('Facturados', 'Invoiced')]].map(([n, label]) =>
               <div key={label} className="bg-slate-50 p-2.5 rounded-xl text-center hover:bg-purple-50 transition-all"><p className="text-lg font-black text-slate-900">{n}</p><p className="text-[10px] font-bold text-slate-400">{label}</p></div>)}
           </div>
-          <p className="text-[10px] text-slate-400 relative z-10">{t('El ahorro requiere comparar precios adjudicados contra referencias; los importes guardados no son ahorro comprobado.', 'Savings require comparing awarded prices with references; stored amounts are not verified savings.')}</p>
+          <p className="text-[10px] text-slate-400 relative z-10">{t('Evaluados = proveedores del catálogo con calificación. Ahorro potencial y costo promedio requieren la regla de comparación del sistema original (precio adjudicado contra referencia); no se estiman.', 'Evaluated = catalog suppliers with a rating. Potential savings and average cost need the original comparison rule (awarded price vs. reference); they are not estimated.')}</p>
           <div className="relative z-10"><div className="flex justify-between items-center text-[11px] font-extrabold mb-1"><span className="text-slate-800">{t('Requisiciones facturadas', 'Invoiced requisitions')}</span><span className="text-purple-600">{pct(summary.with_invoice, total)}%</span></div>
             <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden"><div className="bg-gradient-to-r from-purple-500 to-pink-500 h-full rounded-full" style={{ width: `${pct(summary.with_invoice, total)}%` }} /></div></div>
         </div>
@@ -346,20 +368,25 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
         <Panel accent="from-blue-600 via-pink-500 to-purple-600" title={t('Valor económico integral', 'Comprehensive economic value')} subtitle={t('Presupuesto, cotización y OC por moneda (importes guardados)', 'Budget, quote and PO per currency (stored amounts)')} icon="💰" iconBg="bg-amber-50 text-amber-600"
           right={money.currencies.length > 1 ? <select aria-label={t('Moneda', 'Currency')} value={cur} onChange={e => setCurrency(e.target.value)} className="border border-slate-200 rounded-lg text-xs p-1">{money.currencies.map(c => <option key={c}>{c}</option>)}</select> : null}>
           {cur ? (() => {
-            const bars = [[t('Presupuesto', 'Budget'), m.budgets, 'from-teal-500 to-emerald-600'], [t('Cotizaciones', 'Quotes'), m.quotes, 'from-blue-600 to-indigo-600'], [t('OC', 'PO'), m.po, 'from-amber-500 to-orange-600']];
+            const bars = [[t('Presupuesto', 'Budget'), m.budgets, 'from-teal-500 to-emerald-600'], [t('Cotizaciones', 'Quotes'), m.quotes, 'from-blue-600 to-indigo-600'], [t('OC', 'PO'), m.po, 'from-amber-500 to-orange-600'], [t('Service Fee', 'Service Fee'), m.fee, 'from-purple-500 to-pink-600'], [t('Facturación', 'Invoicing'), m.invoices, 'from-emerald-500 to-teal-600']];
             const max = Math.max(1, ...bars.map(b => b[1]?.amount || 0));
             return <div className="pt-6 pb-2 flex items-end justify-around gap-1.5 h-56">
               {bars.map(([label, x, color]) => <div key={label} className="flex flex-col items-center flex-1 min-w-0"><span className="text-[10px] font-black text-slate-800 mb-1 truncate max-w-full" title={x ? formatAmount(x.amount, cur, activeLang) : DASH}>{x ? formatAmount(x.amount, cur, activeLang) : DASH}</span>
                 <div className="w-full bg-slate-50 rounded-2xl h-36 flex items-end justify-center p-1"><div className={`w-full bg-gradient-to-t ${color} rounded-xl transition-all duration-500`} style={{ height: `${x?.amount ? Math.max(4, x.amount * 100 / max) : 0}%` }} /></div>
                 <span className="text-[9px] font-bold text-slate-600 mt-2 text-center w-full truncate" title={label}>{label}</span></div>)}
-              {[t('Service Fee', 'Service Fee'), t('Facturación', 'Invoicing')].map(label => <div key={label} className="flex flex-col items-center flex-1 min-w-0 opacity-60"><span className="text-[10px] font-black text-slate-400 mb-1">{DASH}</span><div className="w-full bg-slate-50 rounded-2xl h-36 border border-dashed border-slate-200" /><span className="text-[9px] font-bold text-slate-400 mt-2 text-center w-full truncate" title={label}>{label}</span></div>)}
             </div>;
           })() : <Pending tall text={t('Sin importes registrados para este filtro.', 'No recorded amounts for these filters.')} />}
-          <p className="text-[10px] text-amber-700 mt-2">{t('Valores históricos sin conciliación financiera completa; no son ahorros, pagos ni ingresos. Service Fee y facturación: pendientes de integración.', 'Historical amounts not fully reconciled; not savings, payments or revenue. Service Fee and invoicing: pending integration.')}</p>
+          <p className="text-[10px] text-amber-700 mt-2">{t('Valores históricos sin conciliación financiera completa; no son ahorros, pagos ni ingresos. Service Fee: última versión de cada cotización al cliente. Facturación: facturas no canceladas de las requisiciones del filtro.', 'Historical amounts not fully reconciled; not savings, payments or revenue. Service Fee: latest version of each client quote. Invoicing: non-cancelled invoices of the filtered requisitions.')}</p>
         </Panel>
         <Panel accent="from-blue-500 to-indigo-600" title={t('Proveedores con mayor actividad', 'Most active suppliers')} subtitle={t('Participación por RFQ, ofertas y adjudicaciones', 'Participation via RFQ, bids, and awards')} icon="🏆" iconBg="bg-amber-50 text-amber-600">
-          <Pending tall text={PENDING} />
-          <p className="text-[10px] text-slate-400 mt-2">{t(`${formatCount(data.catalogs?.suppliers)} proveedor(es) registrados en el catálogo.`, `${formatCount(data.catalogs?.suppliers)} supplier(s) registered in the catalog.`)}</p>
+          {sup.length ? <div data-testid="dash-suppliers" className="space-y-2.5">
+            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 text-[9px] font-black uppercase tracking-wide text-slate-400 px-1"><span>{t('Proveedor', 'Supplier')}</span><span>RFQ</span><span>{t('Ofertas', 'Offers')}</span><span>{t('Adjud.', 'Awards')}</span></div>
+            {sup.map(x => { const max = Math.max(1, ...sup.map(supplierScore)); return <div key={x.id || x.name} className="space-y-1">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 items-center text-[11px] px-1"><span className="font-bold text-slate-700 truncate" title={x.name}>{x.name}</span><span className="tabular-nums w-7 text-right">{formatCount(x.rfqs)}</span><span className="tabular-nums w-9 text-right">{formatCount(x.quotes)}</span><span className="tabular-nums w-9 text-right font-black text-slate-900">{formatCount(x.awards)}</span></div>
+              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full" style={{ width: `${supplierScore(x) * 100 / max}%` }} /></div>
+            </div>; })}
+          </div> : <Pending tall text={t('Sin RFQ, ofertas ni adjudicaciones para este filtro.', 'No RFQs, offers or awards for these filters.')} />}
+          <p className="text-[10px] text-slate-400 mt-2">{t(`${formatCount(data.supplier_activity?.active_suppliers)} proveedor(es) con actividad · ${formatCount(data.catalogs?.suppliers)} registrados en el catálogo.`, `${formatCount(data.supplier_activity?.active_suppliers)} active supplier(s) · ${formatCount(data.catalogs?.suppliers)} registered in the catalog.`)}</p>
         </Panel>
       </div>
 
@@ -368,15 +395,28 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
         <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-black text-slate-900">{t('Analítica ampliada', 'Augmented analytics')}</h2><p className="text-xs text-slate-500 font-medium">{t('Compras, servicios, cotizaciones, Service Fee, autorizaciones, margen y cierre comercial.', 'Purchases, services, price quotes, service fee, authorizations, margin, and commercial closing.')}</p></div>
           <span className="px-3 py-1 bg-indigo-50 text-indigo-700 font-extrabold text-[11px] rounded-full border border-indigo-100 shrink-0">MariaDB</span></div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <Panel accent="from-purple-500 via-pink-500 to-rose-500" title={t('Servicios Operativos', 'Operational Services')} subtitle={t('Portafolio Service-to-Cash', 'Service-to-Cash Portfolio')} icon="🚛"><Pending tall text={PENDING} /></Panel>
-          <Panel accent="from-blue-500 via-indigo-500 to-purple-600" title={t('Service-to-Cash · 8 etapas', 'Service-to-Cash · 8 stages')} subtitle={t('Distribución operativa actual', 'Current operational distribution')} icon="🧭" iconBg="bg-amber-50 text-amber-600"><Pending tall text={PENDING} /></Panel>
+          <Panel accent="from-purple-500 via-pink-500 to-rose-500" title={t('Servicios Operativos', 'Operational Services')} subtitle={t('Portafolio Service-to-Cash', 'Service-to-Cash Portfolio')} icon="🚛">
+            {svc ? <div data-testid="dash-services" className="grid grid-cols-2 gap-3">
+              <MiniStat value={formatCount(svc.total)} label={t('Servicios', 'Services')} />
+              <MiniStat value={formatCount(svc.open)} label={t('Abiertos', 'Open')} />
+              <MiniStat value={formatCount(svc.executed)} label={t('Ejecutados', 'Executed')} />
+              <MiniStat value={formatCount(svc.invoiced)} label={t('Facturados', 'Invoiced')} />
+              <MiniStat value={svc.total ? formatAmount(svc.price, svc.currency || 'MXN', activeLang) : DASH} label={t('Venta acumulada', 'Accrued sales')} tone="text-purple-600" size="text-lg" />
+              <MiniStat value={svc.total ? `${formatAmount(svc.margin, svc.currency || 'MXN', activeLang)} · ${svc.marginPct}%` : DASH} label={t('Margen', 'Margin')} tone={svc.margin < 0 ? 'text-rose-600' : 'text-emerald-600'} size="text-lg" />
+            </div> : <Pending tall text={t('Sin datos de servicios.', 'No service data.')} />}
+            {svc?.otherCurrencies?.length > 0 && <p className="text-[10px] text-slate-400 mt-2">{t(`Importes en ${svc.currency || 'moneda principal'}; también hay servicios en ${svc.otherCurrencies.join(', ')} (no se suman).`, `Amounts in ${svc.currency || 'main currency'}; there are also services in ${svc.otherCurrencies.join(', ')} (not added up).`)}</p>}
+          </Panel>
+          <Panel accent="from-blue-500 via-indigo-500 to-purple-600" title={t('Service-to-Cash · 8 etapas', 'Service-to-Cash · 8 stages')} subtitle={t('Distribución operativa actual', 'Current operational distribution')} icon="🧭" iconBg="bg-amber-50 text-amber-600">
+            {s2c.length ? <div data-testid="dash-s2c" className="space-y-2.5">{s2c.map((x, i) => <HBar key={x.name} label={`${i + 1}. ${x.name}`} count={x.n} max={Math.max(1, ...s2c.map(y => y.n))} color="bg-gradient-to-r from-indigo-500 to-purple-600" wide />)}</div> : <Pending tall text={t('Sin datos de servicios.', 'No service data.')} />}
+            <p className="text-[10px] text-slate-400 mt-2">{t(`Etapa actual = primer criterio del Flujo del Proceso que el servicio aún no cumple${svc?.cancelled ? `; ${formatCount(svc.cancelled)} cancelado(s) fuera de etapas` : ''}.`, `Current stage = first Process Flow criterion not yet met${svc?.cancelled ? `; ${formatCount(svc.cancelled)} cancelled excluded` : ''}.`)}</p>
+          </Panel>
           <Panel accent="from-purple-500 to-pink-500" title={t('Cotización + Service Fee', 'Quote + Service Fee')} subtitle={t('Seguimiento comercial al cliente', 'Commercial follow-up with the client')} icon="💼" iconBg="bg-pink-50 text-pink-600">
             <div className="grid grid-cols-2 gap-3">
               <MiniStat value={formatCount(cq)} label={t('Versiones de cotización', 'Quote versions')} />
               <MiniStat value={formatCount(summary.with_customer_quote)} label={t('Requisiciones cotizadas', 'Quoted requisitions')} />
-              <MiniStat value={DASH} label={t('Con Service Fee', 'With Service Fee')} tone="text-slate-300" />
-              <MiniStat value={DASH} label={t('Aprobadas por cliente', 'Client approved')} tone="text-slate-300" />
-              <MiniStat value={DASH} label={t('Service Fee acumulado', 'Accrued service fee')} tone="text-slate-300" size="text-lg" />
+              <MiniStat value={n0(fee?.with_fee)} label={t('Con Service Fee', 'With Service Fee')} tone={fee ? 'text-slate-900' : 'text-slate-300'} />
+              <MiniStat value={n0(fee?.approved)} label={t('Aprobadas por cliente', 'Client approved')} tone={fee ? 'text-slate-900' : 'text-slate-300'} />
+              <MiniStat value={fee ? formatAmount(m.fee?.amount || 0, cur || 'MXN', activeLang) : DASH} label={t('Service Fee acumulado', 'Accrued service fee')} tone={fee ? 'text-pink-600' : 'text-slate-300'} size="text-lg" />
               <MiniStat value={m.quotes ? formatAmount(m.quotes.amount, cur, activeLang) : DASH} label={t('Valor cotizado total', 'Total quoted value')} tone="text-purple-600" size="text-lg" />
             </div>
           </Panel>
@@ -385,7 +425,7 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
               <MiniStat value={formatCount(poDocs)} label={t('OC registradas', 'Registered PO')} />
               <MiniStat value={chs?.toReview === null || chs?.toReview === undefined ? DASH : `${formatCount(chs.toReview)}${chs.toReviewTruncated ? '+' : ''}`} label={t('Cambios por revisar (tú)', 'Changes to review (you)')} />
               <MiniStat value={formatCount(stages.counts[3] || 0)} label={t('En comparativo/autorización', 'In comparison/approval')} />
-              <MiniStat value={DASH} label={t('Servicios autorizados', 'Authorized services')} tone="text-slate-300" />
+              <MiniStat value={svc ? formatCount(svc.authorized) : DASH} label={t('Servicios autorizados', 'Authorized services')} tone={svc ? 'text-slate-900' : 'text-slate-300'} />
             </div>
             <div className="mt-2"><SourceState state={chg} t={t} /></div>
           </Panel>
@@ -394,7 +434,7 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
               <MiniStat value={formatCount(summary.with_invoice)} label={t('Con factura', 'With invoice')} />
               <MiniStat value={formatCount(summary.with_delivery)} label={t('Con entrega', 'With delivery')} />
               <MiniStat value={formatCount(Math.max(0, (Number(summary.with_delivery) || 0) - (Number(summary.with_invoice) || 0)))} label={t('Entregadas sin factura (aprox.)', 'Delivered w/o invoice (approx.)')} />
-              <MiniStat value={DASH} label={t('Pagadas', 'Paid')} tone="text-slate-300" />
+              <MiniStat value={DASH} label={t('Pagadas · sin registro de pagos', 'Paid · no payment records')} tone="text-slate-300" />
             </div>
           </Panel>
           <Panel accent="from-amber-500 to-red-600" title={t('Riesgos transversales', 'Cross-cutting risks')} subtitle={t('Prioridades de compra y servicios', 'Purchasing priorities and services')} icon="🚨" iconBg="bg-rose-50 text-rose-600">
@@ -439,7 +479,7 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
             <div className="mb-6"><span className="text-4xl font-black text-blue-600 tracking-tight">{avg === null ? DASH : `${avg}%`}</span>
               <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden mt-2"><div className="bg-gradient-to-r from-blue-600 via-purple-600 to-pink-500 h-full rounded-full" style={{ width: `${avg || 0}%` }} /></div></div>
             <div className="space-y-2 pt-1 border-t border-slate-100">
-              {[['Procure-to-Pay', avg === null ? DASH : `${avg}%`], ['Service-to-Cash', DASH], [t('Service fee aplicado', 'Applied service fee'), DASH], [t('Cerradas (factura)', 'Closed (invoice)'), `${pct(status.closed, status.total)}%`]].map(([label, val]) =>
+              {[['Procure-to-Pay', avg === null ? DASH : `${avg}%`], ['Service-to-Cash', s2cProgress(data?.services) === null ? DASH : `${s2cProgress(data?.services)}%`], [t('Service fee aplicado', 'Applied service fee'), fee && fee.versions ? `${pct(fee.with_fee, fee.versions)}%` : DASH], [t('Cerradas (factura)', 'Closed (invoice)'), `${pct(status.closed, status.total)}%`]].map(([label, val]) =>
                 <div key={label} className="flex items-center justify-between text-xs py-1 border-b border-slate-50"><span className="text-slate-500 font-medium">{label}</span><span className="font-black text-slate-900">{val}</span></div>)}
             </div>
           </>}
@@ -542,11 +582,11 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
           {[
             [v(hist.total), t('Requisiciones desde historial', 'Requisitions from history'), t('Marcadas como basadas en historial', 'Flagged as history-based'), 'from-blue-500 to-blue-600'],
-            [DASH, t('Precios respetados', 'Prices honored'), t('Pendiente de integración', 'Pending integration'), 'from-purple-500 to-indigo-600'],
-            [DASH, t('Partidas por recotizar', 'Items to re-quote'), t('Pendiente de integración', 'Pending integration'), 'from-amber-400 to-amber-500'],
-            [DASH, t('Precio comercial pendiente', 'Pending commercial price'), t('Pendiente de integración', 'Pending integration'), 'from-rose-500 to-pink-600'],
+            [n0(rep?.honored), t('Precios respetados', 'Prices honored'), rep ? t(`Precio fijo · de ${formatCount(rep.items)} partida(s) desde historial`, `Fixed price · of ${formatCount(rep.items)} history-based item(s)`) : DASH, 'from-purple-500 to-indigo-600'],
+            [n0(rep?.requote), t('Partidas por recotizar', 'Items to re-quote'), rep ? t('Recotizar con proveedor', 'Re-quote with supplier') : DASH, 'from-amber-400 to-amber-500'],
+            [n0(rep?.price_pending), t('Precio comercial pendiente', 'Pending commercial price'), rep ? t('Nuevo precio o validación', 'New price or validation') : DASH, 'from-rose-500 to-pink-600'],
             [chs?.own === null || chs?.own === undefined ? DASH : formatCount(chs.own), 'Change Requests', chs ? t(`${formatCount(chs.byStatus.pending_review || 0)} pendiente(s) de revisión · propias`, `${formatCount(chs.byStatus.pending_review || 0)} pending review · own`) : DASH, 'from-teal-400 to-teal-600'],
-            [DASH, t('Enmiendas de OC', 'PO amendments'), t('Bloqueadas hasta validación integral', 'Blocked until end-to-end validation'), 'from-orange-500 to-red-500'],
+            [n0(poa?.amended_versions), t('Enmiendas de OC', 'PO amendments'), poa ? t(`Versiones enmendadas · ${formatCount(poa.requests_total)} solicitud(es) de modificación; escritura bloqueada`, `Amended versions · ${formatCount(poa.requests_total)} modification request(s); writes blocked`) : DASH, 'from-orange-500 to-red-500'],
           ].map(([n, title, sub, grad]) => <div key={title} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 relative overflow-hidden flex flex-col justify-between">
             <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${grad}`} />
             <div><span className={`text-2xl font-black ${n === DASH ? 'text-slate-300' : 'text-slate-900'} block mb-1`}>{n}</span><h4 className="text-xs font-black text-slate-800 leading-tight">{title}</h4></div>
@@ -555,10 +595,13 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
         </div>
         <SourceState state={chg} t={t} />
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {[[t('Rutas de precio al cliente', 'Customer pricing paths'), t('Tratamiento configurado por partida en requisiciones desde historial.', 'Configured treatment per line in history-based requisitions.')],
-            [t('Rutas de abastecimiento', 'Supply routes'), t('Proveedor histórico, validación o nueva cotización.', 'Historical supplier, validation, or new quote.')],
-            [t('Políticas de clientes', 'Customer policies'), t('Configuración general que sirve como valor por defecto.', 'General configuration used as the default value.')]].map(([title, sub]) =>
-            <div key={title} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex flex-col justify-between"><div><h4 className="text-sm font-black text-slate-900">{title}</h4><p className="text-[10px] text-slate-400 font-medium">{sub}</p></div><div className="mt-4"><Pending text={PENDING} /></div></div>)}
+          {[[t('Rutas de precio al cliente', 'Customer pricing paths'), t('Tratamiento configurado por partida en requisiciones desde historial.', 'Configured treatment per line in history-based requisitions.'),
+              rep ? <RankList testid="dash-price-routes" items={modeItems(rep.price_modes, PRICE_MODES)} empty={t('Sin partidas desde historial en este filtro.', 'No history-based items for these filters.')} /> : <Pending text={DASH} />],
+            [t('Rutas de abastecimiento', 'Supply routes'), t('Proveedor histórico, validación o nueva cotización.', 'Historical supplier, validation, or new quote.'),
+              rep ? <RankList testid="dash-supply-routes" items={modeItems(rep.sourcing_modes, SOURCING_MODES)} empty={t('Sin partidas desde historial en este filtro.', 'No history-based items for these filters.')} color="bg-gradient-to-r from-amber-400 to-orange-500" /> : <Pending text={DASH} />],
+            [t('Políticas de clientes', 'Customer policies'), t('Configuración general que sirve como valor por defecto.', 'General configuration used as the default value.'),
+              rep?.client_policies ? <RankList testid="dash-client-policies" items={[...policyItems(rep.client_policies.sales, SALES_POLICIES, t('Venta', 'Sales')), ...policyItems(rep.client_policies.sourcing, SOURCING_POLICIES, t('Abasto', 'Sourcing'))]} empty={t('Sin clientes.', 'No clients.')} color="bg-gradient-to-r from-purple-500 to-pink-500" /> : <Pending text={DASH} />]].map(([title, sub, body]) =>
+            <div key={title} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex flex-col justify-between"><div><h4 className="text-sm font-black text-slate-900">{title}</h4><p className="text-[10px] text-slate-400 font-medium">{sub}</p></div><div className="mt-4">{body}</div></div>)}
         </div>
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-left border-collapse min-w-[640px]">
           <thead><tr className="bg-slate-100/70 text-[10px] font-black text-slate-600 tracking-wider uppercase border-b border-slate-100">{[t('Requisición', 'Requisition'), t('Cliente', 'Customer'), t('Partidas', 'Lines'), t('Revisión', 'Revision'), t('Etapa', 'Stage')].map(h => <th key={h} className="p-3">{h}</th>)}</tr></thead>
@@ -575,9 +618,11 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
           <h3 className="text-xl font-black text-slate-900">{t('Dashboard de compradores, preparación/revisión y autorización', 'Buyer dashboard, preparation/review, and authorization')}</h3>
           <p className="text-xs text-slate-400 font-medium mt-0.5">{t('Separa las responsabilidades de las requisiciones de las funciones propias de las Órdenes de Compra.', 'Separate requisition responsibilities from Purchase Order functions.')}</p></div></div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {[['📝', 'border-l-blue-500', t('Requisiciones / Gestión del Contratista', 'Requisitions / Contractor Management'), t('El comprador/responsable se toma de la validación interna vinculada a cada requisición.', 'The buyer is taken from the internal validation linked to each requisition.')],
-            ['🛒', 'border-l-purple-500', t('Órdenes de Compra', 'Purchase Orders'), t('Comprador, Preparó/Revisó y Autorizó se leen de cada OC emitida.', 'Buyer, Prepared/Reviewed and Authorized are read from each issued PO.')]].map(([emoji, border, title, sub]) =>
-            <div key={title} className="space-y-3"><div className={`bg-white rounded-2xl border-l-4 ${border} border border-slate-100 p-4 shadow-sm flex items-center gap-3`}><span className="text-xl p-2 bg-slate-50 rounded-xl">{emoji}</span><div><h4 className="text-sm font-black text-slate-900">{title}</h4><p className="text-[10px] text-slate-400 font-medium">{sub}</p></div></div><Pending text={PENDING} /></div>)}
+          {[['📝', 'border-l-blue-500', t('Requisiciones / Gestión del Contratista', 'Requisitions / Contractor Management'), t('El comprador/responsable se toma de la validación interna vinculada a cada requisición.', 'The buyer is taken from the internal validation linked to each requisition.'),
+              <RankList testid="dash-req-buyers" items={(data.buyers?.items || []).map(x => ({ label: x.name || t('Sin comprador asignado', 'No buyer assigned'), n: x.requisitions, sub: t(`${formatCount(x.with_po)} con OC`, `${formatCount(x.with_po)} with PO`) }))} empty={t('Sin requisiciones validadas en este filtro.', 'No validated requisitions for these filters.')} />],
+            ['🛒', 'border-l-purple-500', t('Órdenes de Compra', 'Purchase Orders'), t('Comprador, Preparó/Revisó y Autorizó se leen de cada OC emitida.', 'Buyer, Prepared/Reviewed and Authorized are read from each issued PO.'),
+              <RankList testid="dash-po-buyers" items={personItems(data.po_roles?.buyer, 'orders')} empty={t('Sin OC en este filtro.', 'No POs for these filters.')} color="bg-gradient-to-r from-purple-500 to-indigo-600" />]].map(([emoji, border, title, sub, body]) =>
+            <div key={title} className="space-y-3"><div className={`bg-white rounded-2xl border-l-4 ${border} border border-slate-100 p-4 shadow-sm flex items-center gap-3`}><span className="text-xl p-2 bg-slate-50 rounded-xl">{emoji}</span><div><h4 className="text-sm font-black text-slate-900">{title}</h4><p className="text-[10px] text-slate-400 font-medium">{sub}</p></div></div><div className="bg-white rounded-2xl border border-slate-100 p-4 shadow-sm">{body}</div></div>)}
         </div>
       </div></div>
 
@@ -588,8 +633,8 @@ export const Dashboard = ({ onNavigate = () => {}, lang, language }) => {
           <p className="text-[11px] text-slate-400 font-medium mt-0.5">{t('Las tres funciones se muestran por separado para evitar confundir requisiciones con responsabilidades de la OC.', 'The three functions are shown separately to avoid confusing requisitions with PO responsibilities.')}</p></div>
           <span className="self-start sm:self-auto px-3.5 py-1 rounded-full bg-amber-100/80 text-amber-800 font-black text-xs border border-amber-200/60">{formatCount(poDocs)} OC</span></div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {[[t('Comprador de la OC', 'PO Buyer'), '🛒', 'bg-blue-50 text-blue-600'], [t('Preparó / Revisó', 'Prepared / Reviewed'), '✏️', 'bg-amber-50 text-amber-600'], [t('Autorizó', 'Authorized'), '✅', 'bg-emerald-50 text-emerald-600']].map(([title, emoji, tone]) =>
-            <div key={title} className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6"><div className="flex items-center justify-between mb-4"><h4 className="text-sm font-black text-slate-900">{title}</h4><span className={`p-2 ${tone} rounded-xl text-xs`}>{emoji}</span></div><Pending tall text={PENDING} /></div>)}
+          {[[t('Comprador de la OC', 'PO Buyer'), '🛒', 'bg-blue-50 text-blue-600', 'buyer'], [t('Preparó / Revisó', 'Prepared / Reviewed'), '✏️', 'bg-amber-50 text-amber-600', 'preparer'], [t('Autorizó', 'Authorized'), '✅', 'bg-emerald-50 text-emerald-600', 'authorizer']].map(([title, emoji, tone, key]) =>
+            <div key={title} className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6"><div className="flex items-center justify-between mb-4"><h4 className="text-sm font-black text-slate-900">{title}</h4><span className={`p-2 ${tone} rounded-xl text-xs`}>{emoji}</span></div><RankList testid={`dash-po-${key}`} items={personItems(data.po_roles?.[key], 'orders')} empty={t('Sin OC en este filtro.', 'No POs for these filters.')} /></div>)}
         </div>
       </div></div>
 

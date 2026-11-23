@@ -100,15 +100,27 @@ export function averageProgress(rows = []) {
   return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
 }
 
-/** analytics.financial → per currency { budgets, quotes, po } with amount and documents. */
-export function moneyByCurrency(financial = {}) {
+/** analytics.financial (+ facturas y Service Fee de los indicadores ampliados) → por moneda { budgets, quotes, po, invoices, fee }. */
+export function moneyByCurrency(financial = {}, extra = {}) {
   const out = {};
+  const blank = () => ({ budgets: null, quotes: null, po: null, invoices: null, fee: null });
   for (const [key, field] of [['requisition_budgets', 'budgets'], ['customer_quotes', 'quotes'], ['purchase_orders', 'po']]) {
     for (const x of financial?.[key] || []) {
       const c = x.currency_code || '—';
-      out[c] = out[c] || { budgets: null, quotes: null, po: null };
+      out[c] = out[c] || blank();
       out[c][field] = { amount: Number(x.amount) || 0, documents: Number(x.documents) || 0 };
     }
+  }
+  for (const x of extra?.invoices || []) {
+    const c = x.currency_code || '—';
+    out[c] = out[c] || blank();
+    out[c].invoices = { amount: Number(x.amount) || 0, documents: Number(x.documents) || 0 };
+  }
+  for (const x of extra?.service_fee || []) {
+    if (!(Number(x.with_fee) > 0)) continue;
+    const c = x.currency_code || '—';
+    out[c] = out[c] || blank();
+    out[c].fee = { amount: Number(x.fee_amount) || 0, documents: Number(x.with_fee) || 0 };
   }
   const currencies = Object.keys(out).sort((a, b) => (a === 'MXN' ? -1 : b === 'MXN' ? 1 : a.localeCompare(b)));
   return { currencies, byCurrency: out };
@@ -132,4 +144,30 @@ export function changeSummary(list, queue) {
 export function historyBased(rows = [], limit = 8) {
   const list = rows.filter(r => r.history_based);
   return { total: list.length, items: list.slice(0, limit) };
+}
+
+/* ---------- Indicadores ampliados de analytics/overview (23 nov 2026) ---------- */
+
+/** Servicios Operativos: portafolio y moneda principal (la de más servicios; MXN en empate). */
+export function servicesSummary(sv) {
+  if (!sv) return null;
+  const money = [...(sv.money || [])].sort((a, b) => (Number(b.services) || 0) - (Number(a.services) || 0) || (a.currency_code === 'MXN' ? -1 : b.currency_code === 'MXN' ? 1 : 0));
+  const main = money[0] || null;
+  const price = Number(main?.price) || 0; const cost = Number(main?.cost) || 0;
+  return { total: Number(sv.total) || 0, open: Number(sv.open) || 0, executed: Number(sv.executed) || 0, invoiced: Number(sv.invoiced) || 0, cancelled: Number(sv.cancelled) || 0, authorized: Number(sv.authorized) || 0,
+    withEvidence: Number(sv.with_evidence) || 0, currency: main?.currency_code || '', price, cost, margin: price - cost, marginPct: price > 0 ? Math.round(((price - cost) / price) * 1000) / 10 : 0, otherCurrencies: money.slice(1).map(x => x.currency_code || '—') };
+}
+
+/** Service-to-Cash · 8 etapas: [{ name, n }] en el orden del Flujo del Proceso. */
+export const s2cStages = sv => (sv?.stage_names || []).map((name, i) => ({ name, n: Number(sv.stages?.[i]) || 0 }));
+
+/** Proveedores con mayor actividad: máximo para escalar barras (RFQ + ofertas + adjudicadas). */
+export const supplierScore = x => (Number(x.rfqs) || 0) + (Number(x.quotes) || 0) + (Number(x.awards) || 0);
+
+/** Avance Service-to-Cash: misma escala de avance de 8 etapas que Procure-to-Pay (P2P_PROGRESS). null sin servicios en etapa. */
+export const S2C_PROGRESS = [10, 22, 36, 50, 64, 76, 90, 100];
+export function s2cProgress(sv) {
+  const counts = (sv?.stages || []).map(n => Number(n) || 0);
+  const total = counts.reduce((a, b) => a + b, 0);
+  return total ? Math.round(counts.reduce((a, n, i) => a + n * (S2C_PROGRESS[i] || 0), 0) / total) : null;
 }

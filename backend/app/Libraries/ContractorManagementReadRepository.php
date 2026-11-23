@@ -32,13 +32,13 @@ final class ContractorManagementReadRepository
         return $q->getResultArray();
     }
 
-    private static function snapName(string $col): string
+    public static function snapName(string $col): string
     {
         return "(CASE WHEN {$col} IS NULL OR NOT JSON_VALID({$col}) THEN NULL WHEN JSON_TYPE({$col})='STRING' THEN JSON_UNQUOTE({$col}) ELSE COALESCE(JSON_VALUE({$col},'$.name'),JSON_VALUE({$col},'$.display_name'),JSON_VALUE({$col},'$.nombre'),JSON_VALUE({$col},'$.fullName')) END)";
     }
 
     /** Buyer of a review: the user's person, else the imported snapshot. */
-    private static function buyer(string $rv = 'rv'): string
+    public static function buyer(string $rv = 'rv'): string
     {
         $snap = self::snapName("{$rv}.buyer_snapshot");
         return "COALESCE((SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id={$rv}.buyer_user_id AND u.organization_id={$rv}.organization_id),{$snap})";
@@ -161,7 +161,7 @@ final class ContractorManagementReadRepository
         return ['item' => $r, 'items' => $items, 'reviews' => $reviews];
     }
     /** Latest validation per requisition (same rule as Cotizaciones: the newest requisition_reviews row). */
-    private const LATEST_REVIEW = 'rv.organization_id=r.organization_id AND rv.requisition_id=r.id AND NOT EXISTS (SELECT 1 FROM requisition_reviews n WHERE n.organization_id=rv.organization_id AND n.requisition_id=rv.requisition_id AND n.id>rv.id)';
+    public const LATEST_REVIEW = 'rv.organization_id=r.organization_id AND rv.requisition_id=r.id AND NOT EXISTS (SELECT 1 FROM requisition_reviews n WHERE n.organization_id=rv.organization_id AND n.requisition_id=rv.requisition_id AND n.id>rv.id)';
 
     /** Supplier catalog for lots: status, own category and the categories of its registered supplies (offerings). */
     private function supplierCatalog(int $org): array
@@ -305,7 +305,7 @@ final class ContractorManagementReadRepository
             'rfqs_without_lot' => $loose];
     }
     /** "Can move to quoting" rule of Reglas inteligentes (Spanish or English values; collation is case/accent-insensitive). */
-    private const CAN_QUOTE = "(rv.technical_result IN ('Conforme','Con observaciones','compliant','with observations') AND rv.contract_result IN ('Conforme','Con observaciones','compliant','with observations') AND rv.budget_result IN ('Disponible','Parcial','available','partial'))";
+    public const CAN_QUOTE = "(rv.technical_result IN ('Conforme','Con observaciones','compliant','with observations') AND rv.contract_result IN ('Conforme','Con observaciones','compliant','with observations') AND rv.budget_result IN ('Disponible','Parcial','available','partial'))";
 
     /**
      * Card 3 "Matriz de validaciones": every internal validation with its requisition, purchasing manager (cards by manager:
