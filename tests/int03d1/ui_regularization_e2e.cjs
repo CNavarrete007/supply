@@ -51,6 +51,8 @@ const rowOf = (page, folio) => page.getByTestId('reg-row').filter({ hasText: fol
     await page.getByText('Cargando datos de MariaDB').waitFor({ state: 'detached', timeout: 20000 }).catch(() => {});
     await page.getByRole('button', { name: /Sin requisición \/ Regularización/ }).click();
     await page.getByTestId('regularization-panel').waitFor();
+    // Aislamiento: cada corrida agrega provisionales sintéticas y la lista pagina de 15 en 15; se filtra por la etiqueta de esta corrida.
+    await page.getByLabel('Buscar solicitud provisional').fill(`UI-${tag}`);
     await rowOf(page, overdue.folio).waitFor();
     check('tarjeta carga provisionales desde MariaDB', await rowOf(page, overdue.folio).count() === 1);
     check('aviso RF1 actualizado', await page.getByText('Regularización (R2) conectadas a MariaDB').count() === 1);
@@ -193,6 +195,8 @@ const rowOf = (page, folio) => page.getByTestId('reg-row').filter({ hasText: fol
 
     // 401: session lost.
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByLabel('Buscar solicitud provisional').fill(`UI-${tag}`);
+    await rowOf(page, overdue.folio).waitFor();
     await context.clearCookies();
     await rowOf(page, overdue.folio).getByRole('button', { name: 'VER REGULARIZACIÓN' }).click();
     await modal(page).getByText('Tu sesión expiró').waitFor({ timeout: 15000 });
