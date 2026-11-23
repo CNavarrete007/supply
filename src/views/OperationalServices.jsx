@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Lock } from 'lucide-react';
 import { ServiceMatrix } from './services/ServiceMatrix.jsx';
 import { ServiceReports } from './services/ServiceReports.jsx';
+import { NewServiceRequest } from './services/NewServiceRequest.jsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { 
@@ -136,59 +137,6 @@ const TEXTS = {
         pendReg: "Pend. regularización",
         withExtVendor: "Con proveedor externo",
         withEvidence: "Con evidencia"
-      }
-    },
-    newRequest: {
-      title: "Nueva solicitud",
-      subtitle: "Define el tipo de operación. Para un servicio, crea primero la requisición maestra y después completa su expediente operativo.",
-      steps: ["1 · Operación", "2 · Servicio", "3 · Requisición"],
-      types: {
-        buyRent: "Compra / renta",
-        buyRentDesc: "Continúa al flujo actual: requisición, cotización, comparativo, aprobación, OC, recepción, entrega y factura.",
-        service: "Servicio",
-        serviceDesc: "Agua, transporte, Rise X, grúa, montacargas, gasolina, Last Mile u otro servicio operativo/administrativo.",
-        selected: "Seleccionado"
-      },
-      serviceTypeTitle: "¿Qué servicio realizará?",
-      serviceList: [
-        { id: 'agua', label: 'Suministro de agua', icon: '💧' },
-        { id: 'transporte', label: 'Transporte', icon: '🚚' },
-        { id: 'transporte_personal', label: 'Transporte de personal', icon: '🚐' },
-        { id: 'rise_x', label: 'Gestión Rise X', icon: '🔐' },
-        { id: 'grua', label: 'Servicio de grúa', icon: '🏗️' },
-        { id: 'montacargas', label: 'Montacargas', icon: '🚜' },
-        { id: 'gasolina', label: 'Recarga de gasolina', icon: '⛽' },
-        { id: 'last_mile', label: 'Last Mile Deliveries', icon: '📍' },
-        { id: 'otro', label: 'Otro servicio', icon: '🧩' },
-      ],
-      reqStepTitle: "Crear y vincular la requisición del servicio",
-      bannerNote: "Una sola requisición maestra: el Folio / requisición del cliente y la Referencia interna, sean capturados o generados aquí, se guardarán en Solicitud / Requisición → Matriz de requisiciones y quedarán vinculados al expediente de Servicios Operativos → Matriz. No se crea una requisición duplicada.",
-      form: {
-        client: "Cliente *",
-        selectClient: "Seleccionar cliente...",
-        clientFolio: "Folio / requisición del cliente *",
-        generate: "Generar",
-        clientFolioHelp: "Si el cliente ya proporcionó un folio, captúralo manualmente. Si no existe, puedes generarlo y será el mismo número en Solicitud / Requisición.",
-        internalRef: "Referencia interna",
-        internalRefHelp: "Referencia interna de seguimiento. Se guardará en la requisición maestra y se propagará a los documentos relacionados.",
-        project: "Proyecto *",
-        projectPlaceholder: "Proyecto / instalación",
-        contract: "Contrato / referencia contractual",
-        requestDate: "Fecha de solicitud *",
-        requiredDate: "Fecha requerida",
-        clientRequester: "Solicitante del cliente *",
-        requesterEmail: "Correo del solicitante *",
-        place: "Lugar de prestación / entrega",
-        placePlaceholder: "Patio, terminal, plataforma, instalación...",
-        description: "Descripción / alcance del servicio",
-        descriptionPlaceholder: "Describe la necesidad del cliente y el alcance inicial del servicio.",
-        commNote: "Autorización comercial: PO, Orden de Servicio, contrato, correo, portal o emergencia se podrá registrar después dentro del expediente del servicio cuando exista."
-      },
-      buttons: {
-        back: "Atrás",
-        continue: "Continuar ›",
-        createAndContinue: "Crear requisición y continuar ›",
-        successAlert: "¡Requisición creada con éxito!"
       }
     },
     matrix: {
@@ -401,59 +349,6 @@ const TEXTS = {
         withEvidence: "With evidence"
       }
     },
-    newRequest: {
-      title: "New Request",
-      subtitle: "Define the operation type. For a service, create the master requisition first and then complete its operational file.",
-      steps: ["1 · Operation", "2 · Service", "3 · Requisition"],
-      types: {
-        buyRent: "Purchase / Rent",
-        buyRentDesc: "Continue current flow: requisition, quote, comparison, approval, PO, receipt, delivery, and invoice.",
-        service: "Service",
-        serviceDesc: "Water, transport, Rise X, crane, forklift, fuel, Last Mile or another operational/administrative service.",
-        selected: "Selected"
-      },
-      serviceTypeTitle: "What service will be performed?",
-      serviceList: [
-        { id: 'agua', label: 'Water Supply', icon: '💧' },
-        { id: 'transporte', label: 'Transportation', icon: '🚚' },
-        { id: 'transporte_personal', label: 'Staff Transportation', icon: '🚐' },
-        { id: 'rise_x', label: 'Rise X Management', icon: '🔐' },
-        { id: 'grua', label: 'Crane Service', icon: '🏗️' },
-        { id: 'montacargas', label: 'Forklift', icon: '🚜' },
-        { id: 'gasolina', label: 'Fuel Refill', icon: '⛽' },
-        { id: 'last_mile', label: 'Last Mile Deliveries', icon: '📍' },
-        { id: 'otro', label: 'Other Service', icon: '🧩' },
-      ],
-      reqStepTitle: "Create and link the service requisition",
-      bannerNote: "Single master requisition: the Client Folio / Requisition and Internal Reference captured or generated here will be saved in Request / Requisition → Requisitions Matrix and linked to Operational Services → Matrix. No duplicate requisition is created.",
-      form: {
-        client: "Client *",
-        selectClient: "Select client...",
-        clientFolio: "Client Folio / Requisition *",
-        generate: "Generate",
-        clientFolioHelp: "If the client already provided a folio, enter it manually. If not, generate it and it will share the number in Request / Requisition.",
-        internalRef: "Internal Reference",
-        internalRefHelp: "Internal tracking reference. It will be saved in the master requisition and propagated to related documents.",
-        project: "Project *",
-        projectPlaceholder: "Project / installation",
-        contract: "Contract / reference",
-        requestDate: "Request date *",
-        requiredDate: "Required date",
-        clientRequester: "Client requester *",
-        requesterEmail: "Requester email *",
-        place: "Delivery / Service location",
-        placePlaceholder: "Yard, terminal, platform, facility...",
-        description: "Description / scope of service",
-        descriptionPlaceholder: "Describe client needs and initial scope of service.",
-        commNote: "Commercial authorization: PO, Service Order, contract, email, portal or emergency can be registered later in the service file."
-      },
-      buttons: {
-        back: "Back",
-        continue: "Continue ›",
-        createAndContinue: "Create requisition and continue ›",
-        successAlert: "Requisition created successfully!"
-      }
-    },
     matrix: {
       clientSectionTitle: "Services by client → buyer",
       clientSectionSubtitle: "Step 1: select client. Step 2: select buyer linked to requisition/validation. Then the paginated matrix is shown.",
@@ -555,7 +450,7 @@ const TEXTS = {
   }
 };
 
-export function OperationalServices({ onNotify, lang = 'es', language, isEnglish }) {
+export function OperationalServices({ onNotify, onNavigate, lang = 'es', language, isEnglish }) {
   // Detección automática del idioma recibiendo props desde App
   const isEn = isEnglish || lang === 'en' || language === 'en';
   const currentLang = isEn ? 'en' : 'es';
@@ -563,31 +458,6 @@ export function OperationalServices({ onNotify, lang = 'es', language, isEnglish
 
   // 1. ESTADOS PRINCIPALES DE NAVEGACIÓN
   const [activeTab, setActiveTab] = useState(1);
-
-  const [formData, setFormData] = useState({
-    cliente: '',
-    folioCliente: '',
-    referenciaInterna: '',
-    proyecto: '',
-    contrato: '',
-    fechaSolicitud: '2026-09-04',
-    fechaRequerida: '',
-    solicitanteCliente: '',
-    correoSolicitante: '',
-    lugarPrestacion: '',
-    descripcionAlcance: ''
-  });
-
-  // Generadores de folio automático
-  const handleGenerarFolio = () => {
-    const folioAuto = `REQ-${Math.floor(100000000 + Math.random() * 900000000)}`;
-    setFormData(prev => ({ ...prev, folioCliente: folioAuto }));
-  };
-
-  const handleGenerarReferencia = () => {
-    const refAuto = `SRV-TRION-${Math.floor(10000 + Math.random() * 90000)}`;
-    setFormData(prev => ({ ...prev, referenciaInterna: refAuto }));
-  };
 
   const exportToCSV = (data = []) => {
     const headers = t.matrix.headers.slice(0, -1); // Excluye acciones de la cabecera CSV
@@ -623,10 +493,8 @@ export function OperationalServices({ onNotify, lang = 'es', language, isEnglish
     document.body.removeChild(link);
   };
 
-  // Estados para el Modal de Nueva Solicitud (Tarjeta 2)
-  const [stepModal, setStepModal] = useState(1);
-  const [selectedType, setSelectedType] = useState('compra');
-  const [selectedService, setSelectedService] = useState('agua');
+  // Sección 2 "+ Nueva solicitud": modal del original (NewServiceRequest), sobre la sección activa.
+  const [newOpen, setNewOpen] = useState(false);
 
   // 2. ESTADOS DE FILTROS
   const [periodo, setPeriodo] = useState("Todo el periodo");
@@ -1038,12 +906,13 @@ export function OperationalServices({ onNotify, lang = 'es', language, isEnglish
       <div className="bg-white rounded-2xl p-2 border border-slate-200/80 shadow-2xs">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           {t.tabs.map((tab) => {
-            const isActive = activeTab === tab.id;
+            const isActive = newOpen ? tab.id === 2 : activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActiveTab(tab.id)}
+                data-testid={`services-tab-${tab.id}`}
+                onClick={() => (tab.id === 2 ? setNewOpen(true) : setActiveTab(tab.id))}
                 className={`py-3 px-4 rounded-xl font-bold text-xs transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 ${
                   isActive
                     ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"
@@ -1543,344 +1412,6 @@ export function OperationalServices({ onNotify, lang = 'es', language, isEnglish
         )}
 
         {/* TARJETA 2: NUEVA SOLICITUD */}
-        {activeTab === 2 && (
-          <div className="bg-white rounded-2xl shadow-2xs border border-slate-200/80 p-6 text-slate-700">
-            <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden max-w-3xl mx-auto">
-              
-              <div className="flex items-start justify-between p-6 pb-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Plus className="w-5 h-5 text-slate-800 stroke-[2.5]" />
-                    <h2 className="text-xl font-bold text-slate-900">{t.newRequest.title}</h2>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1">
-                    {t.newRequest.subtitle}
-                  </p>
-                </div>
-              </div>
-
-              <div className="px-6 my-4">
-                <div className="grid grid-cols-3 gap-3 bg-slate-100/70 p-1.5 rounded-2xl text-xs font-semibold text-center">
-                  {t.newRequest.steps.map((st, idx) => (
-                    <div 
-                      key={idx} 
-                      className={`py-2.5 rounded-xl transition-all ${
-                        stepModal === idx + 1 
-                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md' 
-                          : 'text-slate-500'
-                      }`}
-                    >
-                      {st}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {stepModal === 1 && (
-                <div className="p-6 pt-2">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div
-                      onClick={() => setSelectedType('compra')}
-                      className={`relative cursor-pointer rounded-2xl p-5 border-2 transition-all ${
-                        selectedType === 'compra'
-                          ? 'border-blue-500 bg-blue-50/20 shadow-sm'
-                          : 'border-slate-100 bg-slate-50/50 hover:border-slate-200'
-                      }`}
-                    >
-                      {selectedType === 'compra' && (
-                        <span className="absolute top-4 right-4 bg-emerald-500 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                          <Check className="w-3 h-3 stroke-[3]" /> {t.newRequest.types.selected}
-                        </span>
-                      )}
-                      <div className="w-10 h-10 rounded-xl bg-orange-100/80 flex items-center justify-center text-orange-600 mb-3">
-                        <Package className="w-5 h-5" />
-                      </div>
-                      <h4 className="font-bold text-slate-900 text-sm mb-1">{t.newRequest.types.buyRent}</h4>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
-                        {t.newRequest.types.buyRentDesc}
-                      </p>
-                    </div>
-
-                    <div
-                      onClick={() => setSelectedType('servicio')}
-                      className={`relative cursor-pointer rounded-2xl p-5 border-2 transition-all ${
-                        selectedType === 'servicio'
-                          ? 'border-blue-500 bg-blue-50/20 shadow-sm'
-                          : 'border-slate-100 bg-slate-50/50 hover:border-slate-200'
-                      }`}
-                    >
-                      {selectedType === 'servicio' && (
-                        <span className="absolute top-4 right-4 bg-emerald-500 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                          <Check className="w-3 h-3 stroke-[3]" /> {t.newRequest.types.selected}
-                        </span>
-                      )}
-                      <div className="w-10 h-10 rounded-xl bg-emerald-100/80 flex items-center justify-center text-emerald-600 mb-3">
-                        <Truck className="w-5 h-5" />
-                      </div>
-                      <h4 className="font-bold text-slate-900 text-sm mb-1">{t.newRequest.types.service}</h4>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
-                        {t.newRequest.types.serviceDesc}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between mt-8 pt-4 border-t border-slate-100">
-                    <button 
-                      type="button"
-                      onClick={() => setActiveTab(1)}
-                      className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
-                    >
-                      <ArrowLeft className="w-3.5 h-3.5" /> {t.newRequest.buttons.back}
-                    </button>
-                    
-                    <button
-                      type="button"
-                      onClick={() => setStepModal(2)}
-                      className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors shadow-md shadow-blue-500/20 cursor-pointer"
-                    >
-                      {t.newRequest.buttons.continue}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {stepModal === 2 && (
-                <div className="p-6 pt-2">
-                  <h4 className="font-bold text-slate-900 text-sm mb-4">{t.newRequest.serviceTypeTitle}</h4>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {t.newRequest.serviceList.map((srv) => {
-                      const isSelected = selectedService === srv.id;
-                      return (
-                        <div
-                          key={srv.id}
-                          onClick={() => setSelectedService(srv.id)}
-                          className={`cursor-pointer rounded-2xl p-4 border transition-all flex items-center gap-3 ${
-                            isSelected
-                              ? 'border-blue-600 bg-blue-50/30 shadow-xs'
-                              : 'border-slate-200/80 bg-white hover:border-slate-300'
-                          }`}
-                        >
-                          <div className="w-9 h-9 rounded-xl bg-slate-50 flex items-center justify-center text-lg shadow-2xs border border-slate-100">
-                            {srv.icon}
-                          </div>
-                          <span className="font-bold text-slate-800 text-xs">{srv.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="flex items-center justify-between mt-8 pt-4 border-t border-slate-100">
-                    <button 
-                      type="button"
-                      onClick={() => setStepModal(1)}
-                      className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
-                    >
-                      <ArrowLeft className="w-3.5 h-3.5" /> {t.newRequest.buttons.back}
-                    </button>
-                    
-                    <button
-                      type="button"
-                      onClick={() => setStepModal(3)}
-                      className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors shadow-md shadow-blue-500/20 cursor-pointer"
-                    >
-                      {t.newRequest.buttons.continue}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {stepModal === 3 && (
-                <div className="p-6 pt-2 text-left">
-                  <h4 className="font-bold text-slate-900 text-sm mb-3">{t.newRequest.reqStepTitle}</h4>
-
-                  <div className="bg-blue-50/70 border-l-4 border-blue-600 rounded-r-2xl p-3.5 mb-5 text-[11px] text-slate-600 leading-relaxed">
-                    {t.newRequest.bannerNote}
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                      <div className="md:col-span-4">
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.client}</label>
-                        <select
-                          value={formData.cliente}
-                          onChange={(e) => setFormData({ ...formData, cliente: e.target.value })}
-                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-700 focus:outline-none focus:border-blue-500 shadow-2xs"
-                        >
-                          <option value="">{t.newRequest.form.selectClient}</option>
-                          <option value="Hornbeck Offshore">Hornbeck Offshore Services</option>
-                          <option value="Hool Energy">Hool Energy de México</option>
-                        </select>
-                      </div>
-
-                      <div className="md:col-span-4">
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.clientFolio}</label>
-                        <div className="flex gap-1.5">
-                          <input
-                            type="text"
-                            placeholder="Ej. 1990000141"
-                            value={formData.folioCliente}
-                            onChange={(e) => setFormData({ ...formData, folioCliente: e.target.value })}
-                            className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleGenerarFolio}
-                            className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer shrink-0 shadow-xs"
-                          >
-                            <span>⚙️</span> {t.newRequest.form.generate}
-                          </button>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-1 leading-tight">
-                          {t.newRequest.form.clientFolioHelp}
-                        </p>
-                      </div>
-
-                      <div className="md:col-span-4">
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.internalRef}</label>
-                        <div className="flex gap-1.5">
-                          <input
-                            type="text"
-                            placeholder="Ej. SRV-TRION-"
-                            value={formData.referenciaInterna}
-                            onChange={(e) => setFormData({ ...formData, referenciaInterna: e.target.value })}
-                            className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleGenerarReferencia}
-                            className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer shrink-0 shadow-xs"
-                          >
-                            <span>⚙️</span> {t.newRequest.form.generate}
-                          </button>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-1 leading-tight">
-                          {t.newRequest.form.internalRefHelp}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.project}</label>
-                        <input
-                          type="text"
-                          placeholder={t.newRequest.form.projectPlaceholder}
-                          value={formData.proyecto}
-                          onChange={(e) => setFormData({ ...formData, proyecto: e.target.value })}
-                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.contract}</label>
-                        <input
-                          type="text"
-                          placeholder="Contrato"
-                          value={formData.contrato}
-                          onChange={(e) => setFormData({ ...formData, contrato: e.target.value })}
-                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.requestDate}</label>
-                        <input
-                          type="date"
-                          value={formData.fechaSolicitud}
-                          onChange={(e) => setFormData({ ...formData, fechaSolicitud: e.target.value })}
-                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.requiredDate}</label>
-                        <input
-                          type="date"
-                          value={formData.fechaRequerida}
-                          onChange={(e) => setFormData({ ...formData, fechaRequerida: e.target.value })}
-                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-                      <div className="md:col-span-3">
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.clientRequester}</label>
-                        <input
-                          type="text"
-                          placeholder="Nombre de la persona solicitante"
-                          value={formData.solicitanteCliente}
-                          onChange={(e) => setFormData({ ...formData, solicitanteCliente: e.target.value })}
-                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                        />
-                      </div>
-
-                      <div className="md:col-span-3">
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.requesterEmail}</label>
-                        <input
-                          type="email"
-                          placeholder="solicitante@cliente.com"
-                          value={formData.correoSolicitante}
-                          onChange={(e) => setFormData({ ...formData, correoSolicitante: e.target.value })}
-                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                        />
-                      </div>
-
-                      <div className="md:col-span-6">
-                        <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.place}</label>
-                        <input
-                          type="text"
-                          placeholder={t.newRequest.form.placePlaceholder}
-                          value={formData.lugarPrestacion}
-                          onChange={(e) => setFormData({ ...formData, lugarPrestacion: e.target.value })}
-                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-800 mb-1">{t.newRequest.form.description}</label>
-                      <textarea
-                        rows={3}
-                        placeholder={t.newRequest.form.descriptionPlaceholder}
-                        value={formData.descripcionAlcance}
-                        onChange={(e) => setFormData({ ...formData, descripcionAlcance: e.target.value })}
-                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs resize-none"
-                      />
-                    </div>
-
-                    <div className="bg-blue-50/70 border-l-4 border-blue-600 rounded-r-2xl p-3 text-[11px] text-slate-600">
-                      {t.newRequest.form.commNote}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between mt-8 pt-4 border-t border-slate-100">
-                    <button 
-                      type="button"
-                      onClick={() => setStepModal(2)}
-                      className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
-                    >
-                      <ArrowLeft className="w-3.5 h-3.5" /> {t.newRequest.buttons.back}
-                    </button>
-                    
-                    <button
-                      type="button"
-                      onClick={() => {
-                        alert(t.newRequest.buttons.successAlert);
-                        setActiveTab(1);
-                      }}
-                      className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors shadow-md shadow-blue-500/20 cursor-pointer"
-                    >
-                      {t.newRequest.buttons.createAndContinue}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* TARJETA 3: MATRIZ DE SERVICIOS CON TARJETAS CLICKABLES */}
         {activeTab === 3 && (
           <ServiceMatrix en={isEn} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} />
@@ -1891,6 +1422,16 @@ export function OperationalServices({ onNotify, lang = 'es', language, isEnglish
           <ServiceReports en={isEn} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} />
         )}
       </div>
+
+      {/* SECCIÓN 2: + NUEVA SOLICITUD (modal de 3 pasos; valida con datos de MariaDB y no crea registros) */}
+      <NewServiceRequest
+        open={newOpen}
+        onClose={() => setNewOpen(false)}
+        en={isEn}
+        notify={(title, message, kind) => onNotify && onNotify(title, message, kind)}
+        onNavigate={onNavigate}
+        onOpenMatrix={() => setActiveTab(3)}
+      />
     </div>
   );
 }

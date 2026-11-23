@@ -60,6 +60,10 @@ $routes->get('api/v1/contractor-management/rules', 'ContractorManagementControll
 $routes->get('api/v1/requisition-changes', 'RequisitionChangeReadController::overview');
 $routes->get('api/v1/requisition-changes/candidates', 'RequisitionChangeReadController::candidates');
 $routes->get('api/v1/services/matrix', 'ServiceController::matrix');
+// Servicios › Nueva solicitud: catálogo de tipos, referencia interna sugerida y disponibilidad (solo lectura).
+$routes->get('api/v1/services/new-request', 'ServiceController::newRequest');
+$routes->get('api/v1/services/new-request/reference', 'ServiceController::newRequestReference');
+$routes->get('api/v1/services/new-request/availability', 'ServiceController::newRequestAvailability');
 $routes->get('api/v1/services/(:segment)', 'ServiceController::show/$1');
 $routes->get('api/v1/quotes/rfq-contacts', 'QuoteController::rfqContacts');
 $routes->get('api/v1/quotes/customer-quote-setup', 'QuoteController::customerQuoteSetup');

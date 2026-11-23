@@ -170,4 +170,91 @@ final class ServiceReadRepository
         unset($fl);
         return ['item' => $x + $so, 'details' => is_array($details) ? $details : [], 'files' => $files];
     }
+
+    /*
+     * Sección 2 "Nueva solicitud" (asistente Operación → Servicio → Requisición). SOLO LECTURA: catálogo de tipos de
+     * servicio, la referencia interna sugerida y la disponibilidad de folio / referencia. No crea requisiciones ni
+     * expedientes: el alta de la requisición maestra de servicio (route_code 'service') no tiene endpoint autorizado.
+     */
+
+    /** @return array<string,mixed> */
+    public function newRequestCatalog(int $org): array
+    {
+        $types = $this->rows(
+            'SELECT st.code,st.name,st.active,
+                    (SELECT COUNT(*) FROM requisitions r WHERE r.organization_id=st.organization_id AND r.service_type_id=st.id) AS requisitions,
+                    (SELECT COUNT(*) FROM service_orders so WHERE so.organization_id=st.organization_id AND so.service_type_id=st.id) AS services
+             FROM service_types st WHERE st.organization_id=? ORDER BY st.name,st.id',
+            [$org]
+        );
+        foreach ($types as &$t) {
+            $t['active'] = (bool) $t['active'];
+            $t['requisitions'] = (int) $t['requisitions'];
+            $t['services'] = (int) $t['services'];
+        }
+        unset($t);
+        return [
+            'service_types' => $types,
+            'reference_rule' => 'SRV-{PROYECTO}-{AÑO}-{0000}',
+            'folio_rule' => '{NÚMERO DE CLIENTE}-REQ-{AÑO}-{0000}',
+            'read_only' => true,
+            'write_enabled' => false,
+        ];
+    }
+
+    /** Next free internal reference SRV-{PROJECT}-{YYYY}-{NNNN} (the original's "⚙ Generar"; suggestion only). */
+    public function nextInternalReference(int $org, string $project, string $date): array
+    {
+        $part = RequisitionRecoveryInput::cleanFolioPart($project);
+        $prefix = 'SRV-' . ($part !== '' ? $part : 'PROYECTO') . '-' . substr($date, 0, 4) . '-';
+        $like = $prefix . '%'; // cleanFolioPart only leaves [A-Z0-9-]: nothing to escape for LIKE.
+        $rows = $this->rows(
+            'SELECT internal_reference AS v FROM requisitions WHERE organization_id=? AND internal_reference LIKE ?
+             UNION ALL SELECT client_reference FROM requisitions WHERE organization_id=? AND client_reference LIKE ?
+             UNION ALL SELECT internal_reference FROM service_orders WHERE organization_id=? AND internal_reference LIKE ?',
+            [$org, $like, $org, $like, $org, $like]
+        );
+        $max = 0;
+        $taken = [];
+        foreach ($rows as $row) {
+            $v = strtoupper(trim((string) $row['v']));
+            $taken[$v] = true;
+            if (str_starts_with($v, $prefix)) {
+                $tail = substr($v, strlen($prefix));
+                if ($tail !== '' && ctype_digit($tail)) {
+                    $max = max($max, (int) $tail);
+                }
+            }
+        }
+        do {
+            $max++;
+            $value = $prefix . str_pad((string) $max, 4, '0', STR_PAD_LEFT);
+        } while (isset($taken[$value]));
+        return ['reference' => $value, 'prefix' => $prefix, 'sequence' => $max, 'suggestion_only' => true];
+    }
+
+    /** Whether a client folio / internal reference is already used (requisitions and service records). */
+    public function newRequestAvailability(int $org, string $folio, string $reference): array
+    {
+        $out = [];
+        if ($folio !== '') {
+            $hit = $this->rows(
+                'SELECT r.folio,c.code AS client_code FROM requisitions r JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id
+                 WHERE r.organization_id=? AND UPPER(r.folio)=UPPER(?) LIMIT 1',
+                [$org, $folio]
+            );
+            $out['folio'] = ['value' => $folio, 'available' => $hit === [], 'requisition' => $hit[0]['folio'] ?? null, 'client_code' => $hit[0]['client_code'] ?? null];
+        }
+        if ($reference !== '') {
+            $hits = $this->rows(
+                'SELECT folio FROM (
+                   SELECT r.folio FROM requisitions r WHERE r.organization_id=? AND (r.internal_reference=? OR r.client_reference=?)
+                   UNION SELECT so.folio FROM service_orders so WHERE so.organization_id=? AND so.internal_reference=?
+                 ) x ORDER BY folio LIMIT 5',
+                [$org, $reference, $reference, $org, $reference]
+            );
+            $out['reference'] = ['value' => $reference, 'available' => $hits === [], 'used_by' => array_column($hits, 'folio')];
+        }
+        return $out;
+    }
 }
