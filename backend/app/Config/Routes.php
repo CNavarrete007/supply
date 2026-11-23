@@ -59,6 +59,11 @@ $routes->get('api/v1/contractor-management/rules', 'ContractorManagementControll
 // Requisiciones › Control de cambios: historial y candidatos (solo lectura, cuenta API SELECT).
 $routes->get('api/v1/requisition-changes', 'RequisitionChangeReadController::overview');
 $routes->get('api/v1/requisition-changes/candidates', 'RequisitionChangeReadController::candidates');
+// Portal del Cliente · vista previa interna (Master Admin, solo lectura): lo que vería cada cliente. Sin acceso externo.
+$routes->get('api/v1/portal/preview/clients', 'ClientPortalPreviewController::clients');
+$routes->get('api/v1/portal/preview/clients/(:segment)', 'ClientPortalPreviewController::client/$1');
+$routes->get('api/v1/portal/preview/clients/(:segment)/requisitions/(:segment)', 'ClientPortalPreviewController::requisition/$1/$2');
+$routes->get('api/v1/portal/preview/clients/(:segment)/quotes/(:segment)', 'ClientPortalPreviewController::quote/$1/$2');
 // Campana: notificaciones del usuario en sesión (solo lectura; marcar como leída no está habilitado).
 $routes->get('api/v1/notifications', 'NotificationController::index');
 // Configuración › pestañas 1 a 5: parámetros del original, política vigente, historial de correos y logotipo (solo lectura).

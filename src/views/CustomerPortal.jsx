@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Lock, KeyRound, Info } from 'lucide-react';
+import { Lock, KeyRound, Info, Eye } from 'lucide-react';
+import ClientPortal from './ClientPortal';
 
 const translations = {
   es: {
@@ -15,6 +16,11 @@ const translations = {
     notifyTitle: 'Portal del Cliente',
     notifyWarning: 'Por favor complete todos los campos para ingresar.',
     notifyAttempt: (client) => `Intento de acceso iniciado para el cliente: ${client}`,
+    notEnabled: 'El acceso de clientes todavía no está habilitado: requiere autorizar tokens de acceso y sesiones de cliente en el servidor. La clave no se envió ni se guardó.',
+    previewTitle: 'Vista previa interna',
+    previewDesc: 'Como Master Admin puedes ver exactamente lo que vería cada cliente, con datos de MariaDB y en solo lectura.',
+    previewBtn: 'Abrir vista previa del portal',
+    statusBadge: 'Acceso externo pendiente de autorización',
   },
   en: {
     title: 'Customer Tracking Portal',
@@ -28,6 +34,11 @@ const translations = {
     restrictedDesc: 'the portal does not allow modifying records or viewing other customers\' information.',
     notifyTitle: 'Customer Portal',
     notifyWarning: 'Please fill out all fields to log in.',
+    notEnabled: 'Client access is not enabled yet: it requires authorizing access tokens and client sessions on the server. The key was not sent or stored.',
+    previewTitle: 'Internal preview',
+    previewDesc: 'As Master Admin you can see exactly what each client would see, with MariaDB data and read-only.',
+    previewBtn: 'Open portal preview',
+    statusBadge: 'External access pending authorization',
     notifyAttempt: (client) => `Access attempt initiated for customer: ${client}`,
   },
 };
@@ -35,6 +46,8 @@ const translations = {
 export function CustomerPortal({ onNavigate = () => {}, onNotify, lang = 'es' }) {
   const [clientNumber, setClientNumber] = useState('');
   const [accessKey, setAccessKey] = useState('');
+  const [message, setMessage] = useState('');
+  const [preview, setPreview] = useState(false);
 
   // Selecciona las traducciones según la prop 'lang'
   const t = translations[lang] || translations.es;
@@ -48,12 +61,14 @@ export function CustomerPortal({ onNavigate = () => {}, onNotify, lang = 'es' })
       return;
     }
 
-    console.log('Ingresando:', { clientNumber, accessKey });
-    
-    if (onNotify) {
-      onNotify(t.notifyTitle, t.notifyAttempt(clientNumber));
-    }
+    // Acceso externo no habilitado: no se envía ni se registra la clave (nunca en consola ni en logs).
+    setAccessKey('');
+    setMessage(t.notEnabled);
   };
+
+  if (preview) {
+    return <ClientPortal lang={lang} onExit={() => setPreview(false)} />;
+  }
 
   return (
     <div className="w-full min-h-[calc(100vh-5rem)] flex items-center justify-center p-6">
@@ -68,6 +83,10 @@ export function CustomerPortal({ onNavigate = () => {}, onNotify, lang = 'es' })
             </div>
           </div>
         </div>
+
+        <span data-testid="portal-access-badge" className="inline-block mb-4 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold">
+          {t.statusBadge}
+        </span>
 
         {/* Encabezado */}
         <h2 className="text-2xl font-black text-slate-800 tracking-tight mb-3">
@@ -119,12 +138,30 @@ export function CustomerPortal({ onNavigate = () => {}, onNotify, lang = 'es' })
           </button>
         </form>
 
+        {message && (
+          <p role="status" data-testid="portal-access-message" className="mt-5 p-3 rounded-xl border border-amber-200 bg-amber-50 text-left text-xs font-semibold text-amber-900">
+            {message}
+          </p>
+        )}
+
         {/* Banner informativo */}
         <div className="mt-8 p-4 bg-blue-50/60 border-l-4 border-blue-600 rounded-r-xl flex items-center gap-3 text-left transition-colors duration-200 hover:bg-blue-50">
           <Info className="w-5 h-5 text-blue-600 shrink-0 transition-transform duration-300 hover:scale-110" />
           <p className="text-xs text-slate-600 leading-relaxed">
             <strong className="text-slate-800 font-bold">{t.restrictedTitle}</strong> {t.restrictedDesc}
           </p>
+        </div>
+
+        {/* Vista previa interna (Master Admin) */}
+        <div className="mt-6 p-4 rounded-2xl border border-emerald-200 bg-emerald-50/60 text-left flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex-1">
+            <p className="text-xs font-extrabold text-emerald-900">{t.previewTitle}</p>
+            <p className="text-[11px] text-emerald-800 leading-relaxed">{t.previewDesc}</p>
+          </div>
+          <button type="button" data-testid="portal-preview-open" onClick={() => setPreview(true)}
+            className="shrink-0 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-2 cursor-pointer">
+            <Eye className="w-4 h-4" /><span className="text-xs font-bold">{t.previewBtn}</span>
+          </button>
         </div>
 
       </div>

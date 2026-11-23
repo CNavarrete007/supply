@@ -20,6 +20,7 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | Contratista (`contractors`) — tarjeta 2 | `Contractors` en `src/views/Contractors.jsx` (lógica `src/views/contractors/model.mjs`) | `src/views/contractors/api.js` | `/api/v1/contractors` (`q`, `status` all/active/inactive), `/contractors/{id}/personnel` | `ContractorController` (base `ReadOnlyModuleController`) → `ContractorReadRepository` (cuenta API, SELECT) | Master Admin |
 | Gestión del Contratista (`contractor_mgmt`) — 4 tarjetas | `ValidationRegister`, `StrategyLots`, `ValidationMatrix` y `SmartRules` en `src/views/contractorMgmt/` (lógica `validationForm.mjs`, `strategyModel.mjs`, `validationMatrix.mjs`, `rulesModel.mjs`), montados por `src/views/ContractorManagement.jsx` | `src/views/contractorMgmt/api.js` | `/api/v1/contractor-management/validation-setup`, `/requisitions/{id}`, `/strategy-setup`, `/strategy/{id}`, `/validations`, `/rules` | `ContractorManagementController` (base `ReadOnlyModuleController`) → `ContractorManagementReadRepository` (cuenta API, SELECT) | Master Admin |
 | Servicios Operativos (`operational_services`) — secciones 1 Dashboard, 2 Nueva solicitud (y Nuevo servicio), 3 Matriz y 4 Reportes | `ServiceDashboard`, `NewServiceRequest`, `ServiceForm`, `ServiceMatrix` y `ServiceReports` en `src/views/services/` (lógica `dashboardModel.mjs`, `newRequestModel.mjs`, `serviceFormModel.mjs`, `serviceMatrix.mjs`, `serviceReports.mjs`), montados por `src/views/OperationalServices.jsx` | `src/views/services/api.js` | `/api/v1/services/matrix` (`client`, `buyer`, `service`, `status`, `q`, `from`, `to`, `page`, `page_size`), `/services/{id}`; Nueva solicitud: `/services/new-request`, `/services/new-request/reference` (`project`, `date`), `/services/new-request/availability` (`folio`, `reference`), `/services/new-request/contracting`, más `/recovery/catalogs` y `/recovery/folio` existentes | `ServiceController` (base `ReadOnlyModuleController`) → `ServiceReadRepository` (cuenta API, SELECT) | Master Admin |
+| Portal del Cliente (`portal`) — acceso (no habilitado) y vista previa interna | `CustomerPortal` en `src/views/CustomerPortal.jsx` (acceso) → `ClientPortal` en `src/views/ClientPortal.jsx` (vista previa; textos en `src/views/portal/portalModel.mjs`) | `src/views/portal/api.js` | `/api/v1/portal/preview/clients`, `/clients/{id}`, `/clients/{id}/requisitions/{id}`, `/clients/{id}/quotes/{id}`; logotipo con `/api/v1/catalogs/clients/{id}/logo` | `ClientPortalPreviewController` (base `ReadOnlyModuleController`) → `ClientPortalReadRepository` (cuenta API, SELECT; reutiliza `RequisitionRecoveryRepository::stage` y `QuoteReadRepository::customerQuote`) | Master Admin |
 | Campana del encabezado (todas las pantallas) | `NotificationBell` en `src/views/notifications/NotificationBell.jsx` (textos en `model.mjs`), montada por `App.jsx` | `src/views/notifications/api.js` | `/api/v1/notifications` (`status` all/unread, `page`, `page_size` ≤ 50) | `NotificationController` (`guardUser`: cualquier usuario activo, solo sus notificaciones) → `NotificationReadRepository` (cuenta API, SELECT) | Usuario en sesión |
 | Flujo del Proceso (`process`) — 7 pestañas | `ProcessFlow` en `src/views/ProcessFlow.jsx` (textos en `src/views/processFlow/model.mjs`) | `src/views/processFlow/api.js` | `/api/v1/analytics/process-flow` | `ProcessFlowController` (base `ReadOnlyModuleController`) → `ProcessFlowReadRepository` (cuenta API, SELECT; reutiliza `RequisitionRecoveryRepository::stage`, `QuoteReadRepository::STATUS_KEY`, `ReceptionReadRepository` y `AnalyticsReadRepository`) | Master Admin |
 | Configuración (`config`) — pestañas 1 a 5 (6 y 7 no se conectan) | `Configuration` en `src/views/Configuration.jsx` (lógica `src/views/settings/settingsModel.mjs`) | `src/views/settings/api.js` | `/api/v1/settings`, `/api/v1/settings/email-log` (`q`, `status`, `page`, `page_size` ≤ 50), `/api/v1/settings/logo` | `SettingsController` (base `ReadOnlyModuleController`) → `SettingsReadRepository` (cuenta API, SELECT) | Master Admin |
@@ -50,6 +51,7 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | `reception/matrix` | `page`, `page_size`, `q`, `client` (UUID o `all`), `kind` (`all`/`receipt`/`delivery`) | `page_size` 1–50 |
 | `analytics/process-flow` | ninguno | Cualquier parámetro → 422 |
 | `notifications` | `status` (`all`/`unread`), `page`, `page_size` | `page_size` 1–50 |
+| `portal/preview/...` | ninguno | Cualquier parámetro → 422; id inválido o ajeno al cliente → 404 |
 | `settings` | ninguno | Cualquier parámetro → 422 |
 | `settings/email-log` | `page`, `page_size`, `q`, `status` (texto del resultado) | `page_size` 1–50 |
 | `settings/logo` | ninguno | Con parámetros o sin archivo verificado → 404 |
@@ -342,4 +344,23 @@ Pantalla `src/views/ProcessFlow.jsx` con el mismo diseño; todas las cifras fija
   - `tests/frontend/notifications_model.test.mjs` (4)
   - `tests/frontend/notifications_ui_e2e.cjs` (19)
   - `tests/notifications_http_check.py` (12)
+
+## Portal del Cliente (vista previa interna, 23 nov 2026)
+
+El acceso externo de clientes **no está habilitado**: requiere autorizar tokens y sesiones de cliente. El formulario de acceso (`CustomerPortal`) avisa que no está habilitado, limpia la clave y ya no la imprime en consola. «Abrir vista previa del portal» muestra `ClientPortal` con el diseño original y datos de MariaDB, tal como los vería el cliente seleccionado.
+- **Encabezado**: insignia «Vista previa interna · solo lectura» y aviso.
+- **Selectores**: cliente (con el estado de su portal: habilitado, bloqueado o deshabilitado) y requisición (folio · proyecto · etapa).
+- **Métricas**: totales, en proceso, cerradas, avance promedio, pendientes de entrega y de factura.
+- **Etapas**: las 8 etapas con la etapa del servidor; los expedientes sin etapa inferida se indican aparte.
+- **Documentos por etapa**:
+  - Solicitud con sus partidas.
+  - Cotizaciones enviadas al cliente, en el formato comercial con los totales guardados, el emisor y las firmas (sin costos).
+  - OC: solo folio, fechas y estatus.
+  - Recepciones, entregas, facturas y número de fotografías.
+- **Firma de enterado**: indica que se habilitará con el acceso externo.
+- **Datos retirados del código**: los datos reales de clientes y los objetos ficticios de cotización y OC (`CLIENTS_DATA`, `mockQuote`, `mockPO`), y el formato de OC para el cliente.
+- **Pruebas**:
+  - `tests/frontend/portal_model.test.mjs` (4)
+  - `tests/frontend/portal_ui_e2e.cjs` (27)
+  - `tests/client_portal_http_check.py` (17)
 

@@ -7,13 +7,13 @@
 
 | Estado | Módulos |
 |---|---|
-| **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles, Configuración (pestañas 1 a 5, 23 nov 2026), Flujo del Proceso (7 pestañas, 23 nov 2026), campana de Notificaciones (lectura, 23 nov 2026) |
+| **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles, Configuración (pestañas 1 a 5, 23 nov 2026), Flujo del Proceso (7 pestañas, 23 nov 2026), campana de Notificaciones (lectura, 23 nov 2026), Portal del Cliente (vista previa interna, 23 nov 2026) |
 | **Inicio y Dashboard** | Conectado (23 nov 2026) salvo 3 cifras sin fuente o regla: estatus de pago / «Pagadas» (no hay registro de pagos), ahorro potencial y costo promedio (falta la regla del original) |
-| **Pendientes (datos fijos o de demostración)** | Portal del Cliente (`mockQuote`, `mockPO`; el acceso no autentica). Campana: marcar como leída en MariaDB (requiere permiso de escritura) |
+| **Pendientes de autorización** | Acceso externo de clientes al portal (tokens y sesiones propias, §4.E). Campana: marcar como leída en MariaDB (permiso de escritura) |
 | **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
 | **Validan pero no guardan** | Todo lo demás: termina con «Datos validados, pero no se guardó…» |
 
-`App.jsx` muestra el aviso genérico «Módulo pendiente de integración» solo en **Portal del Cliente**. Configuración y Flujo del Proceso tienen su propio aviso «Datos de MariaDB (solo lectura)».
+`App.jsx` ya no muestra el aviso genérico «Módulo pendiente de integración» en ningún módulo del menú: Configuración, Flujo del Proceso y la vista previa del Portal del Cliente tienen su propio aviso «solo lectura».
 
 ## 2. Cuentas SQL
 
@@ -41,7 +41,7 @@ Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Dem
 | Inicio y Dashboard | Servicios, Service-to-Cash (8 etapas), Service Fee, abastecimiento por lotes, proveedores con mayor actividad y evaluados, recompra (rutas y políticas), enmiendas de OC, compradores, segregación de funciones de OC, facturación por moneda | Sí (23 nov 2026): bloques ampliados de `analytics/overview` | N/A | `service_orders`, `customer_quote_versions.service_fee_*`, `sourcing_*`, `rfqs`, `supplier_quotes`, `awards`, `requisition_items.repeat_*`, `clients.repeat_*_policy`, `purchase_orders`, `purchase_order_modification_requests`, `requisition_reviews`, `invoices` | — |
 | Inicio y Dashboard | Estatus de pago / «Pagadas»; ahorro potencial y costo promedio | **No** | N/A | — | Pagos: definir su registro (DDL nuevo, requiere autorización). Ahorro y costo promedio: compartir la regla de comparación del sistema original |
 | Flujo del Proceso | Mapa, flujo de servicios, detalle por etapa, comercial, rutas especiales, matriz, indicadores | **Sí** (23 nov): procesos por etapa, KPI y cuellos de botella reales | N/A (solo consulta) | Documentos de cada etapa | Ver §4.B; tiempo en etapa pendiente |
-| Portal del Cliente | Acceso y seguimiento | **No** (`mockQuote`, `mockPO`; el acceso no valida credenciales) | Demo | `portal_access_tokens`, `clients.portal_enabled`/`portal_locked` y vistas filtradas por cliente | Ver §4.E |
+| Portal del Cliente | Acceso y seguimiento | **Vista previa interna** (23 nov): lo que vería cada cliente, para Master Admin | Acceso externo **no habilitado** (pendiente de autorización) | `clients`, requisiciones y documentos filtrados por cliente; `portal_access_tokens` sin usar | Ver §4.E |
 | Campana (encabezado) | Notificaciones | **Sí** (23 nov): las del usuario en sesión + avisos de la sesión aparte | Bloqueada: marcar como leída requiere `UPDATE` | `notifications` | Ver §4.D |
 | Clientes | Alta y edición | Sí | **Real** | `clients` y contactos | Eliminar e importar siguen bloqueados |
 | Proveedores | Alta y edición | Sí | **Real** | `suppliers` y contactos | Eliminar e importar siguen bloqueados |
@@ -112,8 +112,12 @@ La escritura viene después y requiere autorización: una cuenta `settingswrite`
 `GET /api/v1/notifications` (`status` all/unread, `page`, `page_size` ≤ 50; sin caché; cuenta API con SELECT): solo las notificaciones **del usuario en sesión** (`recipient_user_id`), para cualquier usuario interno activo (no requiere Master Admin, porque cada quien ve solo las suyas). Devuelve remitente, documento ligado (tipo, id público y folio) para abrir su módulo y el resumen total / no leídas. La campana (`src/views/notifications/NotificationBell.jsx`) muestra el contador real (no leídas de MariaDB + avisos de la sesión), filtro «No leídas», «Ver más» y, aparte, los avisos de la sesión del navegador (no se guardan); se actualiza al abrirla y cada minuto.
 **Pendiente de autorización:** marcar como leída es una escritura mínima (`UPDATE notifications (is_read, read_at)` del destinatario) que requiere un grant nuevo; hoy «Marcar leídas» solo limpia los avisos de la sesión y el panel lo dice. Pruebas: `tests/frontend/notifications_model.test.mjs` (4), `tests/frontend/notifications_ui_e2e.cjs` (19) y `tests/notifications_http_check.py` (12; aislamiento entre usuarios y, con `SF_SQLQ`, comparación con la tabla).
 
-### E. Portal del Cliente (seguridad externa)
-No se puede conectar solo con lectura: hoy el acceso no autentica. Requiere diseñar un acceso independiente del de usuarios internos:
+### E. Portal del Cliente — vista previa interna conectada el 23 nov 2026; acceso externo pendiente de autorización
+**Decisiones del 23 nov 2026:** solo vista interna por ahora; en la etapa de OC el cliente ve solo folio, fechas y estatus (sin proveedor ni montos); los datos reales que traía `ClientPortal.jsx` escritos en el código se quitaron (sin reescribir el historial de Git).
+
+**Hecho (solo lectura, sin permisos nuevos):** `GET /api/v1/portal/preview/clients`, `…/clients/{id}`, `…/clients/{id}/requisitions/{id}` y `…/clients/{id}/quotes/{id}` (Master Admin; `ClientPortalReadRepository`, todas las consultas acotadas al cliente). Muestra las requisiciones del cliente con las 8 etapas de la política del servidor (iguales a la Matriz de requisiciones), métricas, la solicitud con sus partidas, las cotizaciones **ya enviadas** al cliente (borradores, revisión interna y autorizadas → 404) con precios de venta y sin costos ni márgenes, OC (folio, fechas, estatus), recepciones, entregas, facturas y número de fotografías. El formulario de acceso ya no imprime la clave en consola y avisa que el acceso no está habilitado. Pruebas: `tests/frontend/portal_model.test.mjs` (4), `tests/frontend/portal_ui_e2e.cjs` (27) y `tests/client_portal_http_check.py` (17; aislamiento entre clientes).
+
+**Pendiente (requiere autorización):** acceso externo, independiente del de usuarios internos. El mismo repositorio sirve: el cliente saldría de la sesión `client_portal` y no de la URL.
 - Tokens en `portal_access_tokens` (solo hash, caducidad, revocación) habilitados con `clients.portal_enabled` / `portal_locked`.
 - Sesión de cliente separada, límite de intentos y auditoría.
 - Todas las consultas filtradas por cliente en el servidor, sin costos internos, márgenes ni datos de otros clientes.
@@ -144,7 +148,7 @@ Mismo patrón que R2 y R3:
 | **0 · Solo lectura** (sin grants) | 1. ~~Inicio y Dashboard~~ (hecho el 23 nov). 2. ~~Configuración pestañas 1 a 5~~ (hecho el 23 nov, §4.C). 3. ~~Flujo del Proceso~~ (hecho el 23 nov, §4.B). 4. ~~Campana: lectura~~ (hecho el 23 nov, §4.D) | No | Bajo |
 | **1 · Operativo, no comercial** | 5. Categorías. 6. Crear desde historial. 7. Servicios: requisición maestra y expediente. 8. Gestión del Contratista: validación, estrategia y lotes. 9. Configuración: escritura versionada. 10. Usuarios y roles, con permisos por sección en el servidor. 11. Notificaciones: marcar como leídas | Sí, por módulo | Medio; Usuarios es alto |
 | **2 · Comercial** (bloqueado hasta autorizar) | 12. Cotizaciones. 13. OC. 14. Recepción y Entrega. 15. Factura (y registro de pagos si se define). 16. Escrituras R3C2/R3C3 | Sí | Alto |
-| **3 · Seguridad externa** | 17. Portal del Cliente con tokens propios | Sí | Alto |
+| **3 · Seguridad externa** | 17. Portal del Cliente: acceso externo con tokens propios (la vista previa interna ya está hecha, 23 nov) | Sí | Alto |
 
 Ya completado de la fase 0: Dashboard de Servicios (23 nov.), Control de cambios R3A/R3B (23 nov.), Inicio y Dashboard (23 nov.), Configuración en lectura (23 nov.), Flujo del Proceso (23 nov.) y la campana en lectura (23 nov.). **La fase 0 está completa.**
 

@@ -23,7 +23,6 @@ import { GeneralMatrix } from './views/GeneralMatrix';
 import { Reports } from './views/Reports';
 import { UsersRoles } from './views/UsersRoles';
 import { getSession, endSession } from './apiAuth';
-import ClientPortal from './views/ClientPortal';
 
 const defaultQuotes = [];
 
@@ -175,20 +174,8 @@ export default function App() {
     return <Login onLoginSuccess={handleLoginSuccess} lang={language} />;
   }
 
-  // 2. RENDERIZADO DEL PORTAL DEL CLIENTE EN PANTALLA COMPLETA
-  if (userSession?.tipo === 'cliente') {
-    return (
-      <div className="min-h-screen bg-slate-900">
-        <ClientPortal 
-          client={selectedClient} 
-          session={userSession} 
-          onLogout={handleLogout} 
-          onNotify={pushNotification} 
-          lang={language} 
-        />
-      </div>
-    );
-  }
+  // 2. El acceso externo de clientes no está habilitado (pendiente de autorización): la vista del cliente solo existe como
+  //    vista previa interna dentro de «Portal del Cliente» (CustomerPortal → ClientPortal, solo lectura).
 
   // 3. VISTA PRINCIPAL CON MENÚ Y NAVEGACIÓN
   return (
@@ -349,7 +336,7 @@ export default function App() {
         {/* Vistas Internas del Dashboard */}
         <main className="flex-1 overflow-y-auto p-6 bg-[#f8fafc]">
           {/* Aviso únicamente en los módulos que todavía no leen datos operativos desde SQL. */}
-          {!['users_roles', 'clients', 'suppliers', 'supply', 'purchase_orders', 'quotes', 'reception', 'invoice', 'general_matrix', 'dashboard', 'reports', 'requisition', 'contractors', 'contractor_mgmt', 'operational_services', 'config', 'process'].includes(activeTab) && (
+          {!['users_roles', 'clients', 'suppliers', 'supply', 'purchase_orders', 'quotes', 'reception', 'invoice', 'general_matrix', 'dashboard', 'reports', 'requisition', 'contractors', 'contractor_mgmt', 'operational_services', 'config', 'process', 'portal'].includes(activeTab) && (
             <div className="mb-4 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold">
               Módulo pendiente de integración: puede utilizar datos de demostración y los formularios aún no guardan operaciones en MariaDB.
             </div>

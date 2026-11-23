@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { previewClients, previewClient, previewRequisition, previewQuote, clientLogoUrl } from './portal/api';
+import { money, clientOption, requisitionOption, stageStatus, photoTotals, quoteDocument } from './portal/portalModel.mjs';
 
 const TRANSLATIONS = {
   es: {
@@ -305,152 +307,7 @@ const TRANSLATIONS = {
   }
 };
 
-const CLIENTS_DATA = [
-  {
-    "id": "ms7ph4a0iu9bl",
-    "code": "2453",
-    "name": "MEXICO FLNG, S. DE R.L. DE C.V.",
-    "brandName": "MEXICO FLNG, S. DE R.L. DE C.V.",
-    "tax": "MFL210531RR7",
-    "project": "NFE",
-    "contract": "0",
-    "contacts": [],
-    "emails": ["EFUENTES@NEWFORTRESSENERGY.COM", "GLAUDINO@NEWFORTRESSENERGY.COM"],
-    "status": "Activo",
-    "portalEnabled": "Deshabilitado",
-    "logo": "",
-    "currentStage": 2
-  },
-  {
-    "id": "ms7ph4a0o5kgu",
-    "code": "3506",
-    "name": "TANKS-A-LOT, LLC",
-    "brandName": "TANKS-A-LOT, LLC",
-    "tax": "XEXX010101000",
-    "project": "Sin Asignar",
-    "contract": "N/A",
-    "contacts": [],
-    "emails": ["MEXICO.OFFICE@TANKSALOTINC.NET", "ATORRES@TANKSALOTINC.NET"],
-    "status": "Inactivo",
-    "portalEnabled": "Deshabilitado",
-    "logo": "",
-    "currentStage": 1
-  },
-  {
-    "id": "ms7ph4a9eskd2",
-    "code": "1406",
-    "name": "GLOBALSANTAFE DRILLING MEXICO, S. DE R.L. DE C.V.",
-    "brandName": "GLOBALSANTAFE DRILLING MEXICO, S. DE R.L. DE C.V.",
-    "tax": "GDM031127R98",
-    "project": "TRION",
-    "contract": "11166",
-    "contacts": ["Isabella Pursell"],
-    "emails": ["isabella.pursell@deepwater.com"],
-    "status": "Activo",
-    "portalEnabled": "Habilitado",
-    "logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMMAAADDCAYAAAA/f6WqAAAQAElEQVR4AeydB4BsWVW1zzczDFGUJFGigIgowQTyI0GiKAKiGBCQJAiSJKNDFpAkMHIEJGcBkSQgQTIKgmRE8v+Tcw79/vOd07tq16l763W/ee9N6p5etdZee+1zb92qW1Vd/brmiH31a2tra9/W1jxqpPVlsbW1JTVva2trhW1sbW1JK9ja6t7W1pLHXtTBW1vL7NZW12Mv6uCtrZ7b2lry2Is6eGtrmd3a6nrsRR28tdVzW1tLHntRB29tLbMbW12PvaiDt7bWc3O9OX9ra8vWyu2gsbU17x9R6hdQYB410vqyAKTmAStsA5BWAN2DJUPXBmGprQV0D2jbCA9Wa30Bqz6g3WaBxhqA1ACs+MCKD8u6NeoFsHGmRlofeg6WPPaiDoZlForee1EHQ8/Bksde1MGwzELXYy/qYOg5WPLYizoYllnoeuxFHQzrubnenA/YWrkdNGDe95mh1DNmI1xkf5m9/r6Nx3Dv+Jzwj097ZvDOvgnekJv6e729I3BSOAJHACtPJTBde2VhtRdeMPT+WEP3AVttewqgacByoYEVbRNWPdhcn5BnYPO+w14fDv8xaM8Mc4/82Qe8fzVkXwNoLxHUc4gZ6OtAZ/PRU2eED+vZ3svpVQ3H38zqnuxVB3IENt2+Y2+sp7Y3ZsbamfYzA/Q7Tg6oYdp3UEA/CSIrhy8Hws+1XkAf+rbUwp4csBbQt5n90LIZWagFHP4ZtxuIfZFF+HLUwXoialnoBaIOnvI39SIvR04WeoGog6f8Tb3Iy5GThV4g6mD9Uc/V+sKZDD0RnlpYy0Kd0V4m2RCwvEPCvIbVHvQaOrtWBtBe9oQHvYYlRy8Yem+qhmUPiEhjWNbAYruwqlt4+wLYVqXloddAq0v9Aurl8huWNbCWg+4BbQg6WwAtD1g2rQCaBiybbqJeAK0GalVaLvULaBqoVWm6bH8BrQaaA0sGWs8GIDUAzQcWtQKY9Df14LjNQJ93GwJ6DVi2/VEATcOS9QWseoD2Wh4o7Zkhnx1TutSv0vN29pLJPWIud6c7/ymnv0pOCOmenOeeTHXn/LNi6neJm9vZp+HYPZ+sunYHc5ee2YAJs8U6L7XBLqGVT6Q3oHMwOp2YVm7noClB5u1eQGbc7Dsmxew9GD/em8GD8HG+xhwvPfbD9BtT/cuDv8R2NviCeoI7Pdk8Glqf3u8k8y4xoHMuMamubnenL9pvYM947b2sPMjsJvjvykbWxwzY21ucTLkZtaGRHiyyN6cNpcx5qKOzFjrhycHwp+r9feXGfsHeybWD3b9EdGb4zFvPZcN38yI6M3xmLeey4ZvZkT05njMW89lAdsbEbOGsraeQ85lbb6dDGHKwkawOgP6Tk71pzygvRbMa4Q2D+t9WPfMijxrLcKTc60W+kIdsA7oZT1VZ89srtVCPyM8eQpAjjdtTiFPAU4+M/k4hJbn4PGyJ4vQ8hxyrr2bFEFYPdARjL61iFqeq7MfOti5gJ6wDs46e/ojoO/z/nJ5Dg7vTN521lP7DH3fci7rk8uM11PEdQ8dHP7IuR86eMxGHf32zDCaUQdHOOrMsPsbb9N6rr2/vplAZGG5H+FFZuTow6GZifWDx+3nOjIj58yox2zUYy7XkRk5Z0Y9ZqOO3BRHZuSpbHhjNuroT3FkgqcyoxfZ4LG/o7dWgfZSB9bZBWHdh8PrHch+HK4ZOLzHAk5e2ztYt2N7meSZsocT/j8x3ruNpm8jT4bdHpupmfbMYAPWH0325+f+nIa+bu5D96CzPQG9hs5THuy/Bz0Dq7xpPVjNQq8PZAb6LOwxHNgx2HTcx95Yw/o2x8xYA/2fYwDFL88uWahh2rcvoP8DuMjK4cuB8HOtF9CHvi21sCcHrIV18KjH2pyY8vUCkbFWi9CyCE8tcq0W2bcOZD/0VC88OXKy0AtEHTzlb+FRo6cLPQCUQdP+Zt6kZcjJwu9QNTB+qOeq/WFMxl6Ijy1sJaFOmPxzGATlndImNew2oNeQ2fXygDazxzhQa9hydELht6bqmHZAyLSGJY1sNgurwqlt4+wLYVqXloddAq0v9Aurl8huWNbCWg+4BbQg6WwAtD1g2rQCaBiybbqJeAK0GalVaLvULaBqoVWm6bH8BrQaaA0sGWs8GIDUAzQcWtQKY9Df14LjNQJ93GwJ6DVi2/VEATcOS9QWseoD2Wh4o7Zkhnx1TutSvK///L0x59sIP1gtMefbCD9YLTHn2wg+e8mB5o0/1pzw46c94zITXfwmwe3/83q61N/3kAAAAAElFTkSuQmCC",
-    "currentStage": 6
-  },
-  {
-    "id": "ms7ph4aa8rcsl",
-    "code": "2293",
-    "name": "HOOL ENERGY DE MEXICO S. DE R.L. DE C.V.",
-    "brandName": "HOOL ENERGY DE MEXICO S. DE R.L. DE C.V.",
-    "tax": "HEM200831RH3",
-    "project": "XXXXX",
-    "contract": "0000",
-    "contacts": ["RHERNANDEZM@HOOLENERGY.COM"],
-    "emails": ["JJRAMOS@HOOLENERGY.COM"],
-    "status": "Inactivo",
-    "portalEnabled": "Deshabilitado",
-    "logo": "",
-    "currentStage": 4
-  }
-];
-
-const mockQuote = {
-  folio: "COT-2026-0014",
-  revision: 0,
-  fecha: "2026-08-01",
-  vigencia: "2026-08-26",
-  moneda: "USD",
-  cliente: {
-    empresa: "GLOBALSANTAFE DRILLING MEXICO, S. DE R.L. DE C.V.",
-    contacto: "Isabella Pursell",
-    correo: "isabella.pursell@deepwater.com",
-    telefono: "N/A",
-    proyecto: "TRION",
-    contrato: "11166",
-    referencia: "WO - GG - 004"
-  },
-  items: [
-    { id: 1, desc: "Digital Thermometer", brand: "—", qty: 1, unit: "pza", price: 478.80 },
-    { id: 2, desc: "Outdoor Thermometer", brand: "—", qty: 1, unit: "pza", price: 358.80 }
-  ],
-  condiciones: {
-    lugarEntrega: "PISSA",
-    tiempoEntrega: "Por confirmar",
-    pago: "Por confirmar",
-    garantia: "No indicada",
-    alcance: "Conforme a las partidas descritas.",
-    exclusiones: "No indicadas.",
-    notas: "Precios expresados en la moneda indicada. Vigencia sujeta a disponibilidad."
-  },
-  firmas: {
-    comprador: { status: "Sin firma", nombre: "NOMBRE", puesto: "PUESTO" },
-    reviso: { status: "Sin firma", nombre: "NOMBRE", puesto: "PUESTO" },
-    autorizo: { status: "Sin firma", nombre: "NOMBRE", puesto: "PUESTO" }
-  }
-};
-
-const mockPO = {
-  poNumber: "OC-2026-0008",
-  code: "P-COP-01-01",
-  codeDate: "01/11/18",
-  revision: "02",
-  date: "11 ago 2026",
-  commitmentDate: "14 ago 2026",
-  location: "Tampico, Tamaulipas",
-  reference: "19900001080",
-  internalRef: "TRS-0105",
-  buyer: "KARLA BARBOSA CASTELLANOS",
-  buyerEmail: "karla.barbosa@grupogerez.com",
-  supplier: "SAFETY SPOT",
-  supplierContact: "—",
-  items: [
-    {
-      partida: 1,
-      req: "19900001080",
-      refInt: "TRS-0105",
-      desc: "1. WRENCHES, ALUMINUM STRAIGHT PIPE 10\" WITH ATTACHMENT RING",
-      qty: "6 Each",
-      unitPrice: 1745.00,
-      subtotal: 10470.00
-    }
-  ],
-  additionalInfo: {
-    deliveryPlace: "ESEASA",
-    order: "19900001080",
-    relatedReqs: "19900001080",
-    internalRefs: "TRS-0105",
-    currency: "MXN",
-    paymentMethod: "PUE - Pago en una sola exhibición / 03 - Transferencia",
-    cfdiUse: "G03 - Gastos en general",
-    notes: "—",
-    sendInvoiceTo: "supplies@grupogerez.com",
-    billTo: "GRUPO GEREZ S.A. DE C.V."
-  },
-  totals: {
-    subtotal: 4799.88,
-    vat: 767.98,
-    total: 5567.86
-  },
-  signatures: {
-    boughtBy: { name: "KARLA BARBOSA CASTELLANOS", role: "ADMINISTRATIVE ASSISTANT" },
-    preparedBy: { name: "KATIA CESPEDEZ MENDEZ", role: "AUXILIAR ADMINISTRATIVO" },
-    authorizedBy: { name: "MONICA Y. MACIAS PEREZ", role: "ADMINISTRATIVE MANAGER" }
-  }
-};
+// Los datos del portal vienen de MariaDB (vista previa interna): sin clientes, cotizaciones ni OC escritos en el código.
 
 const getDocIcon = (stageId) => {
   switch (stageId) {
@@ -1520,11 +1377,10 @@ const poStyles = {
 // Componente interno para renderizar la cotización
 function QuotationDocument({ currentQuote, lang = 'es', onClose }) {
   const t = TRANSLATIONS[lang].docQuote;
-  const subtotal = currentQuote.items.reduce((acc, item) => acc + (item.qty * item.price), 0);
-  const vat = subtotal * 0.16;
-  const total = subtotal + vat;
-
-  const formatMoney = (amount) => amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Totales guardados en MariaDB (no se recalculan con un IVA fijo).
+  const tot = currentQuote.totales || {};
+  const formatMoney = money;
+  const issuer = currentQuote.emisor;
 
   return (
     <div style={quoteStyles.page}>
@@ -1574,10 +1430,10 @@ function QuotationDocument({ currentQuote, lang = 'es', onClose }) {
         <div style={quoteStyles.infoGrid}>
           <div style={quoteStyles.infoCard}>
             <div style={quoteStyles.infoTitle}>{t.quotes}</div>
-            <span style={quoteStyles.strongText}>GRUPO GEREZ - SUPPLY BASE SERVICES DE MEXICO</span>
-            3ra avenida #1007 Col. Anahuac, Tampico Tamps.<br/>
-            supplies@grupogerez.com<br/>
-            8332140041
+            <span style={quoteStyles.strongText}>{issuer?.legal_name || 'GRUPO GEREZ - SUPPLY BASE SERVICES DE MEXICO'}</span>
+            {issuer?.postal_address || '3ra avenida #1007 Col. Anahuac, Tampico Tamps.'}<br/>
+            {issuer?.email || 'supplies@grupogerez.com'}<br/>
+            {issuer?.phone || '8332140041'}
           </div>
           <div style={quoteStyles.infoCard}>
             <div style={quoteStyles.infoTitle}>{t.client}</div>
@@ -1589,9 +1445,11 @@ function QuotationDocument({ currentQuote, lang = 'es', onClose }) {
           </div>
         </div>
 
-        <div style={quoteStyles.sectionBanner}>
-          THIRD PARTY PAYMENT
-        </div>
+        {tot.terceros && (
+          <div style={quoteStyles.sectionBanner}>
+            THIRD PARTY PAYMENT
+          </div>
+        )}
 
         <table style={quoteStyles.table}>
           <thead>
@@ -1617,7 +1475,7 @@ function QuotationDocument({ currentQuote, lang = 'es', onClose }) {
                   {currentQuote.moneda} {formatMoney(item.price)}
                 </td>
                 <td style={{...quoteStyles.td, textAlign: 'right', fontWeight: '700', color: '#0F172A'}}>
-                  {currentQuote.moneda} {formatMoney(item.qty * item.price)}
+                  {currentQuote.moneda} {formatMoney(item.subtotal)}
                 </td>
               </tr>
             ))}
@@ -1654,31 +1512,31 @@ function QuotationDocument({ currentQuote, lang = 'es', onClose }) {
           </div>
 
           <div style={quoteStyles.totalsBox}>
-            <div style={quoteStyles.totalRow}>
-              <span>{t.subtotalThird}</span>
-              <span>{currentQuote.moneda} {formatMoney(subtotal)}</span>
-            </div>
-            <div style={quoteStyles.totalRow}>
-              <span>{t.vatThird}</span>
-              <span>{currentQuote.moneda} {formatMoney(vat)}</span>
-            </div>
-            <div style={quoteStyles.totalRow}>
-              <span>{t.totalThird}</span>
-              <span>{currentQuote.moneda} {formatMoney(total)}</span>
-            </div>
-            
+            {tot.terceros && (
+              <>
+                <div style={quoteStyles.totalRow}><span>{t.subtotalThird}</span><span>{currentQuote.moneda} {formatMoney(tot.terceros.base)}</span></div>
+                <div style={quoteStyles.totalRow}><span>{t.vatThird}</span><span>{currentQuote.moneda} {formatMoney(tot.terceros.iva)}</span></div>
+                <div style={quoteStyles.totalRow}><span>{t.totalThird}</span><span>{currentQuote.moneda} {formatMoney(tot.terceros.total)}</span></div>
+              </>
+            )}
+            {tot.fee && (
+              <div style={quoteStyles.totalRow}><span>SERVICE FEE {tot.fee.pct !== null && tot.fee.pct !== undefined ? `${Number(tot.fee.pct)}%` : ''}</span><span>{currentQuote.moneda} {formatMoney(tot.fee.total)}</span></div>
+            )}
             <div style={quoteStyles.totalRow}>
               <span>{t.subtotalGen}</span>
-              <span>{currentQuote.moneda} {formatMoney(subtotal)}</span>
+              <span>{currentQuote.moneda} {formatMoney(tot.subtotal)}</span>
             </div>
+            {tot.descuento !== null && tot.descuento !== undefined && (
+              <div style={quoteStyles.totalRow}><span>{lang === 'es' ? 'DESCUENTO' : 'DISCOUNT'}</span><span>- {currentQuote.moneda} {formatMoney(tot.descuento)}</span></div>
+            )}
             <div style={{...quoteStyles.totalRow, borderBottom: 'none'}}>
-              <span>{t.vatGen}</span>
-              <span>{currentQuote.moneda} {formatMoney(vat)}</span>
+              <span>{lang === 'es' ? 'IVA' : 'VAT'} {tot.ivaPct !== null && tot.ivaPct !== undefined ? `${Number(tot.ivaPct)}%` : ''}</span>
+              <span>{currentQuote.moneda} {formatMoney(tot.iva)}</span>
             </div>
-            
+
             <div style={quoteStyles.grandTotalBox}>
               <span>{t.grandTotal}</span>
-              <span>{currentQuote.moneda} {formatMoney(total)}</span>
+              <span>{currentQuote.moneda} {formatMoney(tot.total)}</span>
             </div>
           </div>
         </div>
@@ -1705,7 +1563,7 @@ function QuotationDocument({ currentQuote, lang = 'es', onClose }) {
         </div>
 
         <div style={quoteStyles.footer}>
-          • supplies@grupogerez.com · 8332140041 •<br/>
+          • {issuer?.email || 'supplies@grupogerez.com'} · {issuer?.phone || '8332140041'} •<br/>
           {t.quoteDisclaimer}
         </div>
       </div>
@@ -1713,662 +1571,469 @@ function QuotationDocument({ currentQuote, lang = 'es', onClose }) {
   );
 }
 
-// Componente interno para renderizar la ORDEN DE COMPRA
-function PurchaseOrderDocument({ poData = mockPO, lang = 'es', onClose }) {
-  const t = TRANSLATIONS[lang].docPO;
-  const formatMoney = (amount) => amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-  return (
-    <div style={poStyles.page}>
-      
-      {/* Header acciones */}
-      <div style={quoteStyles.printHeader} className="no-print">
-        <h2 style={{margin: 0, fontSize: '18px', fontWeight: 'bold'}}>{t.modalHeaderTitle}</h2>
-        <div style={{display: 'flex', gap: '12px'}}>
-          <button style={quoteStyles.printButton} onClick={() => window.print()}>
-            {TRANSLATIONS[lang].docQuote.printBtn}
-          </button>
-          <button style={styles.closeBtn} onClick={onClose}>
-            {TRANSLATIONS[lang].modalClose}
-          </button>
-        </div>
-      </div>
-
-      {/* Contenedor impreso de la Orden de Compra */}
-      <div id="printable-doc">
-        <div style={poStyles.header}>
-          <div style={poStyles.logoContainer}>
-            <img 
-              src="/image_923273.svg" 
-              alt="Logo Grupo Gerez" 
-              style={poStyles.logoImg} 
-            />
-            <div style={{...poStyles.logoTextContainer, padding: '8px'}}>
-              <span style={poStyles.logoTitle}>GRUPO GEREZ</span>
-              <span style={poStyles.logoSub}>Customs & Logistics Worldwide</span>
-            </div>
-          </div>
-          
-          <div style={poStyles.titleSection}>
-            <h1 style={poStyles.mainTitle}>{t.modalHeaderTitle.toUpperCase()}</h1>
-            <p style={poStyles.subTitle}>GRUPO GEREZ</p>
-          </div>
-          
-          <div style={poStyles.metaData}>
-            <span style={poStyles.metaLink}>www.grupogerez.com</span>
-            {poData.code}<br/>
-            {TRANSLATIONS[lang].docQuote.date}: {poData.codeDate}<br/>
-            {TRANSLATIONS[lang].docQuote.revision}: {poData.revision}
-          </div>
-        </div>
-
-        <div style={poStyles.buyerGrid}>
-          <div style={poStyles.partyCard}>
-            <div style={poStyles.partyRow}>
-              <span style={poStyles.partyLabel}>{t.buyer}:</span>
-              <span style={poStyles.partyValue}>{poData.buyer}</span>
-            </div>
-            <div style={poStyles.partyRow}>
-              <span style={poStyles.partyLabel}>{t.contact}:</span>
-              <span style={poStyles.partyValue}>{poData.buyerEmail}</span>
-            </div>
-            <div style={poStyles.partyRow}>
-              <span style={poStyles.partyLabel}>{t.supplier}:</span>
-              <span style={poStyles.partyValue}>{poData.supplier}</span>
-            </div>
-            <div style={poStyles.partyRow}>
-              <span style={poStyles.partyLabel}>{t.contact}:</span>
-              <span style={poStyles.partyValue}>{poData.supplierContact}</span>
-            </div>
-          </div>
-
-          <div style={{...poStyles.partyCard, alignItems: 'flex-end', textAlign: 'right'}}>
-            <div style={{fontSize: '9px', color: '#94A3B8', marginBottom: '2px'}}>{poData.location}</div>
-            <div style={poStyles.partyRow}>
-              <span style={{...poStyles.partyLabel, width: 'auto'}}>{t.poDate}:</span>
-              <span style={poStyles.partyValue}>{poData.date}</span>
-            </div>
-            <div style={poStyles.partyRow}>
-              <span style={{...poStyles.partyLabel, width: 'auto'}}>{t.poNumber}:</span>
-              <span style={{...poStyles.partyValue, fontWeight: '700'}}>{poData.poNumber}</span>
-            </div>
-            <div style={poStyles.partyRow}>
-              <span style={{...poStyles.partyLabel, width: 'auto'}}>{t.reference}:</span>
-              <span style={poStyles.partyValue}>{poData.reference}</span>
-            </div>
-            <div style={poStyles.partyRow}>
-              <span style={{...poStyles.partyLabel, width: 'auto'}}>{t.internalRef}:</span>
-              <span style={poStyles.partyValue}>{poData.internalRef}</span>
-            </div>
-          </div>
-        </div>
-
-        <table style={poStyles.table}>
-          <thead>
-            <tr>
-              <th style={poStyles.th}>{t.tblItem}</th>
-              <th style={poStyles.th}>{t.tblReq}</th>
-              <th style={poStyles.th}>{t.tblRefInt}</th>
-              <th style={{...poStyles.th, textAlign: 'left', width: '40%'}}>{t.tblDesc}</th>
-              <th style={poStyles.th}>{t.tblQty}</th>
-              <th style={{...poStyles.th, textAlign: 'right'}}>{t.tblUnitPrice}</th>
-              <th style={{...poStyles.th, textAlign: 'right', borderRight: 'none'}}>{t.tblSubtotal}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {poData.items.map((item, idx) => (
-              <tr key={idx}>
-                <td style={{...poStyles.td, textAlign: 'center', fontWeight: '700'}}>{item.partida}</td>
-                <td style={{...poStyles.td, textAlign: 'center', fontWeight: '700'}}>{item.req}</td>
-                <td style={{...poStyles.td, textAlign: 'center'}}>{item.refInt}</td>
-                <td style={{...poStyles.td, fontWeight: '500'}}>{item.desc}</td>
-                <td style={{...poStyles.td, textAlign: 'center'}}>{item.qty}</td>
-                <td style={{...poStyles.td, textAlign: 'right'}}>${formatMoney(item.unitPrice)}</td>
-                <td style={{...poStyles.td, textAlign: 'right', fontWeight: '800'}}>${formatMoney(item.subtotal)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div style={poStyles.lowerGrid}>
-          <div style={poStyles.addInfoSection}>
-            <div style={poStyles.addInfoTitle}>{t.addInfoTitle}</div>
-            
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.delivPlace}:</span>
-              <span style={poStyles.infoVal}>{poData.additionalInfo.deliveryPlace}</span>
-            </div>
-
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.order}:</span>
-              <span style={poStyles.infoVal}>{poData.additionalInfo.order}</span>
-            </div>
-
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.relatedReqs}:</span>
-              <span style={poStyles.infoVal}>{poData.additionalInfo.relatedReqs}</span>
-            </div>
-
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.internalRefs}:</span>
-              <span style={poStyles.infoVal}>{poData.additionalInfo.internalRefs}</span>
-            </div>
-
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.currency}:</span>
-              <span style={{...poStyles.infoVal, fontWeight: '800', color: '#0F172A'}}>{poData.additionalInfo.currency}</span>
-            </div>
-
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.paymentMethod}:</span>
-              <span style={poStyles.infoVal}>{poData.additionalInfo.paymentMethod}</span>
-            </div>
-
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.cfdiUse}:</span>
-              <span style={poStyles.infoVal}>{poData.additionalInfo.cfdiUse}</span>
-            </div>
-
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.notes}:</span>
-              <span style={poStyles.infoVal}>{poData.additionalInfo.notes}</span>
-            </div>
-
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.sendInvoiceTo}:</span>
-              <span style={poStyles.infoVal}>{poData.additionalInfo.sendInvoiceTo}</span>
-            </div>
-
-            <div style={poStyles.infoRow}>
-              <span style={poStyles.orangeArrow}>➔</span>
-              <span style={poStyles.infoKey}>{t.billTo}:</span>
-              <span style={poStyles.infoVal}>{poData.additionalInfo.billTo}</span>
-            </div>
-          </div>
-
-          <div style={poStyles.totalsBox}>
-            <div style={poStyles.totalRow}>
-              <span>{t.subtotal} $</span>
-              <span>{formatMoney(poData.totals.subtotal)}</span>
-            </div>
-            <div style={poStyles.totalRow}>
-              <span>{t.vat} $</span>
-              <span>{formatMoney(poData.totals.vat)}</span>
-            </div>
-
-            <div style={poStyles.grandTotalOrangeBox}>
-              <span>{t.total} $</span>
-              <span>{formatMoney(poData.totals.total)} {poData.additionalInfo.currency}</span>
-            </div>
-          </div>
-        </div>
-
-        <div style={poStyles.signatures}>
-          <div>
-            <div style={poStyles.sigPlaceholder}>{t.signatureText}</div>
-            <div style={poStyles.sigLine}>{t.boughtBy}:</div>
-            <div style={poStyles.sigName}>{poData.signatures.boughtBy.name}</div>
-            <div style={poStyles.sigRole}>{poData.signatures.boughtBy.role}</div>
-          </div>
-
-          <div>
-            <div style={poStyles.sigPlaceholder}>{t.signatureText}</div>
-            <div style={poStyles.sigLine}>{t.preparedBy}:</div>
-            <div style={poStyles.sigName}>{poData.signatures.preparedBy.name}</div>
-            <div style={poStyles.sigRole}>{poData.signatures.preparedBy.role}</div>
-          </div>
-
-          <div>
-            <div style={poStyles.sigPlaceholder}>{t.signatureText}</div>
-            <div style={poStyles.sigLine}>{t.authorizedBy}:</div>
-            <div style={poStyles.sigName}>{poData.signatures.authorizedBy.name}</div>
-            <div style={poStyles.sigRole}>{poData.signatures.authorizedBy.role}</div>
-          </div>
-        </div>
-
-        <div style={poStyles.footer}>
-          3ra avenida #1007 Col. Anahuac, Tampico Tamps. Teléfono: 8332140041
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ==========================================
-// COMPONENTE PRINCIPAL (PORTAL)
+// COMPONENTE PRINCIPAL (PORTAL) · VISTA PREVIA INTERNA
 // ==========================================
+// Muestra a un Master Admin lo que vería el cliente seleccionado, con datos de MariaDB (solo lectura). El acceso externo de
+// clientes (tokens y sesiones propias) NO está habilitado: requiere autorización. Ninguna acción escribe.
 
-export default function ClientPortal({ onLogout, session, onNotify }) {
-  const [selectedClientIndex, setSelectedClientIndex] = useState(2);
-  const [currentStage, setCurrentStage] = useState(CLIENTS_DATA[2].currentStage || 6);
-  
-  // Estado para Idioma
-  const [lang, setLang] = useState('es');
+const PREVIEW = {
+  es: {
+    badge: 'Vista previa interna · solo lectura',
+    alertTitle: 'Vista previa interna (Master Admin)',
+    alertText: 'Así vería el portal el cliente seleccionado, con datos de MariaDB. El acceso externo de clientes todavía no está habilitado (requiere autorización) y aquí no se guarda nada.',
+    exit: '← Salir de la vista previa',
+    client: 'Cliente',
+    requisition: 'Requisición',
+    loading: 'Cargando datos de MariaDB...',
+    retry: 'Reintentar',
+    noClients: 'No hay clientes registrados.',
+    noReqs: 'Este cliente no tiene requisiciones registradas.',
+    noStage: 'La etapa de este expediente no se infiere (creado desde historial o con control de cambios); el cliente lo verá como "en revisión".',
+    lines: 'partida(s)',
+    openReq: 'Abrir solicitud',
+    quotesNone: 'Aún no hay cotización enviada al cliente.',
+    quotePreparing: 'Las revisiones en preparación interna no se muestran al cliente.',
+    poSub: 'Folio, fechas y estatus. El documento de la OC al proveedor (proveedor y montos) es interno.',
+    poNone: 'Aún no hay órdenes de compra emitidas.',
+    receipts: 'Recepciones',
+    deliveries: 'Entregas',
+    invoices: 'Facturas',
+    received: 'recibido',
+    accepted: 'Aceptada',
+    pendingAcceptance: 'Pendiente de aceptación',
+    photos: 'fotografía(s)',
+    none: 'Sin registros.',
+    sigBlocked: 'La firma de enterado se habilitará cuando se autorice el acceso externo de clientes (es una escritura y hoy está bloqueada).',
+    evidenceNote: 'Las imágenes se mostrarán al cliente cuando se habilite el acceso externo; aquí solo se muestra cuántas hay registradas.',
+    reqTitle: 'Solicitud / requisición',
+    reqCols: ['#', 'Descripción', 'Cantidad', 'Unidad'],
+    requestDate: 'Fecha de solicitud',
+    needDate: 'Fecha requerida',
+    clientRef: 'Referencia del cliente',
+    deliveryPlace: 'Lugar de entrega',
+    requester: 'Solicitante',
+    issued: 'Emisión',
+    commitment: 'Compromiso',
+    due: 'Vencimiento',
+    status: 'Estatus',
+    withoutStage: 'sin etapa inferida',
+  },
+  en: {
+    badge: 'Internal preview · read-only',
+    alertTitle: 'Internal preview (Master Admin)',
+    alertText: 'This is how the selected client would see the portal, with MariaDB data. External client access is not enabled yet (requires authorization) and nothing is saved here.',
+    exit: '← Exit preview',
+    client: 'Client',
+    requisition: 'Requisition',
+    loading: 'Loading MariaDB data...',
+    retry: 'Retry',
+    noClients: 'There are no registered clients.',
+    noReqs: 'This client has no registered requisitions.',
+    noStage: 'This file has no inferred stage (history-based or under change control); the client will see it as "under review".',
+    lines: 'line item(s)',
+    openReq: 'Open request',
+    quotesNone: 'No quotation has been sent to the client yet.',
+    quotePreparing: 'Revisions in internal preparation are not shown to the client.',
+    poSub: 'Folio, dates and status. The supplier PO document (supplier and amounts) is internal.',
+    poNone: 'No purchase orders issued yet.',
+    receipts: 'Receipts',
+    deliveries: 'Deliveries',
+    invoices: 'Invoices',
+    received: 'received',
+    accepted: 'Accepted',
+    pendingAcceptance: 'Pending acceptance',
+    photos: 'photo(s)',
+    none: 'No records.',
+    sigBlocked: 'Invoice acknowledgment signing will be enabled once external client access is authorized (it is a write and is blocked today).',
+    evidenceNote: 'Images will be shown to the client once external access is enabled; only the registered count is shown here.',
+    reqTitle: 'Request / requisition',
+    reqCols: ['#', 'Description', 'Quantity', 'Unit'],
+    requestDate: 'Request date',
+    needDate: 'Required date',
+    clientRef: 'Client reference',
+    deliveryPlace: 'Delivery place',
+    requester: 'Requester',
+    issued: 'Issued',
+    commitment: 'Commitment',
+    due: 'Due',
+    status: 'Status',
+    withoutStage: 'no inferred stage',
+  },
+};
+
+const isAccepted = v => /^(accepted|aceptad)/i.test(String(v || '').trim());
+
+export default function ClientPortal({ lang: initialLang = 'es', onExit }) {
+  const [lang, setLang] = useState(initialLang === 'en' ? 'en' : 'es');
   const t = TRANSLATIONS[lang];
+  const p = PREVIEW[lang];
+  const es = lang === 'es';
 
-  // Modales
-  const [isEvidenceModalOpen, setIsEvidenceModalOpen] = useState(false);
-  const [evidenceModalStage, setEvidenceModalStage] = useState(null);
-  const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
-  const [isPOModalOpen, setIsPOModalOpen] = useState(false);
+  const [clients, setClients] = useState({ status: 'loading', items: [], error: null });
+  const [clientId, setClientId] = useState('');
+  const [view, setView] = useState({ status: 'idle', data: null, error: null });
+  const [reqId, setReqId] = useState('');
+  const [reload, setReload] = useState(0);
+  const [logoOk, setLogoOk] = useState(true);
+  const [modal, setModal] = useState(null); // { kind: 'quote'|'req'|'evidence', status, data, error, stage }
 
   const signatureRef = useRef(null);
-
-  const client = CLIENTS_DATA[selectedClientIndex];
+  const docsRef = useRef(null);
 
   useEffect(() => {
-    if (client && client.currentStage) {
-      setCurrentStage(client.currentStage);
-    }
-  }, [selectedClientIndex]);
+    const c = new AbortController();
+    previewClients(c.signal).then(d => {
+      if (c.signal.aborted) return;
+      setClients({ status: 'ready', items: d.items, error: null });
+      const preferred = d.items.find(x => x.portal_enabled && !x.portal_locked && x.requisitions > 0) || d.items.find(x => x.requisitions > 0) || d.items[0];
+      setClientId(id => id || preferred?.id || '');
+    }).catch(e => { if (!c.signal.aborted) setClients({ status: 'error', items: [], error: e }); });
+    return () => c.abort();
+  }, []);
 
+  useEffect(() => {
+    if (!clientId) return undefined;
+    const c = new AbortController();
+    setView(v => ({ ...v, status: 'loading', error: null }));
+    setLogoOk(true);
+    previewClient(clientId, c.signal).then(d => {
+      if (c.signal.aborted) return;
+      setView({ status: 'ready', data: d, error: null });
+      setReqId(id => (d.requisitions.some(r => r.id === id) ? id : d.requisitions[0]?.id || ''));
+    }).catch(e => { if (!c.signal.aborted) setView({ status: 'error', data: null, error: e }); });
+    return () => c.abort();
+  }, [clientId, reload]);
+
+  const data = view.data;
+  const client = data?.client;
+  const req = data?.requisitions.find(r => r.id === reqId) || null;
+  const currentStage = req?.stage || null;
   const stages = t.stages;
-  const progressPercentage = Math.round((currentStage / stages.length) * 100);
+  const progress = req?.progress ?? 0;
+  const m = data?.metrics;
+  const photos = photoTotals(req);
 
-  const toggleLanguage = () => {
-    setLang(prev => (prev === 'es' ? 'en' : 'es'));
+  const openQuote = (quote) => {
+    setModal({ kind: 'quote', status: 'loading', data: null, error: null });
+    previewQuote(clientId, quote.id).then(d => setModal({ kind: 'quote', status: 'ready', data: quoteDocument(d), error: null }))
+      .catch(e => setModal({ kind: 'quote', status: 'error', data: null, error: e }));
   };
-
-  const handleLogoutClick = () => {
-    if (onLogout) {
-      onLogout();
-    } else {
-      if (window.confirm(lang === 'es' ? '¿Deseas cerrar sesión?' : 'Do you want to log out?')) {
-        window.location.reload();
-      }
-    }
+  const openRequisition = () => {
+    if (!req) return;
+    setModal({ kind: 'req', status: 'loading', data: null, error: null });
+    previewRequisition(clientId, req.id).then(d => setModal({ kind: 'req', status: 'ready', data: d, error: null }))
+      .catch(e => setModal({ kind: 'req', status: 'error', data: null, error: e }));
   };
 
   const handleActionClick = (e, stage) => {
-    e.stopPropagation(); 
-    if (stage.id === 6 || stage.id === 7) {
-      setEvidenceModalStage(stage.id);
-      setIsEvidenceModalOpen(true);
-    } 
-    else if (stage.id === 4) {
-      setIsQuoteModalOpen(true);
-    }
-    else if (stage.id === 5) {
-      setIsPOModalOpen(true);
-    }
-    else if (stage.id === 8) {
-      if (signatureRef.current) {
-        signatureRef.current.scrollIntoView({ behavior: 'smooth' });
-      }
-    }
+    e.stopPropagation();
+    if (stage.id === 1) openRequisition();
+    else if (stage.id === 4) { if (req?.quotes?.length) openQuote(req.quotes[0]); else docsRef.current?.scrollIntoView({ behavior: 'smooth' }); }
+    else if (stage.id === 5) docsRef.current?.scrollIntoView({ behavior: 'smooth' });
+    else if (stage.id === 6 || stage.id === 7) setModal({ kind: 'evidence', stage: stage.id });
+    else if (stage.id === 8) signatureRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  return (
-    <div style={styles.container}>
-      
-      {/* CSS Impresión */}
-      {(isQuoteModalOpen || isPOModalOpen) && (
+  const header = (
+    <>
+      {modal?.kind === 'quote' && modal.status === 'ready' && (
         <style dangerouslySetInnerHTML={{ __html: `
           @media print {
             body * { visibility: hidden !important; }
             #printable-doc, #printable-doc * { visibility: visible !important; }
-            #printable-doc { 
-              position: absolute !important; 
-              left: 0 !important; 
-              top: 0 !important; 
-              width: 100% !important; 
-              max-width: 100% !important; 
-              margin: 0 !important; 
-              padding: 0 !important; 
-              box-shadow: none !important; 
-              border: none !important; 
-            }
+            #printable-doc { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; box-shadow: none !important; border: none !important; }
             .no-print { display: none !important; }
             @page { size: letter portrait; margin: 0.8cm; }
           }
         `}} />
       )}
-
-      {/* Header Superior */}
       <header style={styles.header}>
         <div>
           <h1 style={styles.headerTitle}>{t.portalTitle}</h1>
           <p style={styles.headerSubtitle}>{t.portalSubtitle}</p>
         </div>
-        <div style={styles.langSelector} onClick={toggleLanguage}>
-          <strong>{t.langBtn}</strong>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span data-testid="cp-badge" style={{ padding: '6px 12px', borderRadius: '999px', background: '#ECFDF5', color: '#047857', fontSize: '11px', fontWeight: 800, border: '1px solid #A7F3D0' }}>{p.badge}</span>
+          <div style={styles.langSelector} onClick={() => setLang(l => (l === 'es' ? 'en' : 'es'))}><strong>{t.langBtn}</strong></div>
         </div>
       </header>
-
-      {/* Alerta Superior */}
-      <div style={styles.alertBar}>
+      <div data-testid="cp-alert" style={styles.alertBar}>
         <span style={{ color: '#E11D48', marginRight: '8px' }}>👁️</span>
-        <strong>{t.alertTitle}</strong> - {t.alertText}
+        <strong>{p.alertTitle}</strong> - {p.alertText}
       </div>
+    </>
+  );
 
-      {/* Hero Banner */}
+  if (clients.status !== 'ready' || (clientId && view.status !== 'ready' && !data)) {
+    const err = clients.error || view.error;
+    return (
+      <div style={styles.container}>
+        {header}
+        <div data-testid="cp-status" role={err ? 'alert' : 'status'} style={{ ...styles.sectionCard, color: err ? '#B91C1C' : '#4B5563', fontSize: '13px' }}>
+          {err ? err.message : p.loading}
+          {err && ![401, 403].includes(err.status) && (
+            <button style={{ ...styles.btnSecondary, marginLeft: '12px' }} onClick={() => (clients.error ? window.location.reload() : setReload(n => n + 1))}>{p.retry}</button>
+          )}
+          {onExit && <button style={{ ...styles.btnSecondary, marginLeft: '12px' }} onClick={onExit}>{p.exit}</button>}
+        </div>
+      </div>
+    );
+  }
+  if (!clients.items.length) {
+    return <div style={styles.container}>{header}<div data-testid="cp-status" style={styles.sectionCard}>{p.noClients}</div></div>;
+  }
+
+  const brand = client?.brand_name || client?.name || '';
+  return (
+    <div style={styles.container} data-testid="client-portal">
+      {header}
+
+      {/* Hero */}
       <div style={styles.heroBanner}>
         <div style={styles.clientInfo}>
           <div style={styles.logoContainer}>
-            {client.logo ? (
-              <img src={client.logo} alt="Logo" style={styles.logoImg} />
+            {client?.has_logo && logoOk ? (
+              <img src={clientLogoUrl(client.id)} alt="Logo" style={styles.logoImg} onError={() => setLogoOk(false)} />
             ) : (
-              <div style={styles.logoPlaceholder}>
-                {client.name.substring(0, 2)}
-              </div>
+              <div style={styles.logoPlaceholder}>{brand.substring(0, 2)}</div>
             )}
           </div>
           <div>
-            <h2 style={styles.clientName}>{client.brandName}</h2>
-            <p style={styles.clientMeta}>{t.project}: <span style={styles.metaValue}>{client.project || "N/A"}</span></p>
-            <p style={styles.clientMeta}>{t.contract}: <span style={styles.metaValue}>{client.contract || "N/A"}</span></p>
+            <h2 data-testid="cp-client-name" style={styles.clientName}>{brand}</h2>
+            <p style={styles.clientMeta}>{t.project}: <span style={styles.metaValue}>{req?.project || client?.project || 'N/A'}</span></p>
+            <p style={styles.clientMeta}>{t.contract}: <span style={styles.metaValue}>{req?.contract || client?.contract || 'N/A'}</span></p>
           </div>
         </div>
-
         <div style={styles.bannerActions}>
-          <button style={styles.btnSecondary} onClick={() => window.location.reload()}>
-            <span style={{ fontSize: '14px' }}>↻</span> {t.refresh}
-          </button>
-          <button style={styles.btnDanger} onClick={handleLogoutClick}>
-            {t.logout}
-          </button>
+          <button style={styles.btnSecondary} onClick={() => setReload(n => n + 1)}><span style={{ fontSize: '14px' }}>↻</span> {t.refresh}</button>
+          {onExit && <button data-testid="cp-exit" style={styles.btnDanger} onClick={onExit}>{p.exit}</button>}
         </div>
       </div>
 
-      {/* Selector de Cliente */}
-      <div style={styles.clientSelectorContainer}>
-        <select 
-          style={styles.selectInput}
-          value={selectedClientIndex} 
-          onChange={(e) => setSelectedClientIndex(Number(e.target.value))}
-        >
-          {CLIENTS_DATA.map((cli, idx) => (
-            <option key={cli.id} value={idx}>
-              {cli.code} - {cli.project} - {t.optionSuffix}
-            </option>
-          ))}
-        </select>
+      {/* Selectores: cliente (con estado de su portal) y requisición */}
+      <div style={{ ...styles.clientSelectorContainer, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+        <label style={{ fontSize: '11px', fontWeight: 800, color: '#374151', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>{p.client}
+          <select data-testid="cp-client" style={{ ...styles.selectInput, width: '100%' }} value={clientId} onChange={e => { setClientId(e.target.value); setReqId(''); }}>
+            {clients.items.map(c => <option key={c.id} value={c.id}>{clientOption(c, es)}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: '11px', fontWeight: 800, color: '#374151', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>{p.requisition}
+          <select data-testid="cp-requisition" style={{ ...styles.selectInput, width: '100%' }} value={reqId} onChange={e => setReqId(e.target.value)} disabled={!data?.requisitions.length}>
+            {!data?.requisitions.length && <option value="">{p.noReqs}</option>}
+            {(data?.requisitions || []).map(r => <option key={r.id} value={r.id}>{requisitionOption(r, es)}</option>)}
+          </select>
+        </label>
       </div>
 
-      {/* Métricas */}
+      {/* Métricas del cliente */}
       <div style={styles.metricsGrid}>
-        <div style={{...styles.metricCard, borderTopColor: '#3300aa'}}>
-          <span style={styles.metricValue}>2</span>
-          <span style={styles.metricLabel}>{t.metrics.totalReqs}</span>
-        </div>
-        <div style={{...styles.metricCard, borderTopColor: '#a855f7'}}>
-          <span style={styles.metricValue}>2</span>
-          <span style={styles.metricLabel}>{t.metrics.inProgress}</span>
-        </div>
-        <div style={{...styles.metricCard, borderTopColor: '#10b981'}}>
-          <span style={styles.metricValue}>0</span>
-          <span style={styles.metricLabel}>{t.metrics.closed}</span>
-        </div>
-        <div style={{...styles.metricCard, borderTopColor: '#f97316'}}>
-          <span style={styles.metricValue}>{progressPercentage}%</span>
-          <span style={styles.metricLabel}>{t.metrics.avgProgress}</span>
-        </div>
-        <div style={{...styles.metricCard, borderTopColor: '#f59e0b'}}>
-          <span style={styles.metricValue}>0</span>
-          <span style={styles.metricLabel}>{t.metrics.pendingDelivery}</span>
-        </div>
-        <div style={{...styles.metricCard, borderTopColor: '#3b82f6'}}>
-          <span style={styles.metricValue}>0</span>
-          <span style={styles.metricLabel}>{t.metrics.pendingInvoice}</span>
-        </div>
+        {[[m?.total, t.metrics.totalReqs, '#3300aa'], [m?.in_progress, t.metrics.inProgress, '#a855f7'], [m?.closed, t.metrics.closed, '#10b981'],
+          [m?.avg_progress === null || m?.avg_progress === undefined ? '—' : `${m.avg_progress}%`, t.metrics.avgProgress, '#f97316'],
+          [m?.pending_delivery, t.metrics.pendingDelivery, '#f59e0b'], [m?.pending_invoice, t.metrics.pendingInvoice, '#3b82f6']].map(([v, label, color]) => (
+          <div key={label} data-testid="cp-metric" style={{ ...styles.metricCard, borderTopColor: color }}>
+            <span style={styles.metricValue}>{v ?? '—'}</span>
+            <span style={styles.metricLabel}>{label}</span>
+          </div>
+        ))}
       </div>
 
-      {/* Avance del Proceso */}
-      <div style={styles.sectionCard}>
-        <div style={styles.sectionHeader}>
-          <div>
-            <h3 style={styles.sectionTitle}>{t.processTitle}</h3>
-            <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#6B7280', fontWeight: '500' }}>
-              {client.code} - {client.project} - {t.optionSuffix}
-            </p>
-          </div>
-          <span style={styles.progressPercentage}>{progressPercentage}%</span>
-        </div>
-
-        <div style={styles.progressBarContainer}>
-          <div style={{...styles.progressBarFill, width: `${progressPercentage}%`}}></div>
-        </div>
-
-        <div style={styles.stepperContainer}>
-          {stages.map((stg) => {
-            const isCompleted = stg.id < currentStage;
-            const isCurrent = stg.id === currentStage;
-            const isPending = stg.id > currentStage;
-
-            const statusText = isCompleted ? t.statusTags.completed : isCurrent ? t.statusTags.current : t.statusTags.pending;
-
-            return (
-              <div 
-                key={stg.id} 
-                style={{
-                  ...styles.stepCard,
-                  ...(isCompleted ? styles.stepCompleted : {}),
-                  ...(isCurrent ? styles.stepCurrent : {}),
-                  ...(isPending ? styles.stepPending : {})
-                }}
-              >
-                <div style={styles.stepHeader}>
-                  <div style={{
-                    ...styles.stepBadge,
-                    backgroundColor: isCompleted ? '#10B981' : isCurrent ? '#6366F1' : '#E5E7EB',
-                    color: isPending ? '#6B7280' : '#FFFFFF'
-                  }}>
-                    {isCompleted ? '✓' : stg.id}
-                  </div>
-                </div>
-                <h4 style={{
-                  ...styles.stepTitle,
-                  color: isCurrent ? '#4F46E5' : '#111827'
-                }}>{stg.name}</h4>
-                <p style={styles.stepDesc}>{stg.desc}</p>
-                <div style={{
-                  ...styles.statusTag,
-                  color: isCompleted ? '#059669' : isCurrent ? '#4338CA' : '#9CA3AF'
-                }}>
-                  {statusText}
-                </div>
-                {stg.action && (
-                  <span 
-                    style={styles.actionLink}
-                    onClick={(e) => handleActionClick(e, stg)} 
-                  >
-                    {isCompleted || isCurrent ? '🔹' : '🔒'} {stg.action}
-                  </span>
-                )}
+      {!req ? (
+        <div data-testid="cp-empty" style={styles.sectionCard}>{p.noReqs}</div>
+      ) : (
+        <>
+          {/* Avance del proceso */}
+          <div style={styles.sectionCard}>
+            <div style={styles.sectionHeader}>
+              <div>
+                <h3 style={styles.sectionTitle}>{t.processTitle}</h3>
+                <p data-testid="cp-req-label" style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#6B7280', fontWeight: '500' }}>{requisitionOption(req, es)}</p>
               </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Detalle Estado Actual */}
-      <div style={styles.currentStatusSection}>
-        <div style={styles.currentStatusLeftLine}></div>
-        <div style={{ padding: '20px' }}>
-          <h4 style={{ margin: '0 0 8px 0', color: '#111827', fontSize: '16px' }}>
-            {t.currentStatusTitle} {stages[currentStage - 1].name}
-          </h4>
-          <p style={{ margin: '0 0 16px 0', color: '#4B5563', fontSize: '13px' }}>
-            {stages[currentStage - 1].desc}
-          </p>
-          <div style={styles.nextStepBox}>
-            <strong style={{ display: 'block', marginBottom: '4px', color: '#111827' }}>{t.nextStepTitle}</strong>
-            <span style={{ color: '#4B5563' }}>
-              {currentStage < stages.length 
-                ? `${t.nextStepAction} ${stages[currentStage].name}.` 
-                : t.processConcluded}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Documentos Disponibles */}
-      <div style={styles.sectionCard}>
-        <div style={styles.sectionHeader}>
-          <h4 style={styles.sectionTitle}>{t.docsTitle}</h4>
-          <button style={styles.btnSmall}>{t.viewDownload}</button>
-        </div>
-        <p style={{ fontSize: '12px', color: '#6B7280', margin: '-10px 0 16px 0' }}>
-          {t.docsSubtitle}
-        </p>
-
-        <div style={styles.docsList}>
-          {stages.map(stg => {
-            const isCompleted = stg.id < currentStage;
-
-            // Etapa 4: Cotización
-            if (stg.id === 4 && isCompleted) {
-              return (
-                <div key={stg.id} style={docCardStyles.quoteCard}>
-                  <div>
-                    <div style={docCardStyles.quoteTitle}>
-                      💼 {t.quoteCard.title} {mockQuote.folio} · {t.quoteCard.revision} {mockQuote.revision}
+              <span data-testid="cp-progress" style={styles.progressPercentage}>{currentStage ? `${progress}%` : '—'}</span>
+            </div>
+            <div style={styles.progressBarContainer}><div style={{ ...styles.progressBarFill, width: `${currentStage ? progress : 0}%` }}></div></div>
+            {!currentStage && <p data-testid="cp-no-stage" style={{ fontSize: '12px', color: '#92400E', background: '#FFFBEB', padding: '8px 12px', borderRadius: '8px' }}>{p.noStage}</p>}
+            <div style={styles.stepperContainer}>
+              {stages.map((stg) => {
+                const st = stageStatus(stg.id, currentStage);
+                const statusText = st === 'completed' ? t.statusTags.completed : st === 'current' ? t.statusTags.current : t.statusTags.pending;
+                return (
+                  <div key={stg.id} data-testid="cp-step" data-status={st} style={{ ...styles.stepCard, ...(st === 'completed' ? styles.stepCompleted : {}), ...(st === 'current' ? styles.stepCurrent : {}), ...(st === 'pending' ? styles.stepPending : {}) }}>
+                    <div style={styles.stepHeader}>
+                      <div style={{ ...styles.stepBadge, backgroundColor: st === 'completed' ? '#10B981' : st === 'current' ? '#6366F1' : '#E5E7EB', color: st === 'pending' ? '#6B7280' : '#FFFFFF' }}>
+                        {st === 'completed' ? '✓' : stg.id}
+                      </div>
                     </div>
+                    <h4 style={{ ...styles.stepTitle, color: st === 'current' ? '#4F46E5' : '#111827' }}>{stg.name}</h4>
+                    <p style={styles.stepDesc}>{stg.desc}</p>
+                    <div style={{ ...styles.statusTag, color: st === 'completed' ? '#059669' : st === 'current' ? '#4338CA' : '#9CA3AF' }}>{statusText}</div>
+                    {stg.action && (
+                      <span data-testid={`cp-action-${stg.id}`} style={styles.actionLink} onClick={(e) => handleActionClick(e, stg)}>
+                        {st !== 'pending' ? '🔹' : '🔒'} {stg.action}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Estado actual */}
+          <div style={styles.currentStatusSection}>
+            <div style={styles.currentStatusLeftLine}></div>
+            <div style={{ padding: '20px' }}>
+              <h4 data-testid="cp-current" style={{ margin: '0 0 8px 0', color: '#111827', fontSize: '16px' }}>
+                {t.currentStatusTitle} {currentStage ? stages[currentStage - 1].name : p.withoutStage}
+              </h4>
+              <p style={{ margin: '0 0 16px 0', color: '#4B5563', fontSize: '13px' }}>{currentStage ? stages[currentStage - 1].desc : p.noStage}</p>
+              {currentStage && (
+                <div style={styles.nextStepBox}>
+                  <strong style={{ display: 'block', marginBottom: '4px', color: '#111827' }}>{t.nextStepTitle}</strong>
+                  <span style={{ color: '#4B5563' }}>{currentStage < stages.length ? `${t.nextStepAction} ${stages[currentStage].name}.` : t.processConcluded}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Documentos por etapa */}
+          <div style={styles.sectionCard} ref={docsRef}>
+            <div style={styles.sectionHeader}><h4 style={styles.sectionTitle}>{t.docsTitle}</h4></div>
+            <p style={{ fontSize: '12px', color: '#6B7280', margin: '-10px 0 16px 0' }}>{t.docsSubtitle}</p>
+            <div style={styles.docsList}>
+              <div data-testid="cp-doc-1" style={styles.docItem}>
+                {getDocIcon(1)} {t.stagePrefix} 1 · {stages[0].name}: <strong>{req.folio}</strong> · {req.line_count} {p.lines}{' '}
+                <button style={{ ...docCardStyles.btnSmallDark, marginLeft: '8px' }} onClick={openRequisition}>{p.openReq}</button>
+              </div>
+              {[2, 3].map(id => (
+                <div key={id} style={styles.docItem}>{getDocIcon(id)} {t.stagePrefix} {id} · {stages[id - 1].name}: <span style={{ color: '#6B7280' }}>{t.internalInfoMsg}</span></div>
+              ))}
+
+              {req.quotes.length ? req.quotes.map(q => (
+                <div key={q.id} data-testid="cp-quote" style={docCardStyles.quoteCard}>
+                  <div>
+                    <div style={docCardStyles.quoteTitle}>💼 {t.quoteCard.title} {q.folio} · {t.quoteCard.revision} {q.revision}</div>
                     <div style={docCardStyles.quoteSub}>
-                      {t.quoteCard.total}: <strong>$11,806.53</strong> · {t.quoteCard.validity}: {mockQuote.vigencia} · {t.quoteCard.status}: <span style={{color: '#059669', fontWeight: '800'}}>{t.quoteCard.approved}</span>
+                      {t.quoteCard.total}: <strong>{q.currency} {money(q.total)}</strong> · {t.quoteCard.validity}: {q.valid_until || '—'} · {t.quoteCard.status}: <span style={{ color: q.status === 'approved' ? '#059669' : q.status === 'rejected' ? '#B91C1C' : '#4338CA', fontWeight: '800' }}>{q.status_label}</span>
                     </div>
                   </div>
-                  <div style={{display: 'flex', gap: '10px'}}>
-                    <button style={docCardStyles.btnPrimaryBlue} onClick={() => setIsQuoteModalOpen(true)}>
-                      {t.quoteCard.viewQuote}
-                    </button>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button data-testid="cp-quote-open" style={docCardStyles.btnPrimaryBlue} onClick={() => openQuote(q)}>{t.quoteCard.viewQuote}</button>
                   </div>
                 </div>
-              );
-            }
+              )) : (
+                <div data-testid="cp-doc-4" style={styles.docItem}>{getDocIcon(4)} {t.stagePrefix} 4 · {stages[3].name}: <span style={{ color: '#6B7280' }}>{p.quotesNone} {p.quotePreparing}</span></div>
+              )}
 
-            // Etapa 5: Orden de compra
-            if (stg.id === 5 && isCompleted) {
-              return (
-                <div key={stg.id} style={docCardStyles.poCard}>
-                  <div>
-                    <div style={docCardStyles.poHeaderTitle}>
-                      🛒 {t.poCard.title}
-                    </div>
-                    <div style={docCardStyles.poSubText}>
-                      {t.poCard.sub}
-                    </div>
-                  </div>
-
-                  <div style={docCardStyles.poInnerBox}>
+              <div data-testid="cp-doc-5" style={docCardStyles.poCard}>
+                <div>
+                  <div style={docCardStyles.poHeaderTitle}>🛒 {t.poCard.title}</div>
+                  <div style={docCardStyles.poSubText}>{p.poSub}</div>
+                </div>
+                {req.purchase_orders.length ? req.purchase_orders.map(po => (
+                  <div key={po.folio} data-testid="cp-po" style={docCardStyles.poInnerBox}>
                     <div>
-                      <div style={{fontWeight: '800', fontSize: '14px', color: '#0F172A'}}>
-                        {mockPO.poNumber}
-                      </div>
-                      <div style={{fontSize: '12px', color: '#475569', marginTop: '4px'}}>
-                        {t.poCard.supplier}: <strong>{mockPO.supplier}</strong> · {t.poCard.amount}: <strong>${mockPO.totals.total.toLocaleString('en-US', {minimumFractionDigits: 2})}</strong>
-                      </div>
-                      <div style={{fontSize: '11px', color: '#64748B', marginTop: '2px'}}>
-                        {t.poCard.issued}: {mockPO.date} · {t.poCard.commitment}: {mockPO.commitmentDate}
-                      </div>
-                    </div>
-                    
-                    <div style={{display: 'flex', gap: '8px'}}>
-                      <button style={docCardStyles.btnSmallDark} onClick={() => setIsPOModalOpen(true)}>
-                        {t.poCard.viewPO}
-                      </button>
+                      <div style={{ fontWeight: '800', fontSize: '14px', color: '#0F172A' }}>{po.folio}</div>
+                      <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>{t.poCard.issued}: {po.order_date || '—'} · {t.poCard.commitment}: {po.commitment_date || '—'} · {p.status}: <strong>{po.status}</strong></div>
                     </div>
                   </div>
-                </div>
-              );
-            }
-
-            // Etapas Estándar
-            return (
-              <div key={stg.id} style={styles.docItem}>
-                {getDocIcon(stg.id)} {t.stagePrefix} {stg.id} · {stg.name}: <span style={{ color: '#6B7280' }}>
-                  {stg.id <= 3 
-                    ? t.internalInfoMsg 
-                    : t.notUploadedMsg}
-                </span>
+                )) : <div style={{ fontSize: '12px', color: '#6B7280' }}>{p.poNone}</div>}
               </div>
-            );
-          })}
 
-          <div style={styles.docItem}>📷 {t.receivingPhotos} <strong>0</strong></div>
-          <div style={styles.docItem}>📷 {t.deliveryPhotos} <strong>0</strong></div>
-        </div>
-      </div>
-
-      {/* Firma de Enterado */}
-      <div style={styles.signatureCard} ref={signatureRef}>
-        <div style={styles.signatureHeaderContainer}>
-          <div>
-            <h4 style={styles.signatureTitle}>{t.sigTitle}</h4>
-            <p style={styles.signatureSubtitle}>{t.sigSub}</p>
+              <div data-testid="cp-doc-6" style={styles.docItem}>
+                {getDocIcon(6)} {t.stagePrefix} 6 · {p.receipts}: {req.receipts.length ? req.receipts.map(r => `${r.folio} (${r.date || '—'}${r.received_percent !== null ? ` · ${r.received_percent}% ${p.received}` : ''})`).join(', ') : <span style={{ color: '#6B7280' }}>{t.notUploadedMsg}</span>}
+              </div>
+              <div data-testid="cp-doc-7" style={styles.docItem}>
+                {getDocIcon(7)} {t.stagePrefix} 7 · {p.deliveries}: {req.deliveries.length ? req.deliveries.map(d => `${d.folio} (${d.date || '—'} · ${isAccepted(d.acceptance) ? p.accepted : p.pendingAcceptance})`).join(', ') : <span style={{ color: '#6B7280' }}>{t.notUploadedMsg}</span>}
+              </div>
+              <div data-testid="cp-doc-8" style={styles.docItem}>
+                {getDocIcon(8)} {t.stagePrefix} 8 · {p.invoices}: {req.invoices.length ? req.invoices.map(i => `${i.folio}${i.invoice_number ? ` / ${i.invoice_number}` : ''} (${i.issue_date || '—'} · ${i.status})`).join(', ') : <span style={{ color: '#6B7280' }}>{t.notUploadedMsg}</span>}
+              </div>
+              <div data-testid="cp-photos-receipt" style={styles.docItem}>📷 {t.receivingPhotos} <strong>{photos.receipt}</strong></div>
+              <div data-testid="cp-photos-delivery" style={styles.docItem}>📷 {t.deliveryPhotos} <strong>{photos.delivery}</strong></div>
+            </div>
           </div>
-          <div style={styles.signatureBadge}>
-            {t.sigBadge}
-          </div>
-        </div>
-        <div style={styles.signatureBox}>
-          {t.sigPending}
-        </div>
-      </div>
 
-      {/* MODAL 1: Evidencia */}
-      {isEvidenceModalOpen && (
-        <div style={styles.modalOverlay} onClick={() => setIsEvidenceModalOpen(false)}>
-          <div style={styles.modalContainer} onClick={(e) => e.stopPropagation()}>
+          {/* Firma de enterado de factura */}
+          <div style={styles.signatureCard} ref={signatureRef}>
+            <div style={styles.signatureHeaderContainer}>
+              <div>
+                <h4 style={styles.signatureTitle}>{t.sigTitle}</h4>
+                <p style={styles.signatureSubtitle}>{t.sigSub}</p>
+              </div>
+              <div style={styles.signatureBadge}>{t.sigBadge}</div>
+            </div>
+            <div data-testid="cp-signature" style={styles.signatureBox}>{req.invoices.length ? p.sigBlocked : t.sigPending}</div>
+          </div>
+        </>
+      )}
+
+      {/* Modal: evidencia (recepción / entrega) */}
+      {modal?.kind === 'evidence' && req && (
+        <div style={styles.modalOverlay} onClick={() => setModal(null)}>
+          <div data-testid="cp-modal" style={styles.modalContainer} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <div style={styles.modalTitleBox}>
-                <h3 style={styles.modalTitle}>
-                  {evidenceModalStage === 6 ? t.evidenceTitleRec : t.evidenceTitleDel}
-                </h3>
-                <p style={styles.modalSubtitle}>{t.noImages}</p>
+                <h3 style={styles.modalTitle}>{modal.stage === 6 ? t.evidenceTitleRec : t.evidenceTitleDel}</h3>
+                <p style={styles.modalSubtitle}>{modal.stage === 6 ? photos.receipt : photos.delivery} {p.photos}</p>
               </div>
-              <button style={styles.closeBtn} onClick={() => setIsEvidenceModalOpen(false)}>
-                {t.modalClose}
-              </button>
+              <button style={styles.closeBtn} onClick={() => setModal(null)}>{t.modalClose}</button>
             </div>
-            
             <div style={styles.modalBody}>
               <div style={styles.modalIcon}>📷</div>
-              <p style={styles.modalText}>{t.noImagesMsg}</p>
+              {(modal.stage === 6 ? req.receipts : req.deliveries).length ? (
+                <ul style={{ textAlign: 'left', fontSize: '13px', color: '#374151' }}>
+                  {(modal.stage === 6 ? req.receipts : req.deliveries).map(x => <li key={x.folio}>{x.folio} · {x.date || '—'} · {x.photos} {p.photos}</li>)}
+                </ul>
+              ) : <p style={styles.modalText}>{t.noImagesMsg}</p>}
             </div>
-
-            <div style={styles.modalFooter}>
-              {t.modalFooter}
-            </div>
+            <div style={styles.modalFooter}>{p.evidenceNote}</div>
           </div>
         </div>
       )}
 
-      {/* MODAL 2: Cotización Comercial */}
-      {isQuoteModalOpen && (
-        <div style={styles.modalOverlay} onClick={() => setIsQuoteModalOpen(false)}>
-          <div style={{...styles.modalContainer, backgroundColor: '#FFFFFF', overflowY: 'auto'}} onClick={(e) => e.stopPropagation()}>
-            <QuotationDocument 
-              currentQuote={mockQuote} 
-              lang={lang}
-              onClose={() => setIsQuoteModalOpen(false)} 
-            />
+      {/* Modal: solicitud / cotización */}
+      {(modal?.kind === 'req' || modal?.kind === 'quote') && (
+        <div style={styles.modalOverlay} onClick={() => setModal(null)}>
+          <div data-testid="cp-modal" style={{ ...styles.modalContainer, backgroundColor: '#FFFFFF', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+            {modal.status !== 'ready' ? (
+              <div style={{ padding: '24px' }}>
+                <p role={modal.error ? 'alert' : 'status'} style={{ color: modal.error ? '#B91C1C' : '#4B5563', fontSize: '13px' }}>{modal.error ? modal.error.message : p.loading}</p>
+                <button style={styles.closeBtn} onClick={() => setModal(null)}>{t.modalClose}</button>
+              </div>
+            ) : modal.kind === 'quote' ? (
+              <QuotationDocument currentQuote={modal.data} lang={lang} onClose={() => setModal(null)} />
+            ) : (
+              <div style={{ padding: '24px' }} data-testid="cp-req-doc">
+                <div style={{ ...styles.modalHeader, padding: 0, marginBottom: '16px' }}>
+                  <div style={styles.modalTitleBox}>
+                    <h3 style={styles.modalTitle}>{p.reqTitle} · {modal.data.requisition.folio}</h3>
+                    <p style={styles.modalSubtitle}>{modal.data.requisition.description || ''}</p>
+                  </div>
+                  <button style={styles.closeBtn} onClick={() => setModal(null)}>{t.modalClose}</button>
+                </div>
+                <p style={{ fontSize: '12px', color: '#374151', lineHeight: 1.7 }}>
+                  {p.requestDate}: <strong>{modal.data.requisition.request_date || '—'}</strong> · {p.needDate}: <strong>{modal.data.requisition.need_date || '—'}</strong><br />
+                  {t.project}: <strong>{modal.data.requisition.project || '—'}</strong> · {t.contract}: <strong>{modal.data.requisition.contract || '—'}</strong> · {p.clientRef}: <strong>{modal.data.requisition.client_reference || '—'}</strong><br />
+                  {p.requester}: <strong>{modal.data.requisition.requester_name || '—'}</strong> · {p.deliveryPlace}: <strong>{modal.data.requisition.delivery_place || '—'}</strong>
+                </p>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead><tr>{p.reqCols.map(h => <th key={h} style={{ textAlign: 'left', padding: '8px', background: '#F1F5F9', color: '#334155' }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {modal.data.items.map(i => (
+                      <tr key={i.line_number} data-testid="cp-req-item">
+                        <td style={{ padding: '8px', borderBottom: '1px solid #E2E8F0' }}>{i.line_number}</td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #E2E8F0' }}>{i.description}</td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #E2E8F0' }}>{i.quantity ?? '—'}</td>
+                        <td style={{ padding: '8px', borderBottom: '1px solid #E2E8F0' }}>{i.unit_label || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
-
-      {/* MODAL 3: Orden de Compra */}
-      {isPOModalOpen && (
-        <div style={styles.modalOverlay} onClick={() => setIsPOModalOpen(false)}>
-          <div style={{...styles.modalContainer, backgroundColor: '#FFFFFF', overflowY: 'auto'}} onClick={(e) => e.stopPropagation()}>
-            <PurchaseOrderDocument 
-              poData={mockPO} 
-              lang={lang}
-              onClose={() => setIsPOModalOpen(false)} 
-            />
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
