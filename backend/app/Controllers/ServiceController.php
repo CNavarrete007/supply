@@ -113,6 +113,22 @@ final class ServiceController extends ReadOnlyModuleController
         }
     }
 
+    public function newRequestContracting(): ResponseInterface
+    {
+        try {
+            if ($denied = $this->guard()) {
+                return $denied;
+            }
+            if ($this->request->getGet() !== []) {
+                return $this->fail(422, 'INVALID_FILTER', 'Este recurso no acepta parámetros.');
+            }
+            return $this->respond(200, (new ServiceReadRepository())->contracting((int) $this->actor['organization_id']));
+        } catch (Throwable) {
+            log_message('error', 'SupplyFlow service contracting unavailable.');
+            return $this->fail(503, 'SERVICES_UNAVAILABLE', 'No se pudieron consultar proveedores y órdenes de compra.');
+        }
+    }
+
     /**
      * Strict allowlist of text parameters (name => max characters): unknown keys, arrays or control characters → null.
      * @return array<string,string>|null

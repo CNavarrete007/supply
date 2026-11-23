@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Servicios Operativos › Nueva solicitud · contrato HTTP de los endpoints de SOLO LECTURA (apto para la base real):
-GET /api/v1/services/new-request, /new-request/reference y /new-request/availability.
+GET /api/v1/services/new-request, /new-request/reference, /new-request/availability y /new-request/contracting
+(formulario "Nuevo servicio": proveedores y sus OC vigentes).
 Verifica 401/403/422, que no existan rutas de escritura, la regla SRV-{PROYECTO}-{AÑO}-{0000} (siguiente número libre a
 partir de las referencias existentes), la disponibilidad del folio (sin distinguir mayúsculas), que generar no reserva
 ni escribe nada (los conteos no cambian) y que no se expongan ids internos.
@@ -30,9 +31,9 @@ def clean(s):  # misma limpieza que RequisitionRecoveryInput::cleanFolioPart
     return re.sub(r'[^A-Z0-9]+', '-', s.upper().strip()).strip('-')
 
 anon = session()
-check('sin sesión: 401 en los 3 endpoints', all(status(anon, B + p) == 401 for p in ['', '/reference?date=2026-01-01', '/availability?folio=X']))
+check('sin sesión: 401 en los 4 endpoints', all(status(anon, B + p) == 401 for p in ['', '/reference?date=2026-01-01', '/availability?folio=X', '/contracting']))
 if NONADMIN:
-    o = session(NONADMIN); check('sin Master Admin: 403', all(status(o, B + p) == 403 for p in ['', '/reference?date=2026-01-01', '/availability?folio=X'])); logout(o)
+    o = session(NONADMIN); check('sin Master Admin: 403', all(status(o, B + p) == 403 for p in ['', '/reference?date=2026-01-01', '/availability?folio=X', '/contracting'])); logout(o)
 adm = session(USER)
 try:
     get = lambda p: json.loads(adm.open(API + p).read())
@@ -43,11 +44,27 @@ try:
     bad = [B + '?x=1', B + '/reference', B + '/reference?date=2026-02-30', B + '/reference?date=20260101', B + '/reference?date=2026-01-01&x=1',
            B + '/reference?date=2026-01-01&project=' + 'P' * 256, B + '/reference?date=2026-01-01&project=%01', B + '/reference?date[]=2026-01-01',
            B + '/availability', B + '/availability?folio=&reference=', B + '/availability?folio=' + 'F' * 129, B + '/availability?reference=' + 'R' * 256,
-           B + '/availability?folio=A%0AB', B + '/availability?folio=X&x=1']
+           B + '/availability?folio=A%0AB', B + '/availability?folio=X&x=1', B + '/contracting?x=1']
     codes = [status(adm, p) for p in bad]
     check('422 con parámetros ausentes, desconocidos, inválidos o demasiado largos', all(x == 422 for x in codes), str(codes))
-    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, B + p, m) >= 400 for p in ['', '/reference', '/availability'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
+    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, B + p, m) >= 400 for p in ['', '/reference', '/availability', '/contracting'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
 
+    check('catálogo: tipos y estatus de autorización y estatus registrados (listas sin vacíos) y secuencias SRV por año', all(isinstance(c[k], list) and all(isinstance(x, str) and x.strip() for x in c[k]) for k in ('authorization_types', 'authorization_statuses', 'statuses'))
+          and isinstance(c['service_folio_sequences'], dict) and all(re.fullmatch(r'\d{4}', y) and isinstance(n, int) and n > 0 for y, n in c['service_folio_sequences'].items()))
+    k = get(B + '/contracting')
+    check('contratación: proveedores (id, code, name, status) y OC (folio, proveedor, importe, moneda, estatus, servicios)', k['read_only'] is True and all(set(x) == {'id', 'code', 'name', 'status'} for x in k['suppliers'])
+          and all(set(x) == {'id', 'folio', 'supplier_id', 'currency', 'total', 'status', 'order_date', 'services'} for x in k['purchase_orders']))
+    sup_ids = {x['id'] for x in k['suppliers']}
+    check('cada OC pertenece a un proveedor del listado', all(o['supplier_id'] in sup_ids for o in k['purchase_orders']))
+    cur, p = [], 1
+    while True:
+        d = get(f'/api/v1/purchase-orders?scope=current&page_size=50&page={p}'); cur += d['items']
+        if len(cur) >= d['total'] or p >= 40: break
+        p += 1
+    vig = {o['folio'] for o in cur if o.get('state_key') not in ('cancelled', 'superseded') and str(o.get('legacy_status') or o.get('operational_status') or '').lower() not in ('cancelada', 'sustituida', 'cancelled', 'superseded')}
+    check('OC = últimas versiones no canceladas ni sustituidas (cruce con /purchase-orders)', {o['folio'] for o in k['purchase_orders']} == vig, f"{sorted(o['folio'] for o in k['purchase_orders'])} vs {sorted(vig)}")
+    po_by = {o['folio']: o for o in cur}
+    check('importe, moneda y proveedor de cada OC coinciden con Órdenes de Compra', all(abs(float(po_by[o['folio']]['total_amount']) - o['total']) < 0.005 and po_by[o['folio']]['currency'] == o['currency'] and po_by[o['folio']]['supplier_id'] == o['supplier_id'] for o in k['purchase_orders'] if o['folio'] in po_by))
     reqs = get('/api/v1/recovery/matrix')['items']
     svcs = []
     p = 1
@@ -97,8 +114,9 @@ try:
             check('folio generado por Solicitud / Requisición (NÚMERO-REQ-AÑO-0000) está libre', fo.startswith(clean(cc['code']) + '-') and '-2031-' in fo and av['folio']['available'] is True, fo)
     after = (len(get('/api/v1/recovery/matrix')['items']), get('/api/v1/services/matrix?page=1&page_size=1')['total'])
     check('nada se escribió: requisiciones y servicios sin cambios', before == after, f'{before} → {after}')
-    dump = json.dumps([c, r, a])
-    check('sin ids internos', not re.search(r'"(id|db_id|organization_id|service_type_id|client_id|requisition_id)"\s*:', dump))
+    dump = json.dumps([c, r, a, k])
+    check('sin ids internos (solo identificadores públicos UUID)', not re.search(r'"(db_id|organization_id|service_type_id|client_id|requisition_id|supplier_purchase_order_id)"\s*:', dump)
+          and all(re.fullmatch(r'[0-9a-f-]{36}', x['id']) for x in k['suppliers'] + k['purchase_orders']) and all(re.fullmatch(r'[0-9a-f-]{36}', o['supplier_id']) for o in k['purchase_orders']))
 finally:
     logout(adm)
 w = max(len(n) for n, _, _ in results)

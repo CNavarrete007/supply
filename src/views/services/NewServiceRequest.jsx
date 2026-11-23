@@ -2,17 +2,18 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { serviceRequestCatalog, serviceRequestReference, serviceRequestAvailability, requisitionClients, requisitionFolio } from './api';
 import { OPERATIONS, STEPS, serviceOptions, clientLabel, filterClients, emptyRequest, applyClient, validateRequest, requestWarnings,
-  folioTakenError, serviceRequisition, lockedText, httpMessage, localToday, validDate } from './newRequestModel.mjs';
+  folioTakenError, serviceRequisition, httpMessage, localToday, validDate } from './newRequestModel.mjs';
 
 // Servicios Operativos · sección 2 "+ Nueva solicitud" (diseño del original): modal de 3 pasos.
 //  1 · Operación: Compra / renta continúa en Solicitud / Requisición (flujo real RF1); Servicio sigue al paso 2.
 //  2 · Servicio: los 9 servicios del original vinculados al catálogo service_types de MariaDB.
 //  3 · Requisición: clientes reales, ⚙ Generar folio (regla vigente de Solicitud / Requisición) y referencia interna
 //      (SRV-PROYECTO-AÑO-0000), validación completa y verificación de folio duplicado en MariaDB.
-// "Crear requisición y continuar" valida pero NO crea: el alta de la requisición maestra de servicio no tiene endpoint
-// de escritura autorizado (el alta RF1 fija route_code 'supply'). No se escribe nada en MariaDB.
+// "Crear requisición y continuar" valida y redirige al formulario "Nuevo servicio" (ServiceForm) con la requisición
+// vinculada; NO crea la requisición: su alta no tiene endpoint de escritura autorizado (el alta RF1 fija route_code
+// 'supply'). No se escribe nada en MariaDB.
 
-export function NewServiceRequest({ open, onClose, en = false, notify = () => {}, onNavigate, onOpenMatrix }) {
+export function NewServiceRequest({ open, onClose, en = false, notify = () => {}, onNavigate, onComplete }) {
   const tx = (es, e) => (en ? e : es);
   const [step, setStep] = useState(1);
   const [operation, setOperation] = useState('purchase');
@@ -21,7 +22,6 @@ export function NewServiceRequest({ open, onClose, en = false, notify = () => {}
   const [cat, setCat] = useState({ status: 'idle' });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState('');
-  const [result, setResult] = useState(null);
   const [picker, setPicker] = useState(false);
   const [search, setSearch] = useState('');
   const generatedFolio = useRef('');
@@ -41,7 +41,7 @@ export function NewServiceRequest({ open, onClose, en = false, notify = () => {}
   useEffect(() => {
     if (!open) return undefined;
     setStep(1); setOperation('purchase'); setServiceKey(''); setForm(emptyRequest(localToday()));
-    setError(null); setResult(null); setPicker(false); setSearch(''); setBusy(''); generatedFolio.current = '';
+    setError(null); setPicker(false); setSearch(''); setBusy(''); generatedFolio.current = '';
     load();
     return () => { serial.current += 1; };
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -66,7 +66,7 @@ export function NewServiceRequest({ open, onClose, en = false, notify = () => {}
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); if (error && (error.field === k || !error.field)) setError(null); };
   const focus = field => { if (field) setTimeout(() => document.getElementById(`svc-${field}`)?.focus(), 0); };
   const fail = err => { setError(err); focus(err?.field); };
-  const go = n => { setError(null); setResult(null); setPicker(false); setStep(n); };
+  const go = n => { setError(null); setPicker(false); setStep(n); };
 
   const pick = c => {
     const next = applyClient(form, c, client, generatedFolio.current);
@@ -119,8 +119,10 @@ export function NewServiceRequest({ open, onClose, en = false, notify = () => {}
       const taken = folioTakenError(availability, en);
       if (taken) return fail(taken);
       const record = serviceRequisition(form, option, client);
-      setResult({ record, warnings: requestWarnings(form, { client, option, availability, en }) });
-      notify(tx('Requisición de servicio no creada', 'Service requisition not created'), tx(`${record.folio} · ${record.service_type}: datos validados; la creación está bloqueada hasta autorizar su endpoint de escritura.`, `${record.folio} · ${record.service_type}: data validated; creation is blocked until its write endpoint is authorized.`), 'warning');
+      const warnings = requestWarnings(form, { client, option, availability, en });
+      notify(tx('Requisición de servicio validada', 'Service requisition validated'), tx(`${record.folio} · ${record.service_type}: datos validados; la requisición no se creó (escritura bloqueada). Continúa con el expediente del servicio.`, `${record.folio} · ${record.service_type}: data validated; the requisition was not created (write blocked). Continue with the service file.`), 'warning');
+      closeRef.current?.();
+      if (typeof onComplete === 'function') onComplete({ record, warnings, option, options, clients });
     } catch (e) { fail({ field: null, message: httpMessage(e, en) }); } finally { setBusy(''); }
   };
 
@@ -145,40 +147,6 @@ export function NewServiceRequest({ open, onClose, en = false, notify = () => {}
         : tx('Cargando clientes y tipos de servicio de MariaDB…', 'Loading clients and service types from MariaDB…')}
     </div>
   );
-
-  const resultView = result && (() => {
-    const r = result.record;
-    const rows = [
-      [tx('Folio / requisición del cliente', 'Client folio / requisition'), r.folio], [tx('Referencia interna', 'Internal reference'), r.internal_reference || '—'],
-      [tx('Cliente', 'Client'), r.client], [tx('Servicio', 'Service'), `${option?.icon || ''} ${r.service_type}`.trim()], [tx('Ruta', 'Route'), tx('Servicio (no compra / renta)', 'Service (not purchase / rental)')],
-      [tx('Proyecto', 'Project'), r.project], [tx('Contrato / referencia contractual', 'Contract / contractual reference'), r.contract || '—'],
-      [tx('Fecha de solicitud', 'Request date'), r.request_date], [tx('Fecha requerida', 'Required date'), r.need_date || '—'],
-      [tx('Solicitante del cliente', 'Client requester'), r.requester_name], [tx('Correo del solicitante', 'Requester email'), r.requester_email],
-      [tx('Lugar de prestación / entrega', 'Service / delivery place'), r.delivery_place || '—'], [tx('Prioridad · moneda', 'Priority · currency'), `Normal · ${r.currency}`],
-    ];
-    const item = r.items[0];
-    return (
-      <div data-testid="svc-new-result" className="mt-5 space-y-4">
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[12px] text-amber-900 flex gap-2"><span aria-hidden="true">🔒</span><span data-testid="svc-new-locked">{lockedText(en)}</span></div>
-        <div className="rounded-2xl border border-slate-200 overflow-hidden">
-          <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 text-[12px] font-black text-slate-800">{tx('Requisición maestra que se registraría · Solicitud / Requisición → Matriz de requisiciones', 'Master requisition that would be registered · Request / Requisition → Requisitions matrix')}</div>
-          <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2.5 p-4 text-[12px]" data-testid="svc-new-summary">
-            {rows.map(([k, v]) => <div key={k} className="min-w-0"><dt className="text-[10px] font-black uppercase tracking-wide text-slate-500">{k}</dt><dd className="font-semibold text-slate-900 break-words">{v}</dd></div>)}
-          </dl>
-          <div className="border-t border-slate-200 px-4 py-3 text-[12px] text-slate-700" data-testid="svc-new-item"><b>{tx('Partida 1:', 'Line 1:')}</b> {item.description} · 1 {tx('servicio', 'service')} · {tx('Categoría', 'Category')}: {item.category}</div>
-        </div>
-        <div className="rounded-xl border-l-4 border-blue-600 bg-blue-50/80 px-4 py-3 text-[12px] text-slate-700 leading-relaxed">
-          <b>{tx('Después:', 'Next:')}</b> {tx('expediente operativo en ', 'operational file in ')}<b>{tx('Servicios Operativos → Matriz', 'Operational Services → Matrix')}</b>{tx(', vinculado a esta requisición (folio SRV-AAAA-00000 al crear el expediente). La autorización comercial (PO, Orden de Servicio, contrato, correo, portal o emergencia), el costo, la venta y las evidencias se registran ahí.', ', linked to this requisition (folio SRV-YYYY-00000 when the file is created). Commercial authorization (PO, Service Order, contract, email, portal or emergency), cost, sale and evidence are registered there.')}
-        </div>
-        {result.warnings.length > 0 && <ul data-testid="svc-new-warnings" className="rounded-xl border border-amber-200 bg-amber-50/60 py-3 pl-8 pr-4 text-[12px] text-amber-900 list-disc space-y-1">{result.warnings.map(w => <li key={w}>{w}</li>)}</ul>}
-        {footer(back(() => setResult(null), tx('← Corregir datos', '← Edit data')),
-          <div className="flex flex-wrap justify-end gap-2">
-            {typeof onOpenMatrix === 'function' && <button type="button" data-testid="svc-new-matrix" onClick={() => { closeRef.current?.(); onOpenMatrix(); }} className="px-5 h-12 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800"><span className="text-[13px] font-extrabold">{tx('Ver Matriz de servicios', 'View services matrix')}</span></button>}
-            {primary(() => closeRef.current?.(), tx('Cerrar', 'Close'), 'svc-new-done')}
-          </div>)}
-      </div>
-    );
-  })();
 
   return createPortal(
     <div data-testid="svc-new-overlay" className="fixed inset-0 z-[80] bg-slate-900/55 backdrop-blur-[2px] overflow-y-auto p-3 sm:p-6 flex items-start sm:items-center justify-center">
@@ -244,7 +212,7 @@ export function NewServiceRequest({ open, onClose, en = false, notify = () => {}
           </div>
         )}
 
-        {step === 3 && !result && (
+        {step === 3 && (
           <div data-testid="svc-new-step3">
             <h3 className="font-black text-slate-900 text-[15px] mt-5 mb-3">{tx('Crear y vincular la requisición del servicio', 'Create and link the service requisition')}</h3>
             <div className="rounded-xl border-l-4 border-blue-600 bg-blue-50/80 px-4 py-3 text-[12px] text-slate-700 leading-relaxed">
@@ -311,7 +279,6 @@ export function NewServiceRequest({ open, onClose, en = false, notify = () => {}
           </div>
         )}
 
-        {step === 3 && resultView}
       </div>
     </div>,
     document.body

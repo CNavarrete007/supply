@@ -3,6 +3,7 @@ import { Lock } from 'lucide-react';
 import { ServiceMatrix } from './services/ServiceMatrix.jsx';
 import { ServiceReports } from './services/ServiceReports.jsx';
 import { NewServiceRequest } from './services/NewServiceRequest.jsx';
+import { ServiceForm } from './services/ServiceForm.jsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { 
@@ -495,6 +496,8 @@ export function OperationalServices({ onNotify, onNavigate, lang = 'es', languag
 
   // Sección 2 "+ Nueva solicitud": modal del original (NewServiceRequest), sobre la sección activa.
   const [newOpen, setNewOpen] = useState(false);
+  // Formulario "Nuevo servicio" (sección interna 5) con la requisición validada en el paso 3.
+  const [serviceDraft, setServiceDraft] = useState(null);
 
   // 2. ESTADOS DE FILTROS
   const [periodo, setPeriodo] = useState("Todo el periodo");
@@ -906,7 +909,7 @@ export function OperationalServices({ onNotify, onNavigate, lang = 'es', languag
       <div className="bg-white rounded-2xl p-2 border border-slate-200/80 shadow-2xs">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           {t.tabs.map((tab) => {
-            const isActive = newOpen ? tab.id === 2 : activeTab === tab.id;
+            const isActive = newOpen ? tab.id === 2 : activeTab === tab.id || (activeTab === 5 && tab.id === 2);
             return (
               <button
                 key={tab.id}
@@ -928,9 +931,11 @@ export function OperationalServices({ onNotify, onNavigate, lang = 'es', languag
       </div>
 
       {/* Aviso propio del módulo: solo la sección Matriz está conectada a MariaDB */}
-      <div data-testid="services-notice" className={`rounded-xl border px-4 py-3 flex items-start gap-2 text-[11px] ${[3, 4].includes(activeTab) ? 'border-amber-200 bg-amber-50/70 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-900 font-semibold'}`}>
+      <div data-testid="services-notice" className={`rounded-xl border px-4 py-3 flex items-start gap-2 text-[11px] ${[3, 4, 5].includes(activeTab) ? 'border-amber-200 bg-amber-50/70 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-900 font-semibold'}`}>
         <Lock className="w-4 h-4 shrink-0 mt-0.5" />
-        <span>{activeTab === 4
+        <span>{activeTab === 5
+          ? (isEn ? 'New service file with real MariaDB data (read-only): types, clients, suppliers and their current POs. "Save service" validates the capture but does not store it, and files are not uploaded: creating services is an operational write blocked until authorized.' : 'Nuevo servicio con datos reales de MariaDB (solo lectura): tipos, clientes, proveedores y sus OC vigentes. "Guardar servicio" valida la captura pero no la almacena y los archivos no se suben: el alta de servicios es una escritura operativa bloqueada hasta su autorización.')
+          : activeTab === 4
           ? (isEn ? 'Formats and reports with real MariaDB data (read-only): service request format, by line, general, for the client (without internal cost or margin) and management. They are generated in the browser (preview, print, PDF and data export) and nothing is stored.' : 'Formatos y reportes con datos reales de MariaDB (solo lectura): formato de solicitud, por partidas, general, hacia el cliente (sin costo interno ni margen) y gerencial. Se generan en el navegador (vista previa, impresión, PDF y exportación) y no se guarda nada.')
           : activeTab === 3
           ? (isEn ? 'Services matrix connected to MariaDB (read-only): services, clients, buyers, authorizations, supplier POs, billing, amounts and evidence are real data. Editing and deleting services validate the capture but do not store it: they are operational writes blocked until authorized.' : 'Matriz de servicios conectada a MariaDB (solo lectura): servicios, clientes, compradores, autorizaciones, OC de proveedor, facturación, importes y evidencias son datos reales. Editar y eliminar servicios validan la captura pero no la almacenan: son escrituras operativas bloqueadas hasta su autorización.')
@@ -1421,6 +1426,11 @@ export function OperationalServices({ onNotify, onNavigate, lang = 'es', languag
         {activeTab === 4 && (
           <ServiceReports en={isEn} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} />
         )}
+
+        {/* NUEVO SERVICIO: expediente operativo al que redirige "Crear requisición y continuar" */}
+        {activeTab === 5 && serviceDraft && (
+          <ServiceForm key={serviceDraft.key} draft={serviceDraft} en={isEn} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onNavigate={onNavigate} />
+        )}
       </div>
 
       {/* SECCIÓN 2: + NUEVA SOLICITUD (modal de 3 pasos; valida con datos de MariaDB y no crea registros) */}
@@ -1430,7 +1440,7 @@ export function OperationalServices({ onNotify, onNavigate, lang = 'es', languag
         en={isEn}
         notify={(title, message, kind) => onNotify && onNotify(title, message, kind)}
         onNavigate={onNavigate}
-        onOpenMatrix={() => setActiveTab(3)}
+        onComplete={d => { setServiceDraft({ ...d, key: Date.now() }); setActiveTab(5); }}
       />
     </div>
   );

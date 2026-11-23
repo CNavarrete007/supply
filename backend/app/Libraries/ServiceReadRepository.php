@@ -193,8 +193,23 @@ final class ServiceReadRepository
             $t['services'] = (int) $t['services'];
         }
         unset($t);
+        $distinct = fn (string $col): array => array_values(array_filter(array_map(
+            fn ($r) => trim((string) $r['v']),
+            $this->rows("SELECT DISTINCT {$col} AS v FROM service_orders WHERE organization_id=? AND {$col} IS NOT NULL AND TRIM({$col})<>'' ORDER BY v", [$org])
+        ), fn ($v) => $v !== ''));
+        // Folio del expediente SRV-AÑO-00000: mayor secuencia registrada por año (el folio se asigna al guardar).
+        $seq = [];
+        foreach ($this->rows("SELECT folio FROM service_orders WHERE organization_id=? AND folio REGEXP '^SRV-[0-9]{4}-[0-9]+$'", [$org]) as $r) {
+            [, $y, $n] = explode('-', strtoupper((string) $r['folio']));
+            $seq[$y] = max($seq[$y] ?? 0, (int) $n);
+        }
+        ksort($seq);
         return [
             'service_types' => $types,
+            'authorization_types' => $distinct('authorization_type'),
+            'authorization_statuses' => $distinct('authorization_status'),
+            'statuses' => $distinct('legacy_status'),
+            'service_folio_sequences' => (object) $seq,
             'reference_rule' => 'SRV-{PROYECTO}-{AÑO}-{0000}',
             'folio_rule' => '{NÚMERO DE CLIENTE}-REQ-{AÑO}-{0000}',
             'read_only' => true,
@@ -256,5 +271,39 @@ final class ServiceReadRepository
             $out['reference'] = ['value' => $reference, 'available' => $hits === [], 'used_by' => array_column($hits, 'folio')];
         }
         return $out;
+    }
+
+    /**
+     * Formulario "Nuevo servicio" › Contratación de proveedor: proveedores y sus OC vigentes (última versión, no
+     * canceladas ni sustituidas) con importe, moneda y estatus, para vincular la OC emitida. Solo lectura.
+     * @return array<string,mixed>
+     */
+    public function contracting(int $org): array
+    {
+        $suppliers = $this->rows(
+            "SELECT e.public_id AS id,s.code,s.legal_name AS name,COALESCE(NULLIF(TRIM(s.legacy_status),''),s.status_code) AS status
+             FROM suppliers s JOIN business_entities e ON e.id=s.id AND e.organization_id=s.organization_id
+             WHERE s.organization_id=? AND e.archived_at IS NULL ORDER BY s.legal_name,s.id",
+            [$org]
+        );
+        $orders = $this->rows(
+            "SELECT pe.public_id AS id,po.folio,se.public_id AS supplier_id,po.currency_code AS currency,po.total_amount AS total,
+                    COALESCE(NULLIF(TRIM(po.legacy_status),''),po.operational_status) AS status,po.order_date,
+                    (SELECT COUNT(*) FROM service_orders so WHERE so.organization_id=po.organization_id AND so.supplier_purchase_order_id=po.id) AS services
+             FROM purchase_orders po
+             JOIN business_entities pe ON pe.id=po.id AND pe.organization_id=po.organization_id
+             JOIN business_entities se ON se.id=po.supplier_id AND se.organization_id=po.organization_id
+             WHERE po.organization_id=? AND pe.archived_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM purchase_orders nx WHERE nx.organization_id=po.organization_id AND nx.series_public_id=po.series_public_id AND nx.version_number>po.version_number)
+               AND LOWER(COALESCE(po.legacy_status,po.operational_status,'')) NOT IN ('cancelada','sustituida','cancelled','superseded')
+             ORDER BY COALESCE(po.order_date,DATE(pe.created_at)) DESC,po.id DESC",
+            [$org]
+        );
+        foreach ($orders as &$o) {
+            $o['total'] = $o['total'] === null ? null : (float) $o['total'];
+            $o['services'] = (int) $o['services'];
+        }
+        unset($o);
+        return ['suppliers' => $suppliers, 'purchase_orders' => $orders, 'read_only' => true];
     }
 }

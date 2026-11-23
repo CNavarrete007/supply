@@ -64,6 +64,7 @@ $routes->get('api/v1/services/matrix', 'ServiceController::matrix');
 $routes->get('api/v1/services/new-request', 'ServiceController::newRequest');
 $routes->get('api/v1/services/new-request/reference', 'ServiceController::newRequestReference');
 $routes->get('api/v1/services/new-request/availability', 'ServiceController::newRequestAvailability');
+$routes->get('api/v1/services/new-request/contracting', 'ServiceController::newRequestContracting');
 $routes->get('api/v1/services/(:segment)', 'ServiceController::show/$1');
 $routes->get('api/v1/quotes/rfq-contacts', 'QuoteController::rfqContacts');
 $routes->get('api/v1/quotes/customer-quote-setup', 'QuoteController::customerQuoteSetup');

@@ -18,3 +18,5 @@ export const serviceRequestReference = ({ project = '', date }, signal) => getJs
 export const serviceRequestAvailability = ({ folio = '', reference = '' }, signal) => getJson(`/api/v1/services/new-request/availability?${qs({ folio, reference })}`, signal);
 export const requisitionClients = signal => getJson('/api/v1/recovery/catalogs', signal);
 export const requisitionFolio = ({ client, date }, signal) => getJson(`/api/v1/recovery/folio?${new URLSearchParams({ client_id: client, date, mode: 'formal' })}`, signal);
+// Formulario "Nuevo servicio" (solo lectura): proveedores y sus OC vigentes para "Contratación de proveedor".
+export const serviceContracting = signal => getJson('/api/v1/services/new-request/contracting', signal);

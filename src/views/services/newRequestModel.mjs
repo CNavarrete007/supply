@@ -152,7 +152,7 @@ export function serviceRequisition(form, option, client) {
   const scope = t('description') || option.label;
   return {
     folio: t('folio'), internal_reference: t('reference') || null, client: clientLabel(client), client_id: form.client_id,
-    route: 'service', service_type: option.label, service_type_code: option.code, project: t('project'), contract: t('contract') || null,
+    route: 'service', service_type: option.label, service_type_code: option.code, option_key: option.key, project: t('project'), contract: t('contract') || null,
     request_date: form.request_date, need_date: form.need_date || null, requester_name: t('requester_name'), requester_email: t('requester_email'),
     delivery_place: t('place') || null, description: scope, priority: 'normal', currency: 'MXN',
     items: [{ line: 1, description: scope, quantity: '1', unit: 'servicio', category: option.label }],

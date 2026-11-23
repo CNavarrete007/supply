@@ -150,21 +150,18 @@ const today = () => { const d = new Date(); const p = n => String(n).padStart(2,
     await page.getByTestId('svc-need_date').fill('2000-01-01');
     await page.getByTestId('svc-place').fill('Muelle 3, terminal QA');
     await page.getByTestId('svc-new-submit').click();
-    await page.getByTestId('svc-new-result').waitFor();
-    const res = flat(await page.getByTestId('svc-new-result').innerText());
-    check('resultado: "Datos validados, pero no se creó…" (escritura bloqueada)', (await page.getByTestId('svc-new-locked').innerText()).startsWith('Datos validados, pero no se creó la requisición ni el expediente del servicio') && res.includes('No se guardó nada en MariaDB.'));
-    const sum = flat(await page.getByTestId('svc-new-summary').innerText());
-    check('resumen de la requisición maestra (folio, referencia, cliente, servicio, ruta, proyecto, fechas, solicitante, lugar)', [folio, ref, `${c0.code} · ${c0.name}`, '🚚 Transporte', 'Servicio (no compra / renta)', 'Plataforma Ñandú 7', today(), '2000-01-01', c0.contact, c0.email, 'Muelle 3, terminal QA', 'Normal · MXN'].every(x => sum.includes(x)), sum.slice(0, 400));
-    check('partida 1 = "Transporte · 1 servicio · Categoría: Transporte" (descripción vacía)', (await page.getByTestId('svc-new-item').innerText()).includes('Partida 1: Transporte · 1 servicio · Categoría: Transporte'));
-    check('aviso no bloqueante: fecha requerida anterior a la de solicitud', (await page.getByTestId('svc-new-warnings').innerText()).includes('La fecha requerida es anterior a la fecha de solicitud.'));
-    check('explica el siguiente paso (expediente en Servicios Operativos → Matriz)', res.includes('Servicios Operativos → Matriz') && res.includes('SRV-AAAA-00000'));
-    await shot(page, 'nsr-result');
-    await page.getByTestId('svc-new-back').click();
-    check('← Corregir datos regresa al formulario con la captura intacta', await page.getByTestId('svc-folio').inputValue() === folio && await page.getByTestId('svc-reference').inputValue() === ref && await page.getByTestId('svc-place').inputValue() === 'Muelle 3, terminal QA');
-    await page.getByTestId('svc-new-submit').click();
-    await page.getByTestId('svc-new-matrix').click();
+    await page.getByTestId('service-form').waitFor();
+    check('Crear requisición y continuar → cierra el modal y redirige a "Nuevo servicio"', !(await modal.count()) && (await page.getByTestId('service-form').innerText()).includes('Nuevo servicio'));
+    const link = flat(await page.getByTestId('sf-link-note').innerText());
+    check('la requisición queda validada, no creada (escritura bloqueada) y conserva el aviso no bloqueante', link.includes(`Requisición ${folio} validada, no creada.`) && link.includes('no se guardará en MariaDB') && link.includes('La fecha requerida es anterior a la fecha de solicitud.'), link.slice(0, 300));
+    check('el formulario hereda requisición, referencia, tipo, cliente, proyecto, fechas y descripción', await page.getByTestId('sf-requisition').inputValue() === folio && await page.getByTestId('sf-reference').inputValue() === ref
+      && await page.getByTestId('sf-type').inputValue() === 'transporte' && await page.getByTestId('sf-client_id').inputValue() === c0.id && await page.getByTestId('sf-project').inputValue() === 'Plataforma Ñandú 7'
+      && await page.getByTestId('sf-request_date').inputValue() === today() && await page.getByTestId('sf-need_date').inputValue() === '2000-01-01' && await page.getByTestId('sf-description').inputValue() === 'Transporte');
+    check('pestaña "Nueva solicitud" resaltada y aviso propio del expediente', (await page.getByTestId('services-tab-2').getAttribute('class')).includes('from-blue-600') && (await page.getByTestId('services-notice').innerText()).includes('Nuevo servicio con datos reales de MariaDB'));
+    await shot(page, 'nsr-redirect');
+    await page.getByTestId('services-tab-3').click();
     await page.getByTestId('service-matrix').waitFor();
-    check('"Ver Matriz de servicios" cierra el modal y abre la sección 3', !(await modal.count()));
+    check('las demás secciones siguen disponibles desde las pestañas', !(await page.getByTestId('service-form').count()));
 
     // ---- Estados de error / reintento del catálogo ----
     await page.route('**/api/v1/services/new-request', r => r.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'SERVICES_UNAVAILABLE', message: 'No se pudo consultar el catálogo de servicios.' } }) }));
