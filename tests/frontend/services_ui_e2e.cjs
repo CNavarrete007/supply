@@ -204,7 +204,7 @@ const low = s => flat(s).toLowerCase();
     check('reportes: rango de fechas inválido', (await page.getByTestId('service-report-msg').innerText()).includes('"Desde" no puede ser posterior a "Hasta".'));
     await shot(page, 'srv_reports');
     await page.locator('main').getByRole('button', { name: /^📊\s*Dashboard$/ }).click();
-    check('otras secciones: aviso de pendiente de integración', (await page.getByTestId('services-notice').innerText()).includes('Sección pendiente de integración'));
+    check('Dashboard: aviso propio de la sección conectada', (await page.getByTestId('services-notice').innerText()).includes('Panel ejecutivo conectado a MariaDB (solo lectura)'));
     await page.locator('main').getByRole('button', { name: /^📑\s*Matriz$/ }).click(); await page.getByTestId('service-clients-chip').waitFor();
     await page.setViewportSize({ width: 390, height: 900 });
     check('sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
