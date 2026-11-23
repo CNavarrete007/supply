@@ -94,6 +94,8 @@ $routes->get('api/v1/matrix/requisitions/(:segment)', 'MatrixController::detail/
 $routes->get('api/v1/matrix/clients', 'MatrixController::clients');
 // SupplyFlow v0.6: read-only metrics and requisition reports, Master Admin only.
 $routes->get('api/v1/analytics/overview', 'AnalyticsController::overview');
+// Flujo del Proceso: procesos por etapa (P2P 15 y S2C 8), indicadores y cuellos de botella (solo lectura).
+$routes->get('api/v1/analytics/process-flow', 'ProcessFlowController::index');
 $routes->get('api/v1/analytics/requisitions', 'AnalyticsController::requisitions');
 $routes->get('api/v1/analytics/requisitions.csv', 'AnalyticsController::csv');
 

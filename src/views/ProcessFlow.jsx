@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { getProcessFlow } from './processFlow/api';
+import { processCount, bottleneckText, bottleneckMeta, indicatorCards, kpiValue } from './processFlow/model.mjs';
 import { GitMerge, ArrowRight, ChevronDown, ChevronUp, Map, Zap, Route } from 'lucide-react';
 
 export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
@@ -20,6 +22,20 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
 
   // Estado para desplegar el detalle completo en el Flujo Comercial Detallado
   const [expandedCommercialStage, setExpandedCommercialStage] = useState(null);
+
+  // Datos reales: GET /api/v1/analytics/process-flow (solo lectura; etapas e indicadores calculados por el servidor).
+  const [load, setLoad] = useState({ status: 'loading', data: null, error: null });
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    const c = new AbortController();
+    setLoad((l) => ({ ...l, status: 'loading', error: null }));
+    getProcessFlow(c.signal)
+      .then((d) => { if (!c.signal.aborted) setLoad({ status: 'ready', data: d, error: null }); })
+      .catch((e) => { if (!c.signal.aborted) setLoad({ status: 'error', data: null, error: e }); });
+    return () => c.abort();
+  }, [reload]);
+  const d = load.data;
+  const ready = load.status === 'ready';
 
   // Función auxiliar para formatear valores de texto o arreglos
   const formatFieldValue = (val) => {
@@ -83,13 +99,12 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
     },
   ];
 
-  // Las 14 etapas del flujo Procure-to-Pay (Compra/Renta)
+  // Las 15 etapas del flujo Procure-to-Pay (Compra/Renta); los contadores se asignan con los datos de MariaDB.
   const p2pStages = [
     { 
       id: 1, 
       title: isEs ? 'Solicitud / requisición' : 'Request / Requisition', 
       desc: isEs ? 'Registrar la necesidad del cliente como un solo expediente.' : 'Record the clients need as a single file.', 
-      count: isEs ? '218 proceso(s)' : '218 process(es)', 
       color: 'border-blue-500 text-blue-600 bg-blue-50',
       badge: isEs ? 'Cliente a Interno' : 'Client to Internal',
       badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -106,7 +121,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 2, 
       title: isEs ? 'Validación interna' : 'Internal Validation', 
       desc: isEs ? 'Confirmar viabilidad técnica, contractual, presupuestal y responsable.' : 'Confirm technical, contractual, and budgetary feasibility.', 
-      count: isEs ? '2 proceso(s)' : '2 process(es)', 
       color: 'border-teal-500 text-teal-600 bg-teal-50',
       badge: isEs ? 'Interno/confidencial' : 'Internal/Confidential',
       badgeColor: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -123,7 +137,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 3, 
       title: isEs ? 'Estrategia y lotificación por partida' : 'Strategy and subdivision by lot', 
       desc: isEs ? 'Separar las partidas en lotes y definir la ruta de cada artículo.' : 'Separate the items into batches and define the route for each item.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-purple-500 text-purple-600 bg-purple-50',
       badge: isEs ? 'Proveedor a Interno' : 'Supplier to Internal',
       badgeColor: 'bg-blue-100 text-blue-700 border-blue-200',
@@ -140,7 +153,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 4, 
       title: isEs ? 'RFQ por lote y proveedor' : 'RFQ by lot and supplier', 
       desc: isEs ? 'Solicitar únicamente las partidas que corresponden a cada proveedor.' : 'Request only the line items that correspond to each supplier.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-indigo-500 text-indigo-600 bg-indigo-50',
       badge: isEs ? 'Interno/confidencial' : 'Internal/Confidential',
       badgeColor: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -157,7 +169,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 5, 
       title: isEs ? 'Recepción de ofertas' : 'Receipt of offers', 
       desc: isEs ? 'Registrar las respuestas de cada proveedor por lote.' : 'Record the responses from each supplier for each batch.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-pink-500 text-pink-600 bg-pink-50',
       badge: isEs ? 'Interno/confidencial' : 'Internal/Confidential',
       badgeColor: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -174,7 +185,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 6, 
       title: isEs ? 'Comparativo y adjudicación por partida' : 'Comparative analysis and award by line item', 
       desc: isEs ? 'Elegir la mejor alternativa sin obligar a adjudicar todo el lote al mismo proveedor.' : 'Selecting the best alternative without being compelled to award the entire lot to the same supplier.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-purple-500 text-purple-600 bg-purple-50',
       badge: isEs ? 'Interno hasta revisar' : 'Internal until review',
       badgeColor: 'bg-amber-100 text-amber-700 border-amber-200',
@@ -191,7 +201,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 7, 
       title: isEs ? 'Cotización al cliente' : 'Quote for the client', 
       desc: isEs ? 'Consolidar todos los lotes en una sola propuesta comercial.' : 'Consolidate all lots into a single commercial proposal.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-violet-500 text-violet-600 bg-violet-50',
       badge: isEs ? 'Interno/confidencial' : 'Internal/Confidential',
       badgeColor: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -208,7 +217,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 8, 
       title: isEs ? 'Revisión comercial' : 'Commercial Review',
       desc: isEs ? 'Revisar contenido y condiciones de la cotización.' : 'Review the content and terms of the quote.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-purple-600 text-purple-700 bg-purple-50',
       badge: isEs ? 'Interno/confidencial' : 'Internal/Confidential',
       badgeColor: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -225,7 +233,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 9, 
       title: isEs ? 'Autorización comercial' : 'Commercial authorization', 
       desc: isEs ? 'Autorizar internamente la revisión vigente.' : 'Internally authorize the current revision.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-emerald-500 text-emerald-600 bg-emerald-50',
       badge: isEs ? 'Cliente' : 'Client',
       badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -242,7 +249,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 10, 
       title: isEs ? 'Envío al cliente' : 'Shipment to the customer', 
       desc: isEs ? 'Enviar manualmente la cotización autorizada.' : 'Send authorized quotation to client.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-emerald-600 text-emerald-700 bg-emerald-50',
       badge: isEs ? 'Cliente' : 'Client',
       badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -259,7 +265,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 11, 
       title: isEs ? 'Decisión del cliente' : 'Customer decision', 
       desc: isEs ? 'Registrar aprobación, rechazo o solicitud de modificación.' : 'Record approval, rejection, or a request for modification.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-orange-500 text-orange-600 bg-orange-50',
       badge: isEs ? 'Proveedor' : 'Supplier',
       badgeColor: 'bg-blue-100 text-blue-700 border-blue-200',
@@ -276,7 +281,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 12, 
       title: isEs ? 'Órdenes de compra por proveedor' : 'Purchase orders by supplier', 
       desc: isEs ? 'Generar una o varias OC según los proveedores adjudicados.' : 'Generate one or more purchase orders (POs) based on the awarded suppliers.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-teal-600 text-teal-700 bg-teal-50',
       badge: isEs ? 'Interno / Operativo' : 'Internal / Operational',
       badgeColor: 'bg-slate-100 text-slate-700 border-slate-200',
@@ -293,7 +297,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 13, 
       title: isEs ? 'Recepción por OC y partida' : 'Reception by OC and departure', 
       desc: isEs ? 'Controlar cantidades, calidad y documentos recibidos de múltiples proveedores.' : 'Monitor the quantities, quality, and documents received from multiple suppliers.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-slate-700 text-slate-800 bg-slate-100',
       badge: isEs ? 'Cliente' : 'Client',
       badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -310,7 +313,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 14, 
       title: isEs ? 'Entrega consolidada al cliente' : 'Consolidated delivery to the customer', 
       desc: isEs ? 'Entregar partidas disponibles de una o varias requisiciones.' : 'Deliver available items from requisitions.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-rose-600 text-rose-700 bg-rose-50',
       badge: isEs ? 'Cliente / Administración' : 'Client / Admin',
       badgeColor: 'bg-rose-100 text-rose-700 border-rose-200',
@@ -327,7 +329,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 15, 
       title: isEs ? 'Factura y cierre' : 'Invoice and closing', 
       desc: isEs ? 'Registrar factura y cerrar el expediente.' : 'Register the invoice and close the file.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-rose-600 text-rose-700 bg-rose-50',
       badge: isEs ? 'Cliente / Administración' : 'Client / Admin',
       badgeColor: 'bg-rose-100 text-rose-700 border-rose-200',
@@ -348,7 +349,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 1, 
       title: isEs ? 'Requisición / solicitud del servicio' : 'Service requisition / request', 
       desc: isEs ? 'Registrar la necesidad original del cliente y vincular el expediente de Servicio Operativo con la requisición maestra de Grupo Gerez.' : 'Record the clients original need and link the Operational Service file to the Grupo Gerez master requisition.', 
-      count: isEs ? '1 proceso(s)' : '1 process(es)', 
       color: 'border-blue-500 text-blue-600 bg-blue-50',
       badgeColor: 'bg-blue-600 text-white',
       numBadgeColor: 'bg-blue-600 text-white',
@@ -363,7 +363,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 2, 
       title: isEs ? 'Autorización comercial del cliente' : 'Customer commercial authorization', 
       desc: isEs ? 'Registrar la evidencia comercial cuando exista, sin impedir la creación inicial de la requisición del servicio.' : 'Record commercial evidence where it exists, without preventing the initial creation of the service requisition.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-purple-500 text-purple-600 bg-purple-50',
       badgeColor: 'bg-purple-600 text-white',
       numBadgeColor: 'bg-purple-600 text-white',
@@ -378,7 +377,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 3, 
       title: isEs ? 'Planeación y programación' : 'Planning and scheduling', 
       desc: isEs ? 'Definir cuándo, dónde y con qué recursos se ejecutará el servicio.' : 'Define when, where, and with what resources the service will be carried out.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-cyan-500 text-cyan-600 bg-cyan-50',
       badgeColor: 'bg-cyan-600 text-white',
       numBadgeColor: 'bg-cyan-600 text-white',
@@ -393,7 +391,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 4, 
       title: isEs ? 'Proveedor / OC cuando aplique' : 'Supplier / PO when applicable', 
       desc: isEs ? 'Controlar la contratación de terceros cuando el servicio no se ejecuta completamente con recursos propios.' : 'Oversee the engagement of third parties when the service is not carried out entirely using internal resources.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-orange-500 text-orange-600 bg-orange-50',
       badgeColor: 'bg-orange-500 text-white',
       numBadgeColor: 'bg-orange-500 text-white',
@@ -408,7 +405,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 5, 
       title: isEs ? 'Ejecución del servicio' : 'Service Execution', 
       desc: isEs ? 'Ejecutar el servicio autorizado/programado y registrar la operación real.' : 'Execute the authorized/scheduled service and record the actual operation.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-teal-500 text-teal-600 bg-teal-50',
       badgeColor: 'bg-teal-500 text-white',
       numBadgeColor: 'bg-teal-500 text-white',
@@ -423,7 +419,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 6, 
       title: isEs ? 'Evidencia y aceptación' : 'Evidence and Acceptance', 
       desc: isEs ? 'Integrar evidencia suficiente de la ejecución y documentar la conformidad del cliente cuando corresponda.' : 'Gather sufficient evidence of execution and document client concurrence where applicable.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-emerald-500 text-emerald-600 bg-emerald-50',
       badgeColor: 'bg-emerald-600 text-white',
       numBadgeColor: 'bg-emerald-600 text-white',
@@ -438,7 +433,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 7, 
       title: isEs ? 'Validación y cierre comercial' : 'Validation and commercial closure', 
       desc: isEs ? 'Verificar que el expediente tenga autorización, cantidades, costo, precio de venta y margen antes de facturar.' : 'Verify that the file includes authorization, quantities, cost, selling price, and margin before invoicing.', 
-      count: isEs ? '0 proceso(s)' : '0 process(es)', 
       color: 'border-violet-500 text-violet-600 bg-violet-50',
       badgeColor: 'bg-violet-600 text-white',
       numBadgeColor: 'bg-violet-600 text-white',
@@ -453,7 +447,6 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       id: 8, 
       title: isEs ? 'Factura, cobro y cierre' : 'Invoicing, collection, and closing', 
       desc: isEs ? 'Relacionar la factura al servicio y controlar el expediente hasta su cierre comercial.' : 'Link the invoice to the service and monitor the file until its commercial closure.', 
-      count: isEs ? '1 proceso(s)' : '1 process(es)', 
       color: 'border-rose-500 text-rose-600 bg-rose-50',
       badgeColor: 'bg-rose-600 text-white',
       numBadgeColor: 'bg-rose-600 text-white',
@@ -502,8 +495,19 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
     { id: 14, name: isEs ? 'Reportes' : 'Reports', desc: isEs ? 'Indicadores, análisis ejecutivo e impresión.' : 'KPIs, executive analytics, and reports.', icon: '📈' },
   ];
 
+  // Contadores reales por etapa (índices iguales a los del servidor) y documentos relacionados por etapa.
+  const SERVICE_BORDERS = ['border-t-blue-500', 'border-t-purple-500', 'border-t-cyan-500', 'border-t-orange-500', 'border-t-teal-500', 'border-t-emerald-500', 'border-t-violet-500', 'border-t-rose-500'];
+  p2pStages.forEach((stg, i) => { stg.n = d?.p2p?.stages?.[i]; stg.count = processCount(stg.n, isEs); stg.related = d?.related?.[i]; });
+  process15Stages.forEach((stg, i) => { stg.count = processCount(d?.p2p?.stages?.[i], isEs); });
+  serviceStages.forEach((stg, i) => { stg.n = d?.services?.stages?.[i]; stg.count = processCount(stg.n, isEs); stg.borderColor = SERVICE_BORDERS[i]; });
+  const p2pTotal = p2pStages.length;
+  const svcTotal = serviceStages.length;
+
   // Obtener la información de las etapas según la ruta activa
   const currentDetailStages = detailRoute === 'p2p' ? p2pStages : serviceStages;
+  const bottlenecks = detailRoute === 'p2p' ? (d?.bottlenecks?.p2p || []) : (d?.bottlenecks?.services || []);
+  const bottleneckTotal = detailRoute === 'p2p' ? d?.bottlenecks?.p2p_total : d?.bottlenecks?.services_total;
+  const stageNames = detailRoute === 'p2p' ? (d?.p2p?.stage_names || []) : (d?.services?.stage_names || []);
 
   return (
     <div className="space-y-6 transition-all duration-300">
@@ -529,6 +533,37 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
           </p>
         </div>
       </div>
+
+      {/* Estado de la lectura de MariaDB */}
+      {load.status === 'loading' && (
+        <div role="status" data-testid="pf-status" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-600">
+          ⏳ {isEs ? 'Calculando etapas e indicadores con los datos de MariaDB...' : 'Computing stages and indicators from MariaDB...'}
+        </div>
+      )}
+      {load.status === 'error' && (
+        <div role="alert" data-testid="pf-status" className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+          <span><b>{isEs ? 'No se pudo leer el flujo del proceso.' : 'The process flow could not be read.'}</b> {load.error?.message || ''}</span>
+          {![401, 403].includes(load.error?.status) && (
+            <button type="button" onClick={() => setReload((n) => n + 1)} className="shrink-0 rounded-xl bg-rose-600 px-4 py-2 font-extrabold text-white hover:bg-rose-700 cursor-pointer">{isEs ? 'Reintentar' : 'Retry'}</button>
+          )}
+        </div>
+      )}
+      {ready && (
+        <div role="status" data-testid="pf-status" className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-xs text-emerald-900">
+          <span className="shrink-0 rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">{isEs ? 'Datos de MariaDB (solo lectura)' : 'MariaDB data (read-only)'}</span>
+          <span className="font-medium leading-relaxed">
+            {isEs
+              ? `Cada proceso se ubica en la etapa más avanzada con evidencia documental (misma política de etapas que la Matriz de requisiciones). ${d.p2p.total} requisición(es) de compra/renta y ${d.services.total} servicio(s).`
+              : `Each process sits in the most advanced stage with documentary evidence (same stage policy as the Requisition Matrix). ${d.p2p.total} purchase/rent requisition(s) and ${d.services.total} service(s).`}
+            {d.p2p.unmapped > 0 && (isEs
+              ? ` ${d.p2p.unmapped} expediente(s) desde historial o con control de cambios no tienen etapa inferida y no se cuentan en las etapas.`
+              : ` ${d.p2p.unmapped} history-based or change-controlled file(s) have no inferred stage and are not counted in the stages.`)}
+            {d.services.requisitions_without_order > 0 && (isEs
+              ? ` ${d.services.requisitions_without_order} requisición(es) de servicio aún sin expediente de Servicio Operativo.`
+              : ` ${d.services.requisitions_without_order} service requisition(s) still without an Operational Service file.`)}
+          </span>
+        </div>
+      )}
 
       {/* Grid de Cuadros de Selección (Botones Superiores) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -609,13 +644,13 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
               {/* Tarjetas de KPI */}
               <div className="xl:w-2/3 grid grid-cols-2 md:grid-cols-5 gap-3">
                 {[
-                  { val: '0', title: isEs ? 'Requisiciones totales' : 'Total Requisitions', sub: isEs ? 'Expedientes creados' : 'Files created', color: 'border-t-blue-600', text: 'text-blue-700' },
-                  { val: '0', title: isEs ? 'Procesos abiertos' : 'Open Processes', sub: isEs ? 'En etapa activa' : 'In active stage', color: 'border-t-purple-500', text: 'text-purple-700' },
-                  { val: '0', title: isEs ? 'Pendientes cliente' : 'Pending Client', sub: isEs ? 'Cotización enviada' : 'Quote dispatched', color: 'border-t-emerald-500', text: 'text-emerald-700' },
-                  { val: '0', title: isEs ? 'Procesos cerrados' : 'Closed Processes', sub: isEs ? 'Factura registrada' : 'Invoice registered', color: 'border-t-slate-800', text: 'text-slate-900' },
-                  { val: '0', title: isEs ? 'Desviaciones activas' : 'Active Deviations', sub: isEs ? 'Recepción / entrega' : 'Receiving / delivery', color: 'border-t-rose-500', text: 'text-rose-600' }
+                  { val: kpiValue(d?.p2p?.total), title: isEs ? 'Requisiciones totales' : 'Total Requisitions', sub: isEs ? 'Expedientes creados' : 'Files created', color: 'border-t-blue-600', text: 'text-blue-700' },
+                  { val: kpiValue(d?.p2p?.open), title: isEs ? 'Procesos abiertos' : 'Open Processes', sub: isEs ? 'En etapa activa' : 'In active stage', color: 'border-t-purple-500', text: 'text-purple-700' },
+                  { val: kpiValue(d?.p2p?.pending_client), title: isEs ? 'Pendientes cliente' : 'Pending Client', sub: isEs ? 'Cotización enviada' : 'Quote dispatched', color: 'border-t-emerald-500', text: 'text-emerald-700' },
+                  { val: kpiValue(d?.p2p?.closed), title: isEs ? 'Procesos cerrados' : 'Closed Processes', sub: isEs ? 'Factura registrada' : 'Invoice registered', color: 'border-t-slate-800', text: 'text-slate-900' },
+                  { val: kpiValue(d?.p2p?.deviations), title: isEs ? 'Desviaciones activas' : 'Active Deviations', sub: isEs ? 'Recepción / entrega' : 'Receiving / delivery', color: 'border-t-rose-500', text: 'text-rose-600' }
                 ].map((kpi, idx) => (
-                  <div key={idx} className={`bg-white p-4 rounded-xl border border-slate-200 border-t-4 ${kpi.color} shadow-sm flex flex-col justify-center`}>
+                  <div key={idx} data-testid="pf-map-kpi" className={`bg-white p-4 rounded-xl border border-slate-200 border-t-4 ${kpi.color} shadow-sm flex flex-col justify-center`}>
                     <span className={`text-2xl font-bold ${kpi.text} mb-1`}>{kpi.val}</span>
                     <p className="text-xs font-bold text-slate-900 leading-tight">{kpi.title}</p>
                     <p className="text-[10px] text-slate-500 mt-1">{kpi.sub}</p>
@@ -725,8 +760,8 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                         <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block mb-0.5">
                           {isEs ? 'SITUACIÓN ACTUAL' : 'CURRENT STATUS'}
                         </span>
-                        <p className="text-xs font-bold text-slate-700 truncate">
-                          {isEs ? '0 proceso(s)' : '0 process(es)'}
+                        <p data-testid="pf-map-stage-count" className="text-xs font-bold text-slate-700 truncate">
+                          {stage.count}
                         </p>
                       </div>
                       <div className="bg-white p-2 rounded-lg border border-slate-100 shadow-2xs">
@@ -857,14 +892,14 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { val: '1', title: isEs ? 'Servicios' : 'Services', sub: isEs ? 'Expedientes registrados' : 'Registered files', border: 'border-t-blue-500', text: 'text-blue-600' },
-              { val: '0', title: isEs ? 'Autorización pendiente' : 'Pending Authorization', sub: isEs ? 'Regularizar antes de facturar' : 'Regularize before billing', border: 'border-t-amber-500', text: 'text-amber-600' },
-              { val: '0', title: isEs ? 'OC proveedor pendiente' : 'Pending Vendor PO', sub: isEs ? 'Solo cuando requiere tercero' : 'Only if 3rd party required', border: 'border-t-orange-500', text: 'text-orange-600' },
-              { val: '1', title: isEs ? 'Ejecutados' : 'Executed', sub: isEs ? 'Completados / listos' : 'Completed / ready', border: 'border-t-emerald-500', text: 'text-emerald-600' },
-              { val: '1', title: isEs ? 'Listos para facturar' : 'Ready to Invoice', sub: isEs ? 'Autorización válida' : 'Valid authorization', border: 'border-t-purple-500', text: 'text-purple-600' },
-              { val: '0', title: isEs ? 'Facturados' : 'Invoiced', sub: isEs ? 'Cierre comercial' : 'Commercial closure', border: 'border-t-rose-500', text: 'text-rose-600' }
+              { val: kpiValue(d?.services?.total), title: isEs ? 'Servicios' : 'Services', sub: isEs ? 'Expedientes registrados' : 'Registered files', border: 'border-t-blue-500', text: 'text-blue-600' },
+              { val: kpiValue(d?.services?.pending_auth), title: isEs ? 'Autorización pendiente' : 'Pending Authorization', sub: isEs ? 'Regularizar antes de facturar' : 'Regularize before billing', border: 'border-t-amber-500', text: 'text-amber-600' },
+              { val: kpiValue(d?.services?.pending_po), title: isEs ? 'OC proveedor pendiente' : 'Pending Vendor PO', sub: isEs ? 'Solo cuando requiere tercero' : 'Only if 3rd party required', border: 'border-t-orange-500', text: 'text-orange-600' },
+              { val: kpiValue(d?.services?.executed), title: isEs ? 'Ejecutados' : 'Executed', sub: isEs ? 'Completados / listos' : 'Completed / ready', border: 'border-t-emerald-500', text: 'text-emerald-600' },
+              { val: kpiValue(d?.services?.ready), title: isEs ? 'Listos para facturar' : 'Ready to Invoice', sub: isEs ? 'Sin factura registrada' : 'No invoice yet', border: 'border-t-purple-500', text: 'text-purple-600' },
+              { val: kpiValue(d?.services?.invoiced), title: isEs ? 'Facturados' : 'Invoiced', sub: isEs ? 'Cierre comercial' : 'Commercial closure', border: 'border-t-rose-500', text: 'text-rose-600' }
             ].map((stat, idx) => (
-              <div key={idx} className={`bg-white p-4 rounded-2xl border border-slate-200/80 border-t-4 ${stat.border} shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md`}>
+              <div key={idx} data-testid="pf-svc-kpi" className={`bg-white p-4 rounded-2xl border border-slate-200/80 border-t-4 ${stat.border} shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md`}>
                 <span className="text-2xl font-black text-slate-900">{stat.val}</span>
                 <p className="text-xs font-bold text-slate-800 mt-1 leading-tight">{stat.title}</p>
                 <p className={`text-[10px] font-bold ${stat.text} mt-0.5`}>{stat.sub}</p>
@@ -887,8 +922,8 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                       </span>
                       <h4 className="text-sm font-bold text-slate-900">{stage.title}</h4>
                     </div>
-                    <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-md">
-                      {stage.percentage}
+                    <span data-testid="pf-svc-stage-count" className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-md whitespace-nowrap">
+                      {stage.count}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed mb-4">{stage.desc}</p>
@@ -898,13 +933,13 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                         {isEs ? 'CONTROL' : 'CONTROL'}
                       </span>
-                      <p className="text-[11px] font-medium text-slate-700 leading-tight">{stage.control}</p>
+                      <p className="text-[11px] font-medium text-slate-700 leading-tight">{formatFieldValue(stage.controles)}</p>
                     </div>
                     <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 transition-colors duration-200 hover:bg-slate-100/70">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                         {isEs ? 'AVANZA CUANDO' : 'ADVANCES WHEN'}
                       </span>
-                      <p className="text-[11px] font-medium text-slate-700 leading-tight">{stage.avanza}</p>
+                      <p className="text-[11px] font-medium text-slate-700 leading-tight">{stage.criterio}</p>
                     </div>
                   </div>
                 </div>
@@ -984,10 +1019,10 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                         </span>
                       </td>
                       <td className="p-3 font-bold text-slate-900 whitespace-nowrap">{stg.title}</td>
-                      <td className="p-3 min-w-[180px]">{stg.entrada}</td>
-                      <td className="p-3 min-w-[200px]">{stg.actividad}</td>
-                      <td className="p-3 min-w-[180px]">{stg.control}</td>
-                      <td className="p-3 min-w-[180px]">{stg.evidenciaMatriz}</td>
+                      <td className="p-3 min-w-[180px]">{formatFieldValue(stg.entradas)}</td>
+                      <td className="p-3 min-w-[200px]">{formatFieldValue(stg.actividades)}</td>
+                      <td className="p-3 min-w-[180px]">{formatFieldValue(stg.controles)}</td>
+                      <td className="p-3 min-w-[180px]">{formatFieldValue(stg.evidencias || stg.salidas)}</td>
                       <td className="p-3 font-medium text-slate-800 whitespace-nowrap">{stg.responsable}</td>
                       <td className="p-3 min-w-[180px] font-medium text-slate-700">{stg.criterio}</td>
                     </tr>
@@ -1039,7 +1074,7 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                 <div>
                   <h4 className="text-sm font-bold text-slate-900">Procure-to-Pay</h4>
                   <p className="text-xs text-slate-500">
-                    {isEs ? 'Compra / renta · 14 etapas' : 'Purchase / rent · 14 stages'}
+                    {isEs ? `Compra / renta · ${p2pTotal} etapas` : `Purchase / rent · ${p2pTotal} stages`}
                   </p>
                 </div>
               </div>
@@ -1087,7 +1122,7 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
               {isEs ? 'Ruta activa:' : 'Active route:'} {detailRoute === 'p2p' ? 'Procure-to-Pay' : 'Service-to-Cash'}.
             </span>{' '}
             {detailRoute === 'p2p'
-              ? (isEs ? 'Estas 14 etapas abarcan desde la requisición del cliente, cotizaciones, adjudicación, OC a proveedores, recepción e inspección hasta la entrega, factura y cierre.' : 'These 14 stages range from client requisition, quotes, award, vendor POs, receiving, inspection to delivery, invoicing, and closure.')
+              ? (isEs ? `Estas ${p2pTotal} etapas abarcan desde la requisición del cliente, cotizaciones, adjudicación, OC a proveedores, recepción e inspección hasta la entrega, factura y cierre.` : `These ${p2pTotal} stages range from client requisition, quotes, award, vendor POs, receiving, inspection to delivery, invoicing, and closure.`)
               : (isEs ? 'Estas 8 etapas son independientes del Procure-to-Pay y corresponden exclusivamente a Servicios Operativos, desde la requisición vinculada hasta factura, cobro y cierre.' : 'These 8 stages are independent from Procure-to-Pay and apply strictly to Operational Services, from request to invoice, payment, and closure.')}
           </div>
 
@@ -1105,7 +1140,7 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
               const salidaText = formatFieldValue(stg.salidas || stg.salida);
               const responsableText = stg.responsable || '-';
               const criterioText = stg.criterio || '-';
-              const countText = stg.count || (isEs ? '0 proceso(s)' : '0 process(es)');
+              const countText = stg.count;
 
               return (
                 <div 
@@ -1129,7 +1164,7 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                     </div>
 
                     {/* Badge con Contador de Procesos */}
-                    <span className="px-3 py-1 bg-slate-100/90 text-slate-800 text-xs font-bold rounded-full border border-slate-200/80 shrink-0 shadow-2xs">
+                    <span data-testid="pf-detail-count" className="px-3 py-1 bg-slate-100/90 text-slate-800 text-xs font-bold rounded-full border border-slate-200/80 shrink-0 shadow-2xs">
                       {countText}
                     </span>
                   </div>
@@ -1218,20 +1253,20 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
               </p>
             </div>
             <span className="self-start sm:self-auto px-3.5 py-1.5 bg-purple-100 text-purple-700 font-bold text-xs rounded-full border border-purple-200 shadow-2xs animate-pulse">
-              {isEs ? '14 etapas con compuertas' : '14 gated stages'}
+              {isEs ? `${p2pTotal} etapas con compuertas` : `${p2pTotal} gated stages`}
             </span>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { val: '0', title: isEs ? 'RFQ pendientes' : 'Pending RFQs', sub: isEs ? 'Borrador o sin respuesta' : 'Draft or no reply', text: 'text-purple-600' },
-              { val: '0', title: isEs ? 'Cotizaciones al cliente' : 'Client Quotations', sub: isEs ? 'Todas las revisiones' : 'All revisions', text: 'text-purple-600' },
-              { val: '0', title: isEs ? 'Pendientes del cliente' : 'Pending Client', sub: isEs ? 'Enviadas sin decisión' : 'Sent w/o decision', text: 'text-blue-600' },
-              { val: '0', title: isEs ? 'Aprobadas sin OC' : 'Approved w/o PO', sub: isEs ? 'Requieren emitir compra' : 'Require PO issue', text: 'text-orange-600' },
-              { val: '0', title: isEs ? 'OC emitidas' : 'Issued POs', sub: isEs ? 'Compromisos a proveedores' : 'Supplier commitments', text: 'text-emerald-600' },
-              { val: '0', title: isEs ? 'Entregas sin factura' : 'Deliveries w/o Invoice', sub: isEs ? 'Listas para cierre' : 'Ready for closure', text: 'text-slate-500' }
+              { val: kpiValue(d?.commercial?.pending_rfqs), title: isEs ? 'RFQ pendientes' : 'Pending RFQs', sub: isEs ? 'Borrador o sin respuesta' : 'Draft or no reply', text: 'text-purple-600' },
+              { val: kpiValue(d?.commercial?.customer_quotes), title: isEs ? 'Cotizaciones al cliente' : 'Client Quotations', sub: isEs ? 'Todas las revisiones' : 'All revisions', text: 'text-purple-600' },
+              { val: kpiValue(d?.commercial?.awaiting_client), title: isEs ? 'Pendientes del cliente' : 'Pending Client', sub: isEs ? 'Enviadas sin decisión' : 'Sent w/o decision', text: 'text-blue-600' },
+              { val: kpiValue(d?.commercial?.approved_without_po), title: isEs ? 'Aprobadas sin OC' : 'Approved w/o PO', sub: isEs ? 'Requieren emitir compra' : 'Require PO issue', text: 'text-orange-600' },
+              { val: kpiValue(d?.commercial?.issued_pos), title: isEs ? 'OC emitidas' : 'Issued POs', sub: isEs ? 'Compromisos a proveedores' : 'Supplier commitments', text: 'text-emerald-600' },
+              { val: kpiValue(d?.commercial?.deliveries_without_invoice), title: isEs ? 'Entregas sin factura' : 'Deliveries w/o Invoice', sub: isEs ? 'Listas para cierre' : 'Ready for closure', text: 'text-slate-500' }
             ].map((kpi, idx) => (
-              <div key={idx} className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-1 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+              <div key={idx} data-testid="pf-com-kpi" className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-1 transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
                 <span className="text-2xl font-black text-slate-900">{kpi.val}</span>
                 <p className="text-xs font-bold text-slate-800">{kpi.title}</p>
                 <p className={`text-[10px] ${kpi.text} font-medium`}>{kpi.sub}</p>
@@ -1279,7 +1314,7 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                     </div>
 
                     <div className="pt-1">
-                      <span className="text-2xl font-black text-slate-900 leading-none">0</span>
+                      <span data-testid="pf-com-related" className="text-2xl font-black text-slate-900 leading-none">{kpiValue(stage.related)}</span>
                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">
                         {isEs ? 'REGISTROS RELACIONADOS' : 'RELATED RECORDS'}
                       </p>
@@ -1378,13 +1413,13 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {[
-              { count: '0', label: isEs ? 'Reposiciones historial' : 'History replacements' },
-              { count: '0', label: isEs ? 'Pendientes proveedor' : 'Pending vendor' },
-              { count: '0', label: isEs ? 'Pendientes precio cliente' : 'Pending client price' },
-              { count: '0', label: isEs ? 'Change Requests' : 'Change Requests' },
-              { count: '0', label: isEs ? 'Enmiendas OC' : 'PO Amendments' },
+              { count: kpiValue(d?.special?.history_items), label: isEs ? 'Reposiciones historial' : 'History replacements' },
+              { count: kpiValue(d?.special?.pending_supplier), label: isEs ? 'Pendientes proveedor' : 'Pending vendor' },
+              { count: kpiValue(d?.special?.pending_client_price), label: isEs ? 'Pendientes precio cliente' : 'Pending client price' },
+              { count: kpiValue(d?.special?.change_requests), label: isEs ? 'Change Requests' : 'Change Requests' },
+              { count: kpiValue(d?.special?.po_amendments), label: isEs ? 'Enmiendas OC' : 'PO Amendments' },
             ].map((kpi, index) => (
-              <div key={index} className="bg-slate-50/60 p-4 rounded-2xl border border-slate-200/60 text-center">
+              <div key={index} data-testid="pf-special-kpi" className="bg-slate-50/60 p-4 rounded-2xl border border-slate-200/60 text-center">
                 <div className="text-xl font-black text-slate-900">{kpi.count}</div>
                 <div className="text-[11px] text-slate-500 font-medium mt-0.5">{kpi.label}</div>
               </div>
@@ -1576,12 +1611,12 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
               </h3>
               <p className="text-xs text-slate-500 mt-1">
                 {isEs 
-                  ? 'La matriz ya contempla las dos rutas de SupplyFlow: Compras/Rentas (14 etapas) y Servicios Operativos (8 etapas), con entradas, actividades, controles, salidas, evidencia y responsables.' 
-                  : 'The matrix covers both SupplyFlow routes: Purchases/Rentals (14 stages) and Operational Services (8 stages), with inputs, activities, controls, outputs, evidence, and managers.'}
+                  ? `La matriz ya contempla las dos rutas de SupplyFlow: Compras/Rentas (${p2pTotal} etapas) y Servicios Operativos (${svcTotal} etapas), con entradas, actividades, controles, salidas, evidencia y responsables.`
+                  : `The matrix covers both SupplyFlow routes: Purchases/Rentals (${p2pTotal} stages) and Operational Services (${svcTotal} stages), with inputs, activities, controls, outputs, evidence, and managers.`}
               </p>
             </div>
             <span className="self-start sm:self-auto px-3.5 py-1 bg-slate-800 text-white font-bold text-[11px] rounded-full shrink-0 shadow-2xs">
-              {isEs ? '22 etapas controladas · 2 rutas' : '22 controlled stages · 2 routes'}
+              {isEs ? `${p2pTotal + svcTotal} etapas controladas · 2 rutas` : `${p2pTotal + svcTotal} controlled stages · 2 routes`}
             </span>
           </div>
 
@@ -1599,7 +1634,7 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
               </div>
               <div>
                 <h4 className="text-sm font-bold text-slate-900">Procure-to-Pay</h4>
-                <p className="text-xs text-slate-500">{isEs ? 'Compras / Rentas · 14 etapas' : 'Purchases / Rentals · 14 stages'}</p>
+                <p className="text-xs text-slate-500">{isEs ? `Compras / Rentas · ${p2pTotal} etapas` : `Purchases / Rentals · ${p2pTotal} stages`}</p>
               </div>
             </div>
 
@@ -1622,7 +1657,7 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
           </div>
 
           <div className="p-3.5 bg-blue-50/60 border border-blue-100 rounded-2xl text-xs text-blue-900 transition-all duration-300 hover:shadow-xs">
-            <span className="font-bold">{isEs ? 'Ruta activa:' : 'Active route:'}</span> {detailRoute === 'p2p' ? 'Procure-to-Pay · Compras / Rentas · 14 etapas' : 'Service-to-Cash · Servicios Operativos · 8 etapas'}.
+            <span className="font-bold">{isEs ? 'Ruta activa:' : 'Active route:'}</span> {detailRoute === 'p2p' ? `Procure-to-Pay · Compras / Rentas · ${p2pTotal} etapas` : `Service-to-Cash · Servicios Operativos · ${svcTotal} etapas`}.
           </div>
 
           <div className="overflow-x-auto rounded-xl border border-slate-200/80">
@@ -1748,7 +1783,7 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-slate-900">Procure-to-Pay</h4>
-                  <p className="text-xs text-slate-500">{isEs ? 'Compras / Rentas · 14 etapas' : 'Purchases / Rentals · 14 stages'}</p>
+                  <p className="text-xs text-slate-500">{isEs ? `Compras / Rentas · ${p2pTotal} etapas` : `Purchases / Rentals · ${p2pTotal} stages`}</p>
                 </div>
               </div>
             </div>
@@ -1778,15 +1813,10 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {[
-              { val: '1', title: isEs ? 'RFQ por emitir' : 'RFQs to issue', sub: isEs ? 'Validadas sin RFQ' : 'Validated w/o RFQ', border: 'border-t-blue-500', text: 'text-blue-600' },
-              { val: '13', title: isEs ? 'Ofertas insuficientes' : 'Insufficient bids', sub: isEs ? 'Revisar mínimo' : 'Check minimum', border: 'border-t-purple-500', text: 'text-purple-600' },
-              { val: '0', title: isEs ? 'Pendientes del cliente' : 'Pending client', sub: isEs ? 'Esperando decisión' : 'Awaiting decision', border: 'border-t-emerald-500', text: 'text-emerald-600' },
-              { val: '2', title: isEs ? 'Aprobadas sin OC' : 'Approved w/o PO', sub: isEs ? 'Emitir compra' : 'Issue PO', border: 'border-t-orange-500', text: 'text-orange-600' },
-              { val: '4', title: isEs ? 'OC sin recepción' : 'PO w/o receiving', sub: isEs ? 'Seguimiento a proveedor' : 'Follow-up vendor', border: 'border-t-teal-500', text: 'text-teal-600' },
-              { val: '1', title: isEs ? 'Recepciones sin entrega' : 'Receiving w/o delivery', sub: isEs ? 'Pendientes del cliente' : 'Pending client', border: 'border-t-slate-700', text: 'text-slate-600' }
-            ].map((kpi, idx) => (
-              <div key={idx} className={`bg-white p-4 rounded-2xl border border-slate-200/80 border-t-4 ${kpi.border} shadow-2xs transition-all duration-300 hover:-translate-y-1 hover:shadow-md`}>
+            {indicatorCards(d, detailRoute, isEs).map(([v, title, sub], idx) => ({ val: kpiValue(v), title, sub,
+              border: ['border-t-blue-500', 'border-t-purple-500', 'border-t-emerald-500', 'border-t-orange-500', 'border-t-teal-500', 'border-t-slate-700'][idx],
+              text: ['text-blue-600', 'text-purple-600', 'text-emerald-600', 'text-orange-600', 'text-teal-600', 'text-slate-600'][idx] })).map((kpi, idx) => (
+              <div key={idx} data-testid="pf-ind-kpi" className={`bg-white p-4 rounded-2xl border border-slate-200/80 border-t-4 ${kpi.border} shadow-2xs transition-all duration-300 hover:-translate-y-1 hover:shadow-md`}>
                 <span className="text-2xl font-black text-slate-900">{kpi.val}</span>
                 <p className="text-xs font-bold text-slate-800 mt-1 leading-tight">{kpi.title}</p>
                 <p className={`text-[10px] font-bold ${kpi.text} mt-0.5`}>{kpi.sub}</p>
@@ -1805,28 +1835,31 @@ export function ProcessFlow({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                     ? (isEs ? 'RFQ, ofertas, cotizaciones, decisión del cliente, OC, recepción, entrega y factura.' : 'RFQ, bids, quotes, client decision, PO, receiving, delivery, and invoice.')
                     : (isEs ? 'Solicitud, autorización, programación, ejecución, evidencia y facturación.' : 'Request, authorization, scheduling, execution, proof, and billing.')}
                 </p>
+                {ready && (
+                  <p data-testid="pf-bottleneck-note" className="text-[11px] text-slate-500 mt-1">
+                    {isEs
+                      ? `${bottlenecks.length} de ${bottleneckTotal} proceso(s) abierto(s), los más antiguos primero (fecha de solicitud).`
+                      : `${bottlenecks.length} of ${bottleneckTotal} open process(es), oldest first (request date).`}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2.5">
-                {[
-                  `19900001427: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`,
-                  `114927-2: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`,
-                  `19900000647: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`,
-                  `19900001306: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`,
-                  `19900001303: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`,
-                  `19900001432: ${isEs ? 'RFQ enviada; faltan ofertas registradas.' : 'RFQ sent; missing registered bids.'}`,
-                  `19900001364: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`,
-                  `19900001363: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`,
-                  `19900001362: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`,
-                  `116058: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`,
-                  `19900001275: ${isEs ? 'pendiente de validación interna.' : 'pending internal validation.'}`
-                ].map((item, idx) => (
-                  <div 
-                    key={idx} 
+                {ready && bottlenecks.length === 0 && (
+                  <p className="p-3 text-xs text-slate-500 bg-slate-50 rounded-xl">{isEs ? 'Sin procesos abiertos en esta ruta.' : 'No open processes on this route.'}</p>
+                )}
+                {!ready && (
+                  <p className="p-3 text-xs text-slate-500 bg-slate-50 rounded-xl">{load.status === 'error' ? (isEs ? 'Sin datos: no se pudo leer MariaDB.' : 'No data: MariaDB could not be read.') : (isEs ? 'Cargando...' : 'Loading...')}</p>
+                )}
+                {bottlenecks.map((item, idx) => (
+                  <div
+                    key={`${item.folio}-${idx}`}
+                    data-testid="pf-bottleneck"
                     style={{ animationDelay: `${idx * 30}ms` }}
                     className="p-3 bg-amber-50/50 border-l-4 border-l-amber-400 rounded-xl text-xs text-slate-700 font-medium leading-tight transition-transform duration-200 hover:translate-x-1 animate-fadeIn"
                   >
-                    {item}
+                    {bottleneckText(item, detailRoute, isEs)}
+                    <span className="block mt-1 text-[10px] font-normal text-slate-500">{bottleneckMeta(item, stageNames, isEs)}</span>
                   </div>
                 ))}
               </div>

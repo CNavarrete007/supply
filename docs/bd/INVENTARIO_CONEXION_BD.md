@@ -7,13 +7,13 @@
 
 | Estado | Módulos |
 |---|---|
-| **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles, Configuración (pestañas 1 a 5, 23 nov 2026) |
+| **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles, Configuración (pestañas 1 a 5, 23 nov 2026), Flujo del Proceso (7 pestañas, 23 nov 2026) |
 | **Inicio y Dashboard** | Conectado (23 nov 2026) salvo 3 cifras sin fuente o regla: estatus de pago / «Pagadas» (no hay registro de pagos), ahorro potencial y costo promedio (falta la regla del original) |
-| **Pendientes (datos fijos o de demostración)** | Portal del Cliente (`mockQuote`, `mockPO`; el acceso no autentica), Flujo del Proceso (23 contadores fijos por etapa), campana de Notificaciones (solo notificaciones locales del navegador) |
+| **Pendientes (datos fijos o de demostración)** | Portal del Cliente (`mockQuote`, `mockPO`; el acceso no autentica), campana de Notificaciones (solo notificaciones locales del navegador) |
 | **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
 | **Validan pero no guardan** | Todo lo demás: termina con «Datos validados, pero no se guardó…» |
 
-`App.jsx` muestra el aviso genérico «Módulo pendiente de integración» solo en **Flujo del Proceso** y **Portal del Cliente**. Configuración tiene su propio aviso «Datos de MariaDB (solo lectura)».
+`App.jsx` muestra el aviso genérico «Módulo pendiente de integración» solo en **Portal del Cliente**. Configuración y Flujo del Proceso tienen su propio aviso «Datos de MariaDB (solo lectura)».
 
 ## 2. Cuentas SQL
 
@@ -40,7 +40,7 @@ Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Dem
 | Inicio y Dashboard | KPIs de requisiciones, estatus, alertas, importes, clientes, provisionales, Change Requests, segregación de funciones | Sí (`analytics/overview`, `recovery`) | N/A | `requisitions` y documentos del proceso | — |
 | Inicio y Dashboard | Servicios, Service-to-Cash (8 etapas), Service Fee, abastecimiento por lotes, proveedores con mayor actividad y evaluados, recompra (rutas y políticas), enmiendas de OC, compradores, segregación de funciones de OC, facturación por moneda | Sí (23 nov 2026): bloques ampliados de `analytics/overview` | N/A | `service_orders`, `customer_quote_versions.service_fee_*`, `sourcing_*`, `rfqs`, `supplier_quotes`, `awards`, `requisition_items.repeat_*`, `clients.repeat_*_policy`, `purchase_orders`, `purchase_order_modification_requests`, `requisition_reviews`, `invoices` | — |
 | Inicio y Dashboard | Estatus de pago / «Pagadas»; ahorro potencial y costo promedio | **No** | N/A | — | Pagos: definir su registro (DDL nuevo, requiere autorización). Ahorro y costo promedio: compartir la regla de comparación del sistema original |
-| Flujo del Proceso | Mapa, flujo de servicios, detalle por etapa, matriz, indicadores | **No**: 23 contadores fijos («N proceso(s)») | N/A | Documentos de cada etapa | Ver §4.B |
+| Flujo del Proceso | Mapa, flujo de servicios, detalle por etapa, comercial, rutas especiales, matriz, indicadores | **Sí** (23 nov): procesos por etapa, KPI y cuellos de botella reales | N/A (solo consulta) | Documentos de cada etapa | Ver §4.B; tiempo en etapa pendiente |
 | Portal del Cliente | Acceso y seguimiento | **No** (`mockQuote`, `mockPO`; el acceso no valida credenciales) | Demo | `portal_access_tokens`, `clients.portal_enabled`/`portal_locked` y vistas filtradas por cliente | Ver §4.E |
 | Campana (encabezado) | Notificaciones | **No**: solo notificaciones locales de la sesión | — | `notifications` | Ver §4.D |
 | Clientes | Alta y edición | Sí | **Real** | `clients` y contactos | Eliminar e importar siguen bloqueados |
@@ -82,11 +82,16 @@ Extender `GET /api/v1/analytics/overview` (`AnalyticsReadRepository`) con bloque
 - **Enmiendas de OC**: versiones posteriores de `purchase_orders` y `purchase_order_modification_requests` (solo conteo; las escrituras siguen bloqueadas).
 - **Estatus de pago**: no tiene fuente. Se queda como pendiente hasta definir cómo registrar pagos (requeriría DDL y autorización).
 
-### B. Flujo del Proceso (23 contadores fijos)
-Endpoint `GET /api/v1/analytics/process-flow` que cuente procesos por etapa:
+### B. Flujo del Proceso — conectado en lectura el 23 nov 2026
+`GET /api/v1/analytics/process-flow` (Master Admin, sin parámetros, sin caché, sin grants nuevos; `ProcessFlowReadRepository`). Reemplaza los 23 contadores fijos, los KPI fijos de las 7 pestañas y la lista fija de cuellos de botella. Reglas:
 - **Compra / renta (15 etapas)**: cada requisición en la etapa más avanzada con evidencia documental (`requisition_reviews`, `sourcing_plans`/`sourcing_lots`, `rfqs`, `supplier_quotes`, `awards`, `customer_quote_versions` y sus decisiones, `purchase_orders`, `goods_receipts`, `deliveries`, `invoices`). Debe ser coherente con la política de 8 etapas que el servidor ya calcula (`RequisitionRecoveryRepository::STAGES`).
 - **Servicios (8 etapas)**: misma derivación que §4.A.
 - Las pestañas «Matriz del proceso» e «Indicadores y cuellos de botella» toman los mismos conteos (tiempo en etapa con `workflow_events`).
+- **Implementado así:** las 15 etapas afinan la política de 8 etapas (`RequisitionRecoveryRepository::stage`, la misma de la Matriz de requisiciones): 1 Solicitud; 2–3 Validación (3 si el último plan tiene lotes); 4–5 Solicitud de cotización (5 con ofertas); 6–11 Comparativo y autorización (6 sin cotización al cliente; 7–11 según el estatus de la cotización vigente, `QuoteReadRepository::STATUS_KEY`); 12 OC; 13 Recepción; 14 Entrega y aceptación; 15 Factura. Así las dos vistas siempre cuadran. Los expedientes desde historial o con control de cambios no tienen etapa inferida y se informan aparte.
+- Ruta Compra/renta = requisiciones que no son de la ruta de servicios (`route_code` ≠ `service` y sin `service_orders`). Servicios = `service_orders` con las 8 etapas del Dashboard; las requisiciones de servicio sin expediente se informan aparte.
+- KPI y documentos por etapa reutilizan las reglas de Cotizaciones (cotización vigente y grupos de estatus), Recepción y Entrega (OC sin recepción, desviaciones, recepciones sin entrega), Factura (listas sin factura) y el Dashboard (RFQ pendientes, recompra, enmiendas). «Ofertas insuficientes» compara las ofertas registradas con el mínimo del plan de abastecimiento, de la validación o del parámetro general `minQuotes`.
+- Cuellos de botella: hasta 12 procesos abiertos por ruta, los más antiguos primero, con el motivo según su etapa.
+- **Pendiente:** el tiempo en etapa requiere la regla del original sobre `workflow_events` (no se inventa). Pruebas: `tests/frontend/process_flow_model.test.mjs` (5), `tests/frontend/process_flow_ui_e2e.cjs` (26) y `tests/process_flow_http_check.py` (34; cruza cada cifra con `/recovery/matrix`, `/analytics/overview`, `/quotes/*`, `/purchase-orders`, `/reception/*`, `/invoices/requisitions` y `/requisition-changes`).
 
 ### C. Configuración (pestañas 1 a 5) — conectada en lectura el 23 nov 2026
 Endpoints de solo lectura (Master Admin, sin caché, 422 ante parámetros desconocidos, sin ids internos; no requieren grants): `GET /api/v1/settings`, `GET /api/v1/settings/email-log` (`q`, `status`, `page`, `page_size` ≤ 50) y `GET /api/v1/settings/logo` (imagen verificada por firma, tamaño y SHA-256; 404 si el archivo no está en el equipo). Lee los grupos de `organization_settings` que ya existen en la base:
@@ -135,12 +140,12 @@ Mismo patrón que R2 y R3:
 
 | Fase | Trabajo | Grants nuevos | Riesgo |
 |---|---|---|---|
-| **0 · Solo lectura** (sin grants) | 1. ~~Inicio y Dashboard~~ (hecho el 23 nov). 2. ~~Configuración pestañas 1 a 5~~ (hecho el 23 nov, §4.C). 3. Flujo del Proceso (§4.B). 4. Campana: lectura (§4.D) | No | Bajo |
+| **0 · Solo lectura** (sin grants) | 1. ~~Inicio y Dashboard~~ (hecho el 23 nov). 2. ~~Configuración pestañas 1 a 5~~ (hecho el 23 nov, §4.C). 3. ~~Flujo del Proceso~~ (hecho el 23 nov, §4.B). 4. Campana: lectura (§4.D) | No | Bajo |
 | **1 · Operativo, no comercial** | 5. Categorías. 6. Crear desde historial. 7. Servicios: requisición maestra y expediente. 8. Gestión del Contratista: validación, estrategia y lotes. 9. Configuración: escritura versionada. 10. Usuarios y roles, con permisos por sección en el servidor. 11. Notificaciones: marcar como leídas | Sí, por módulo | Medio; Usuarios es alto |
 | **2 · Comercial** (bloqueado hasta autorizar) | 12. Cotizaciones. 13. OC. 14. Recepción y Entrega. 15. Factura (y registro de pagos si se define). 16. Escrituras R3C2/R3C3 | Sí | Alto |
 | **3 · Seguridad externa** | 17. Portal del Cliente con tokens propios | Sí | Alto |
 
-Ya completado de la fase 0: Dashboard de Servicios (23 nov.), Control de cambios R3A/R3B (23 nov.), Inicio y Dashboard (23 nov.) y Configuración en lectura (23 nov.).
+Ya completado de la fase 0: Dashboard de Servicios (23 nov.), Control de cambios R3A/R3B (23 nov.), Inicio y Dashboard (23 nov.), Configuración en lectura (23 nov.) y Flujo del Proceso (23 nov.).
 
 ## 7. Código sin uso
 

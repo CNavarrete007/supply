@@ -251,13 +251,41 @@ final class AnalyticsReadRepository
      */
     private function services(int $org, array $filter): array
     {
+        $out = ['total' => 0, 'open' => 0, 'executed' => 0, 'invoiced' => 0, 'cancelled' => 0, 'authorized' => 0, 'with_evidence' => 0, 'stages' => array_fill(0, 8, 0), 'money' => []];
+        $money = [];
+        foreach ($this->serviceRows($org, $filter) as $r) {
+            $s = self::serviceState($r);
+            $out['total']++;
+            if ($s['open']) { $out['open']++; }
+            if ($s['executed']) { $out['executed']++; }
+            if ($s['invoiced']) { $out['invoiced']++; }
+            if ((int) $r['evidence'] > 0) { $out['with_evidence']++; }
+            $cur = (string) ($r['currency'] ?? '');
+            $money[$cur] ??= ['currency_code' => $cur, 'services' => 0, 'price' => 0.0, 'cost' => 0.0];
+            $money[$cur]['services']++;
+            $money[$cur]['price'] += (float) $r['price_amount'];
+            $money[$cur]['cost'] += (float) $r['cost_amount'];
+            if ($s['cancelled']) { $out['cancelled']++; continue; }
+            if ($s['authorized']) { $out['authorized']++; }
+            $out['stages'][$s['stage']]++;
+        }
+        ksort($money);
+        $out['money'] = array_values(array_map(static fn ($m) => $m + ['margin' => round($m['price'] - $m['cost'], 6)], $money));
+        $out['stage_names'] = self::S2C_STAGES;
+        return $out;
+    }
+
+    /** Servicios (service_orders no archivados) con los datos que deciden su etapa Service-to-Cash. */
+    private function serviceRows(int $org, array $filter): array
+    {
         $w = ['so.organization_id=?', 'e.archived_at IS NULL'];
         $b = [$org];
         if (($filter['from'] ?? '') !== '') { $w[] = 'so.request_date>=?'; $b[] = $filter['from']; }
         if (($filter['to'] ?? '') !== '') { $w[] = 'so.request_date<=?'; $b[] = $filter['to']; }
         if (($filter['client'] ?? 'all') !== 'all') { $w[] = 'ce.public_id=?'; $b[] = $filter['client']; }
-        $rows = $this->rows(
-            "SELECT COALESCE(NULLIF(TRIM(so.legacy_status),''),so.status_code) AS status,so.requires_supplier,so.supplier_purchase_order_id IS NOT NULL AS has_po,
+        return $this->rows(
+            "SELECT so.folio,c.legal_name AS client_name,COALESCE(st.name,so.legacy_service_type) AS service,
+                    COALESCE(NULLIF(TRIM(so.legacy_status),''),so.status_code) AS status,so.requires_supplier,so.supplier_purchase_order_id IS NOT NULL AS has_po,
                     so.requisition_id IS NOT NULL AS has_req,so.request_date,so.required_date,so.authorization_status,so.authorization_type,
                     (so.responsible_user_id IS NOT NULL OR NULLIF(TRIM(so.responsible_snapshot),'') IS NOT NULL) AS has_responsible,
                     so.cost_amount,so.price_amount,so.commercial_currency AS currency,
@@ -268,38 +296,36 @@ final class AnalyticsReadRepository
              JOIN business_entities e ON e.id=so.id AND e.organization_id=so.organization_id
              JOIN clients c ON c.id=so.client_id AND c.organization_id=so.organization_id
              JOIN business_entities ce ON ce.id=c.id AND ce.organization_id=c.organization_id
-             WHERE " . implode(' AND ', $w),
+             LEFT JOIN service_types st ON st.id=so.service_type_id AND st.organization_id=so.organization_id
+             WHERE " . implode(' AND ', $w) . ' ORDER BY so.request_date,so.id',
             $b
         );
-        $out = ['total' => 0, 'open' => 0, 'executed' => 0, 'invoiced' => 0, 'cancelled' => 0, 'authorized' => 0, 'with_evidence' => 0, 'stages' => array_fill(0, 8, 0), 'money' => []];
-        $money = [];
-        foreach ($rows as $r) {
-            $st = self::fold($r['status']);
-            $out['total']++;
-            $cancelled = str_contains($st, 'cancel');
-            $executed = in_array($st, ['completado', 'listo para facturar', 'facturado'], true);
-            $invoiced = (bool) $r['invoiced'] || $st === 'facturado';
-            if (!in_array($st, ['completado', 'facturado', 'cancelado'], true) && !$cancelled) { $out['open']++; }
-            if ($executed) { $out['executed']++; }
-            if ($invoiced) { $out['invoiced']++; }
-            if ((int) $r['evidence'] > 0) { $out['with_evidence']++; }
-            $cur = (string) ($r['currency'] ?? '');
-            $money[$cur] ??= ['currency_code' => $cur, 'services' => 0, 'price' => 0.0, 'cost' => 0.0];
-            $money[$cur]['services']++;
-            $money[$cur]['price'] += (float) $r['price_amount'];
-            $money[$cur]['cost'] += (float) $r['cost_amount'];
-            if ($cancelled) { $out['cancelled']++; continue; }
-            $auth = self::authValid($r['authorization_status']) || str_contains(self::fold($r['authorization_type']), 'emergencia');
-            if ($auth) { $out['authorized']++; }
-            $planned = in_array($st, ['programado', 'en ejecucion'], true) || $executed || ($r['required_date'] !== null && (bool) $r['has_responsible']);
-            $stage = !$r['has_req'] || $r['request_date'] === null ? 0
-                : (!$auth ? 1 : (!$planned ? 2 : ((bool) $r['requires_supplier'] && !$r['has_po'] ? 3 : (!$executed ? 4 : ((int) $r['evidence'] === 0 ? 5 : ($st === 'listo para facturar' || $invoiced ? 7 : 6))))));
-            $out['stages'][$stage]++;
-        }
-        ksort($money);
-        $out['money'] = array_values(array_map(static fn ($m) => $m + ['margin' => round($m['price'] - $m['cost'], 6)], $money));
-        $out['stage_names'] = self::S2C_STAGES;
-        return $out;
+    }
+
+    /**
+     * Estado Service-to-Cash de un servicio: la etapa actual (0 a 7) es el primer criterio del Flujo del Proceso que el servicio
+     * todavía no cumple; un servicio cancelado no tiene etapa (stage = null).
+     */
+    public static function serviceState(array $r): array
+    {
+        $st = self::fold($r['status']);
+        $cancelled = str_contains($st, 'cancel');
+        $executed = in_array($st, ['completado', 'listo para facturar', 'facturado'], true);
+        $invoiced = (bool) $r['invoiced'] || $st === 'facturado';
+        $open = !in_array($st, ['completado', 'facturado', 'cancelado'], true) && !$cancelled;
+        $auth = self::authValid($r['authorization_status']) || str_contains(self::fold($r['authorization_type']), 'emergencia');
+        $planned = in_array($st, ['programado', 'en ejecucion'], true) || $executed || ($r['required_date'] !== null && (bool) $r['has_responsible']);
+        $stage = $cancelled ? null : (!$r['has_req'] || $r['request_date'] === null ? 0
+            : (!$auth ? 1 : (!$planned ? 2 : ((bool) $r['requires_supplier'] && !$r['has_po'] ? 3 : (!$executed ? 4 : ((int) $r['evidence'] === 0 ? 5 : ($st === 'listo para facturar' || $invoiced ? 7 : 6)))))));
+        return ['cancelled' => $cancelled, 'executed' => $executed, 'invoiced' => $invoiced, 'open' => $open, 'authorized' => !$cancelled && $auth,
+            'ready' => $st === 'listo para facturar', 'pending_po' => !$cancelled && (bool) $r['requires_supplier'] && !$r['has_po'], 'stage' => $stage];
+    }
+
+    /** Flujo del Proceso · ruta Service-to-Cash: cada servicio con su estado (sin filtros). */
+    public function serviceFlow(int $org): array
+    {
+        return array_map(static fn ($r) => ['folio' => $r['folio'], 'client_name' => $r['client_name'], 'service' => $r['service'], 'status' => $r['status'],
+            'request_date' => $r['request_date']] + self::serviceState($r), $this->serviceRows($org, []));
     }
 
     /** Cotización + Service Fee: última versión de cada cotización al cliente de las requisiciones del filtro. */
