@@ -7,13 +7,13 @@
 
 | Estado | Módulos |
 |---|---|
-| **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles |
+| **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles, Configuración (pestañas 1 a 5, 23 nov 2026) |
 | **Inicio y Dashboard** | Conectado (23 nov 2026) salvo 3 cifras sin fuente o regla: estatus de pago / «Pagadas» (no hay registro de pagos), ahorro potencial y costo promedio (falta la regla del original) |
-| **Pendientes (datos fijos o de demostración)** | Configuración (7 pestañas, demo y `localStorage`), Portal del Cliente (`mockQuote`, `mockPO`; el acceso no autentica), Flujo del Proceso (23 contadores fijos por etapa), campana de Notificaciones (solo notificaciones locales del navegador) |
+| **Pendientes (datos fijos o de demostración)** | Portal del Cliente (`mockQuote`, `mockPO`; el acceso no autentica), Flujo del Proceso (23 contadores fijos por etapa), campana de Notificaciones (solo notificaciones locales del navegador) |
 | **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
 | **Validan pero no guardan** | Todo lo demás: termina con «Datos validados, pero no se guardó…» |
 
-`App.jsx` muestra el aviso genérico «Módulo pendiente de integración» solo en **Flujo del Proceso**, **Portal del Cliente** y **Configuración**.
+`App.jsx` muestra el aviso genérico «Módulo pendiente de integración» solo en **Flujo del Proceso** y **Portal del Cliente**. Configuración tiene su propio aviso «Datos de MariaDB (solo lectura)».
 
 ## 2. Cuentas SQL
 
@@ -65,8 +65,8 @@ Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Dem
 | Servicios Operativos | Matriz y Reportes | Sí | Bloqueada | `service_orders` | Edición y borrado dependen del endpoint anterior |
 | Matriz General y Reportes | Consolidado | Sí | N/A | — | — |
 | Usuarios y roles | Usuarios, roles, matriz de permisos, actividad | Sí | Bloqueada | `people`, `users`, `user_roles`, `roles`, `role_permissions`, `user_permissions` | Cuenta SQL nueva, hash de contraseñas, protección contra escalamiento y evaluación de permisos por sección en el servidor |
-| Configuración | Pestañas 1 a 5 | **No** (demo y `localStorage`) | Demo | `organizations`, `organization_settings`, `approval_policy_versions`, `currencies`, `units`, `document_sequences`, `email_delivery_logs`, `files` | Ver §4.C |
-| Configuración | Pestañas 6 y 7 (Respaldo y Reinicio) | No | **No deben conectarse** | — | Los respaldos se hacen con las herramientas INT03 fuera de la interfaz; «Reinicio» solo debe limpiar la caché local |
+| Configuración | Pestañas 1 a 5 | **Sí** (23 nov) | Valida, no guarda | `organization_settings`, `approval_policy_versions`, `currencies`, `units`, `document_sequences`, `email_delivery_logs`, `files` | Ver §4.C; la escritura requiere autorización |
+| Configuración | Pestañas 6 y 7 (Respaldo y Reinicio) | No (por diseño) | **No deben conectarse** | — | 6 exporta en JSON la configuración leída y solo verifica archivos (no restaura); 7 solo limpia el almacenamiento local del navegador. Los respaldos de la base se hacen con las herramientas INT03 fuera de la interfaz |
 
 ## 4. Cómo conectar lo pendiente para que muestre datos reales
 
@@ -88,8 +88,8 @@ Endpoint `GET /api/v1/analytics/process-flow` que cuente procesos por etapa:
 - **Servicios (8 etapas)**: misma derivación que §4.A.
 - Las pestañas «Matriz del proceso» e «Indicadores y cuellos de botella» toman los mismos conteos (tiempo en etapa con `workflow_events`).
 
-### C. Configuración (pestañas 1 a 5)
-Endpoint `GET /api/v1/settings` que devuelva los grupos de `organization_settings` que ya existen en la base:
+### C. Configuración (pestañas 1 a 5) — conectada en lectura el 23 nov 2026
+Endpoints de solo lectura (Master Admin, sin caché, 422 ante parámetros desconocidos, sin ids internos; no requieren grants): `GET /api/v1/settings`, `GET /api/v1/settings/email-log` (`q`, `status`, `page`, `page_size` ≤ 50) y `GET /api/v1/settings/logo` (imagen verificada por firma, tamaño y SHA-256; 404 si el archivo no está en el equipo). Lee los grupos de `organization_settings` que ya existen en la base:
 
 | Pestaña | Fuente |
 |---|---|
@@ -98,6 +98,8 @@ Endpoint `GET /api/v1/settings` que devuelva los grupos de `organization_setting
 | 3 Aprobaciones de cotización | `legacy_quote_policy` y `approval_policy_versions` (versión vigente) |
 | 4 Condiciones de cotización | `legacy_quote_conditions` (ES/EN) |
 | 5 Correos automáticos | `legacy_email` y el historial de envíos `email_delivery_logs` (paginado, sin cuerpos de correo) |
+
+«Guardar» valida y muestra «Datos validados, pero no se guardó…» con los campos cambiados; nada se escribe. Pruebas: `tests/frontend/settings_model.test.mjs`, `tests/frontend/settings_ui_e2e.cjs`, `tests/settings_http_check.py` (con `SF_SQLQ` compara con `organization_settings` y `email_delivery_logs`).
 
 La escritura viene después y requiere autorización: una cuenta `settingswrite` con `UPDATE organization_settings` e `INSERT approval_policy_versions`, versionando la política (cambia aprobaciones y folios) y con auditoría. Pestañas 6 y 7: no se conectan.
 
@@ -133,12 +135,12 @@ Mismo patrón que R2 y R3:
 
 | Fase | Trabajo | Grants nuevos | Riesgo |
 |---|---|---|---|
-| **0 · Solo lectura** (sin grants) | 1. ~~Inicio y Dashboard~~ (hecho el 23 nov). 2. Configuración pestañas 1 a 5 (§4.C). 3. Flujo del Proceso (§4.B). 4. Campana: lectura (§4.D) | No | Bajo |
+| **0 · Solo lectura** (sin grants) | 1. ~~Inicio y Dashboard~~ (hecho el 23 nov). 2. ~~Configuración pestañas 1 a 5~~ (hecho el 23 nov, §4.C). 3. Flujo del Proceso (§4.B). 4. Campana: lectura (§4.D) | No | Bajo |
 | **1 · Operativo, no comercial** | 5. Categorías. 6. Crear desde historial. 7. Servicios: requisición maestra y expediente. 8. Gestión del Contratista: validación, estrategia y lotes. 9. Configuración: escritura versionada. 10. Usuarios y roles, con permisos por sección en el servidor. 11. Notificaciones: marcar como leídas | Sí, por módulo | Medio; Usuarios es alto |
 | **2 · Comercial** (bloqueado hasta autorizar) | 12. Cotizaciones. 13. OC. 14. Recepción y Entrega. 15. Factura (y registro de pagos si se define). 16. Escrituras R3C2/R3C3 | Sí | Alto |
 | **3 · Seguridad externa** | 17. Portal del Cliente con tokens propios | Sí | Alto |
 
-Ya completado de la fase 0: Dashboard de Servicios (23 nov.), Control de cambios R3A/R3B (23 nov.) e Inicio y Dashboard (23 nov.).
+Ya completado de la fase 0: Dashboard de Servicios (23 nov.), Control de cambios R3A/R3B (23 nov.), Inicio y Dashboard (23 nov.) y Configuración en lectura (23 nov.).
 
 ## 7. Código sin uso
 

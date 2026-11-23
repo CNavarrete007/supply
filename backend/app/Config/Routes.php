@@ -59,6 +59,10 @@ $routes->get('api/v1/contractor-management/rules', 'ContractorManagementControll
 // Requisiciones › Control de cambios: historial y candidatos (solo lectura, cuenta API SELECT).
 $routes->get('api/v1/requisition-changes', 'RequisitionChangeReadController::overview');
 $routes->get('api/v1/requisition-changes/candidates', 'RequisitionChangeReadController::candidates');
+// Configuración › pestañas 1 a 5: parámetros del original, política vigente, historial de correos y logotipo (solo lectura).
+$routes->get('api/v1/settings', 'SettingsController::index');
+$routes->get('api/v1/settings/email-log', 'SettingsController::emailLog');
+$routes->get('api/v1/settings/logo', 'SettingsController::logo');
 $routes->get('api/v1/services/matrix', 'ServiceController::matrix');
 // Servicios › Nueva solicitud: catálogo de tipos, referencia interna sugerida y disponibilidad (solo lectura).
 $routes->get('api/v1/services/new-request', 'ServiceController::newRequest');

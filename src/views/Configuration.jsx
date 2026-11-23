@@ -1,18 +1,30 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { getSettings, getEmailLog, SETTINGS_LOGO_URL } from './settings/api';
+import { identityFrom, paramsFrom, approvalFrom, conditionsFrom, emailFrom, changedFields, changedConditions, fieldLabel, validateIdentity, validateParams, validateApprovals,
+  validateConditions, validateEmail, approvalWarnings, saveResult, statusTone, utcText, recipientLines, exportConfig, importCheck, MAX_CONDITIONS, EMAIL_LANGS, TOTAL_BASES } from './settings/settingsModel.mjs';
 
 // DICCIONARIO DE TRADUCCIONES
 const TEXTS = {
   es: {
     headerTitle: "Configuración",
     headerSubtitle: "Administra tu cuenta, preferencias y configuración general del sistema.",
+    statusLoading: "Cargando la configuración registrada en MariaDB...",
+    statusError: "No se pudo leer la configuración de MariaDB.",
+    statusReady: "Datos de MariaDB (solo lectura)",
+    statusReadyNote: "Los valores provienen de organization_settings. \"Guardar\" valida los datos, pero no los guarda: la escritura de configuración aún no está autorizada.",
+    retry: "Reintentar",
+    loadFirst: "Espera a que se cargue la configuración de MariaDB antes de continuar.",
+    updatedText: "Última actualización: {0} · {1}",
+    unknownUser: "usuario no registrado",
+    noRecord: "Sin registro de actualización",
     tabs: [
       { id: 1, title: 'Identidad y formatos', description: 'Logotipo, nombre, textos e idioma de documentos.', emoji: '🎨' },
       { id: 2, title: 'Matriz de parámetros', description: 'Moneda, prefijos, alertas, cotizaciones mínimas e IVA.', emoji: '📋' },
       { id: 3, title: 'Aprobaciones de cotización', description: 'Límites por artículo y total; solo administradores.', emoji: '✅' },
       { id: 4, title: 'Condiciones de cotización', description: 'Comentarios predeterminados ES / EN del PDF para el cliente.', emoji: '📝' },
       { id: 5, title: 'Correos automáticos', description: 'Avisos internos, comunicaciones al cliente e historial de envíos.', emoji: '✉️' },
-      { id: 6, title: 'Respaldo e importación', description: 'Exporta o restaura toda la información del sistema.', emoji: '💾' },
-      { id: 7, title: 'Reinicio del sistema', description: 'Elimina los datos locales y restaura la aplicación.', emoji: '🗑️' }
+      { id: 6, title: 'Respaldo e importación', description: 'Exporta la configuración leída; el respaldo completo es de la base de datos.', emoji: '💾' },
+      { id: 7, title: 'Reinicio del sistema', description: 'Limpia los datos guardados en este navegador; no toca MariaDB.', emoji: '🗑️' }
     ],
     tab1: {
       visualTitle: "Identidad visual del sistema",
@@ -101,7 +113,10 @@ const TEXTS = {
       previewEn: "Preview · English",
       btnSave: "Guardar condiciones de cotización",
       alertMax: "Se muestran como máximo 8 condiciones para conservar el diseño del documento.",
-      confirmReset: "¿Deseas restablecer las condiciones a su estado predeterminado?",
+      confirmReset: "¿Deseas restablecer las condiciones registradas en MariaDB? Se descartarán los cambios no guardados de esta pestaña.",
+      newEs: "Nueva condición comercial.",
+      newEn: "New commercial condition.",
+      emptyList: "No hay condiciones registradas en MariaDB.",
       saveAlert: "¡Condiciones de cotización guardadas con éxito!"
     },
     tab5: {
@@ -128,7 +143,7 @@ const TEXTS = {
       notifyQuoteSub: "Se activa al cambiar el estado a \"Enviada al cliente\".",
       senderTitle: "Remitente y comportamiento",
       senderSub: "Define la identidad visible en los mensajes y el idioma predeterminado para clientes.",
-      senderBadge: "Cuota no consultada",
+      senderBadge: "Sin servicio de correo conectado",
       senderName: "Nombre del remitente",
       replyTo: "Correo para responder",
       customerEmailLang: "Idioma de correos al cliente",
@@ -139,7 +154,13 @@ const TEXTS = {
       btnSave: "Guardar correos automáticos",
       btnCheckQuota: "Consultar cuota disponible",
       saveAlert: "¡Configuración de correos automáticos guardada correctamente!",
-      quotaAlert: "Consultando cuota disponible de servidor de correo...",
+      quotaAlert: "No hay un servicio de envío de correos conectado a SupplyFlow; la cuota del original (MailApp de Google) no aplica. El historial muestra los envíos registrados en MariaDB.",
+      historyLoading: "Cargando historial de correos...",
+      historyError: "No se pudo leer el historial de correos.",
+      historyEmpty: "No hay correos registrados con estos filtros.",
+      pageText: "Página {0} de {1}",
+      prev: "Anterior",
+      next: "Siguiente",
       historyTitle: "Historial de correos",
       historySub: "Registra evento, destinatarios, resultado y fecha. El contenido confidencial no se almacena.",
       recordsCount: "registros",
@@ -149,15 +170,16 @@ const TEXTS = {
     },
     tab6: {
       title: "Respaldo e importación de datos",
-      subtitle: "Protege la información centralizada en Google Sheets.",
-      badgeFormat: "Google Sheets + Archivo JSON",
+      subtitle: "La información del sistema está en MariaDB; aquí solo se exporta la configuración leída.",
+      badgeFormat: "MariaDB + Archivo JSON",
       exportTitle: "Exportar respaldo",
-      exportDesc: "Descarga clientes, proveedores, requisiciones, categorías, validaciones, cotizaciones, órdenes, recepciones, facturas, configuración y bitácora.",
+      exportDesc: "Descarga en JSON la configuración leída de MariaDB (identidad, parámetros, aprobaciones, condiciones y correos). No incluye datos comerciales, contraseñas ni archivos.",
       importTitle: "Importar respaldo",
-      importDesc: "Restaura un archivo JSON generado previamente. La información importada reemplaza los datos actuales de la base compartida.",
+      importDesc: "Verifica un archivo JSON exportado desde esta pantalla y muestra su contenido. No se aplica: restaurar o modificar la configuración requiere autorización.",
       btnExport: "Exportar respaldo",
-      btnImport: "Importar respaldo",
-      footerNotice: "Los datos y archivos se guardan mediante Google Apps Script y Google Sheets. Realiza respaldos periódicos antes de reiniciar el sistema o importar otro archivo.",
+      btnImport: "Verificar archivo",
+      footerNotice: "El respaldo completo de la base (datos, cuentas y permisos) se hace con el procedimiento de respaldo de MariaDB del entorno (INT03), fuera de esta pantalla y guardado en el directorio privado, nunca en el proyecto.",
+      exportDone: "Configuración exportada. El archivo contiene solo lo que se leyó de MariaDB.",
       invalidJson: "Por favor selecciona un archivo válido en formato .JSON",
       confirmImport: "¿Estás seguro de que deseas importar \"{0}\"?\nEsta acción reemplazará los datos actuales de la base compartida.",
       importSuccess: "¡Respaldo importado correctamente!",
@@ -165,30 +187,39 @@ const TEXTS = {
     },
     tab7: {
       title: "Reinicio del sistema",
-      subtitle: "Elimina todos los registros locales y deja la aplicación como una instalación nueva.",
+      subtitle: "Limpia los datos que este navegador guarda localmente (preferencias y borradores). No elimina registros de MariaDB.",
       badgeRisk: "Zona de riesgo",
       warnTitle: "Advertencia:",
-      warnDesc: "Esta acción elimina clientes, proveedores, requisiciones, categorías personalizadas, validaciones, cotizaciones, órdenes de compra, recepciones, facturas, bitácora y configuración. Exporta un respaldo antes de continuar.",
-      btnExportBefore: "Exportar antes de reiniciar",
-      btnResetSystem: "Reiniciar sistema",
-      confirmFirst: "⚠️ ¡ADVERTENCIA DE ZONA DE RIESGO!\n\n¿Estás completamente seguro de que deseas reiniciar el sistema?\nEsta acción eliminará clientes, proveedores, requisiciones, cotizaciones y configuraciones locales de Grupo Gerez.",
+      warnDesc: "Esta acción solo borra el almacenamiento local de este navegador (idioma, preferencias y borradores sin enviar). Clientes, proveedores, requisiciones, cotizaciones, órdenes, recepciones, facturas, bitácora y configuración viven en MariaDB y no se modifican.",
+      btnExportBefore: "Exportar configuración",
+      btnResetSystem: "Limpiar datos de este navegador",
+      confirmFirst: "⚠️ ZONA DE RIESGO\n\n¿Deseas borrar los datos locales de este navegador (preferencias y borradores sin enviar)?\nLos registros de MariaDB no se modifican.",
       promptConfirm: "Para confirmar esta acción irreversible, escribe \"REINICIAR\" a continuación:",
       keyword: "REINICIAR",
-      resetSuccess: "El sistema se ha restaurado con éxito a su estado de fábrica.",
+      resetSuccess: "Se limpiaron los datos locales de este navegador. Los registros de MariaDB no se modificaron.",
       resetError: "Texto de confirmación incorrecto. El proceso de reinicio ha sido cancelado."
     }
   },
   en: {
     headerTitle: "Settings",
     headerSubtitle: "Manage your account, preferences, and general system settings.",
+    statusLoading: "Loading the settings stored in MariaDB...",
+    statusError: "The settings could not be read from MariaDB.",
+    statusReady: "MariaDB data (read-only)",
+    statusReadyNote: "Values come from organization_settings. \"Save\" validates the data but does not store it: settings writes are not authorized yet.",
+    retry: "Retry",
+    loadFirst: "Wait for the MariaDB settings to load before continuing.",
+    updatedText: "Last update: {0} · {1}",
+    unknownUser: "unregistered user",
+    noRecord: "No update record",
     tabs: [
       { id: 1, title: 'Identity & Formats', description: 'Logo, name, text, and document language.', emoji: '🎨' },
       { id: 2, title: 'Parameters Matrix', description: 'Currency, prefixes, alerts, minimum quotes, and VAT.', emoji: '📋' },
       { id: 3, title: 'Quote Approvals', description: 'Per-item and total limits; admins only.', emoji: '✅' },
       { id: 4, title: 'Quote Conditions', description: 'Default ES / EN PDF comments for the customer.', emoji: '📝' },
       { id: 5, title: 'Automatic Emails', description: 'Internal notices, customer communications, and dispatch log.', emoji: '✉️' },
-      { id: 6, title: 'Backup & Import', description: 'Export or restore all system information.', emoji: '💾' },
-      { id: 7, title: 'System Reset', description: 'Delete local data and restore application.', emoji: '🗑️' }
+      { id: 6, title: 'Backup & Import', description: 'Export the loaded settings; full backups belong to the database.', emoji: '💾' },
+      { id: 7, title: 'System Reset', description: 'Clears data stored in this browser; MariaDB is untouched.', emoji: '🗑️' }
     ],
     tab1: {
       visualTitle: "System Visual Identity",
@@ -277,7 +308,10 @@ const TEXTS = {
       previewEn: "Preview · English",
       btnSave: "Save Quote Conditions",
       alertMax: "Up to 8 conditions are displayed to preserve document layout.",
-      confirmReset: "Do you want to reset conditions to their default state?",
+      confirmReset: "Restore the conditions stored in MariaDB? Unsaved changes in this tab will be discarded.",
+      newEs: "Nueva condición comercial.",
+      newEn: "New commercial condition.",
+      emptyList: "There are no conditions stored in MariaDB.",
       saveAlert: "Quote conditions saved successfully!"
     },
     tab5: {
@@ -304,7 +338,7 @@ const TEXTS = {
       notifyQuoteSub: "Triggers when status changes to \"Sent to customer\".",
       senderTitle: "Sender and Behavior",
       senderSub: "Defines visible identity in messages and default language for customers.",
-      senderBadge: "Quota not checked",
+      senderBadge: "No mail service connected",
       senderName: "Sender Name",
       replyTo: "Reply-to Email",
       customerEmailLang: "Customer Email Language",
@@ -315,7 +349,13 @@ const TEXTS = {
       btnSave: "Save Automatic Emails",
       btnCheckQuota: "Check Available Quota",
       saveAlert: "Automatic email settings saved successfully!",
-      quotaAlert: "Checking available mail server quota...",
+      quotaAlert: "No mail delivery service is connected to SupplyFlow; the original quota (Google MailApp) does not apply. The log shows the deliveries stored in MariaDB.",
+      historyLoading: "Loading email log...",
+      historyError: "The email log could not be read.",
+      historyEmpty: "No emails match these filters.",
+      pageText: "Page {0} of {1}",
+      prev: "Previous",
+      next: "Next",
       historyTitle: "Email History",
       historySub: "Logs event, recipients, outcome, and date. Confidential content is not stored.",
       recordsCount: "records",
@@ -325,15 +365,16 @@ const TEXTS = {
     },
     tab6: {
       title: "Data Backup and Import",
-      subtitle: "Protects information centralized in Google Sheets.",
-      badgeFormat: "Google Sheets + JSON File",
+      subtitle: "System data lives in MariaDB; this only exports the loaded settings.",
+      badgeFormat: "MariaDB + JSON File",
       exportTitle: "Export Backup",
-      exportDesc: "Downloads clients, suppliers, requisitions, categories, validations, quotes, orders, receptions, invoices, settings, and audit log.",
+      exportDesc: "Downloads the settings read from MariaDB (identity, parameters, approvals, conditions and emails) as JSON. No commercial data, passwords or files.",
       importTitle: "Import Backup",
-      importDesc: "Restores a previously generated JSON file. Imported info replaces current data in shared database.",
+      importDesc: "Checks a JSON file exported from this screen and shows its content. It is not applied: restoring or changing settings requires authorization.",
       btnExport: "Export Backup",
-      btnImport: "Import Backup",
-      footerNotice: "Data and files are saved via Google Apps Script and Google Sheets. Make periodic backups before resetting the system or importing another file.",
+      btnImport: "Check file",
+      footerNotice: "Full database backups (data, accounts and grants) use the environment's MariaDB backup procedure (INT03), outside this screen and stored in the private directory, never in the project.",
+      exportDone: "Settings exported. The file only contains what was read from MariaDB.",
       invalidJson: "Please select a valid file in .JSON format",
       confirmImport: "Are you sure you want to import \"{0}\"?\nThis action will replace current data in the shared database.",
       importSuccess: "Backup imported successfully!",
@@ -341,16 +382,16 @@ const TEXTS = {
     },
     tab7: {
       title: "System Reset",
-      subtitle: "Deletes all local records and restores application as a fresh installation.",
+      subtitle: "Clears the data this browser stores locally (preferences and drafts). MariaDB records are not deleted.",
       badgeRisk: "Risk Zone",
       warnTitle: "Warning:",
-      warnDesc: "This action deletes clients, suppliers, requisitions, custom categories, validations, quotes, purchase orders, receptions, invoices, audit log, and settings. Export a backup before continuing.",
-      btnExportBefore: "Export Before Resetting",
-      btnResetSystem: "Reset System",
-      confirmFirst: "⚠️ RISK ZONE WARNING!\n\nAre you completely sure you want to reset the system?\nThis action will delete clients, suppliers, requisitions, quotes, and local settings for Grupo Gerez.",
+      warnDesc: "This only clears this browser's local storage (language, preferences and unsent drafts). Clients, suppliers, requisitions, quotes, orders, receptions, invoices, audit log and settings live in MariaDB and are not changed.",
+      btnExportBefore: "Export settings",
+      btnResetSystem: "Clear this browser's data",
+      confirmFirst: "⚠️ RISK ZONE\n\nClear this browser's local data (preferences and unsent drafts)?\nMariaDB records are not changed.",
       promptConfirm: "To confirm this irreversible action, type \"RESET\" below:",
       keyword: "RESET",
-      resetSuccess: "The system has been successfully restored to factory defaults.",
+      resetSuccess: "This browser's local data was cleared. MariaDB records were not changed.",
       resetError: "Incorrect confirmation text. System reset process canceled."
     }
   }
@@ -364,371 +405,249 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
   // Estado para controlar qué tarjeta/sección está activa (por defecto la 1)
   const [activeTab, setActiveTab] = useState(1);
 
-  // --- ESTADOS DE TARJETA 1 (IDENTIDAD Y FORMATOS) ---
-  const [identityForm, setIdentityForm] = useState({
-    nombreSistema: 'Grupo Gerez',
-    textoInferior: 'Aduanas y logística a nivel mundial',
-    empresaContratista: 'Trámites Aduanales Gerez S.C ',
-    idiomaPredeterminado: 'English',
-    idiomaClientes: 'English',
-    idiomaProveedores: 'English',
-    logotipoUrl: null, // Guardará la vista previa de la imagen cargada
-  });
+  // --- DATOS DE MARIADB (solo lectura): GET /api/v1/settings ---
+  // Los formularios se llenan con lo registrado en organization_settings; "Guardar" valida y no guarda.
+  const [load, setLoad] = useState({ status: 'loading', data: null, error: null });
+  const [reload, setReload] = useState(0);
+  const [orig, setOrig] = useState(null);
+  const [msg, setMsg] = useState({});
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoRemoved, setLogoRemoved] = useState(false);
+  const [logoMissing, setLogoMissing] = useState(false);
+  const settings = load.data;
+  const currencies = settings?.currencies || [];
+  const ready = load.status === 'ready';
+  const setTabMsg = (section, m) => setMsg(prev => ({ ...prev, [section]: m }));
 
-  // Handler para cambios en campos de texto y selects
+  // --- ESTADOS DE TARJETA 1 (IDENTIDAD Y FORMATOS) ---
+  const [identityForm, setIdentityForm] = useState(identityFrom(null));
+
   const handleIdentityChange = (e) => {
     const { name, value } = e.target;
-    setIdentityForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setIdentityForm((prev) => ({ ...prev, [name]: value }));
+    setTabMsg('identity', null);
   };
 
-  // Handler para la carga de archivo de imagen del logotipo
+  // Logotipo: vista previa local; no se sube (la escritura no está autorizada).
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setIdentityForm((prev) => ({
-          ...prev,
-          logotipoUrl: reader.result,
-        }));
-      };
-      reader.readAsDataURL(file);
-    }
+    if (!file) return;
+    setLogoFile(file); setLogoRemoved(false); setTabMsg('identity', null);
+    const reader = new FileReader();
+    reader.onloadend = () => setIdentityForm((prev) => ({ ...prev, logotipoUrl: reader.result }));
+    reader.readAsDataURL(file);
   };
 
-  // Handler para eliminar logotipo
   const handleRemoveLogo = () => {
-    setIdentityForm((prev) => ({
-      ...prev,
-      logotipoUrl: null,
-    }));
+    setIdentityForm((prev) => ({ ...prev, logotipoUrl: null }));
+    setLogoFile(null); setLogoRemoved(true); setTabMsg('identity', null);
   };
 
-  // Handler para guardar cambios
+  const finishSave = (section, title, err, changes) => {
+    if (!ready) { setTabMsg(section, { kind: 'error', text: t.loadFirst }); return; }
+    if (err) { setTabMsg(section, { kind: 'error', text: err.message, field: err.field }); return; }
+    const r = saveResult(section, changes);
+    setTabMsg(section, r);
+    if (onNotify && r.kind === 'locked') onNotify(title, r.text, 'warning');
+  };
+
   const handleSaveIdentity = (e) => {
     e.preventDefault();
-    if (onNotify) {
-      onNotify(t.tab1.visualTitle, t.tab1.saveAlert);
-    }
-    alert(t.tab1.saveAlert);
+    const { logotipoUrl, ...fields } = identityForm;
+    const { logotipoUrl: _o, ...origFields } = orig?.identity || {};
+    const changes = [...changedFields(origFields, fields), ...(logoFile || logoRemoved ? [fieldLabel('logotipoUrl')] : [])];
+    finishSave('identity', t.tab1.visualTitle, validateIdentity(identityForm, { logoFile }), changes);
   };
 
   // --- ESTADOS DE TARJETA 2 (MATRIZ DE PARÁMETROS) ---
-  const [paramsForm, setParamsForm] = useState({
-    monedaBase: 'MXN',
-    prefijoRequisicion: '',
-    prefijoOrdenCompra: '',
-    diasAlerta: 0,
-    cotizacionesMinimas: 0,
-    ivaDefecto: 0,
-  });
+  const [paramsForm, setParamsForm] = useState(paramsFrom(null));
 
-  // Handler para actualizar los inputs
   const handleParamsChange = (e) => {
     const { name, value } = e.target;
-    setParamsForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setParamsForm((prev) => ({ ...prev, [name]: value }));
+    setTabMsg('params', null);
   };
 
-  // Handler para guardar la matriz de parámetros
   const handleSaveParams = (e) => {
     e.preventDefault();
-    if (onNotify) {
-      onNotify(t.tab2.title, t.tab2.saveAlert);
-    }
-    alert(t.tab2.saveAlert);
+    finishSave('params', t.tab2.title, validateParams(paramsForm, currencies), changedFields(orig?.params, paramsForm));
   };
 
   // --- ESTADOS DE TARJETA 3 (APROBACIONES DE COTIZACIÓN) ---
-  const [approvalForm, setApprovalForm] = useState({
-    activarRegla: 'Sí, aplicar automáticamente',
-    monedaRegla: 'MXN · Peso mexicano',
-    limiteArticulo: 0,
-    limiteTotal: 0.0,
-  });
+  const [approvalForm, setApprovalForm] = useState(approvalFrom(null));
 
-  // Handler para cambios en campos
   const handleApprovalChange = (e) => {
     const { name, value } = e.target;
-    setApprovalForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setApprovalForm((prev) => ({ ...prev, [name]: value }));
+    setTabMsg('approvals', null);
   };
 
-  // Handler para guardar límites
   const handleSaveApprovals = (e) => {
     e.preventDefault();
-    if (onNotify) {
-      onNotify(t.tab3.title, t.tab3.saveAlert);
-    }
-    alert(t.tab3.saveAlert);
+    finishSave('approvals', t.tab3.title, validateApprovals(approvalForm, currencies), changedFields(orig?.approvals, approvalForm));
   };
+  const policy = settings?.approvals?.policy || null;
+  const approvalNotes = ready ? approvalWarnings(approvalForm, policy) : [];
 
-  // --- CONDICIONES PREDETERMINADAS INICIALES ---
-  const defaultConditions = [
-    {
-      id: 1,
-      activa: true,
-      es: 'Precios en {CURRENCY}.',
-      en: 'Prices in {CURRENCY}.',
-    },
-    {
-      id: 2,
-      activa: true,
-      es: 'Tiempo de entrega estimado sujeto a disponibilidad una vez confirmada la orden de compra.',
-      en: 'Estimated delivery time subject to availability once the purchase order has been confirmed.',
-    },
-    {
-      id: 3,
-      activa: true,
-      es: 'Precios sujetos a cambio por el proveedor.',
-      en: 'Prices subject to change by the provider.',
-    },
-    {
-      id: 4,
-      activa: true,
-      es: 'Nueva condición comercial.',
-      en: 'New commercial condition.',
-    },
-  ];
+  // --- ESTADOS DE TARJETA 4 (condiciones registradas en MariaDB) ---
+  const [conditions, setConditions] = useState([]);
+  const touchConditions = () => setTabMsg('conditions', null);
 
-  // --- ESTADOS DE TARJETA 4 ---
-  const [conditions, setConditions] = useState(defaultConditions);
-
-  // Manejar checkbox de activado
   const handleToggleCondition = (id) => {
-    setConditions((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, activa: !item.activa } : item))
-    );
+    setConditions((prev) => prev.map((item) => (item.id === id ? { ...item, activa: !item.activa } : item)));
+    touchConditions();
   };
 
-  // Manejar cambios en el texto (ES / EN)
   const handleConditionTextChange = (id, field, value) => {
-    setConditions((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
-    );
+    setConditions((prev) => prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)));
+    touchConditions();
   };
 
   // Agregar nueva condición (máximo 8)
   const handleAddCondition = () => {
-    if (conditions.length >= 8) {
-      alert(t.tab4.alertMax);
+    if (conditions.length >= MAX_CONDITIONS) {
+      setTabMsg('conditions', { kind: 'error', text: t.tab4.alertMax });
       return;
     }
-    const newId = Date.now();
-    setConditions((prev) => [
-      ...prev,
-      {
-        id: newId,
-        activa: true,
-        es: 'Nueva condición comercial.',
-        en: 'New commercial condition.',
-      },
-    ]);
+    setConditions((prev) => [...prev, { id: Date.now(), activa: true, es: t.tab4.newEs, en: t.tab4.newEn }]);
+    touchConditions();
   };
 
-  // Eliminar condición
   const handleDeleteCondition = (id) => {
     setConditions((prev) => prev.filter((item) => item.id !== id));
+    touchConditions();
   };
 
-  // Restablecer valores predeterminados
+  // Restablecer: vuelve a las condiciones registradas en MariaDB.
   const handleResetConditions = () => {
     if (window.confirm(t.tab4.confirmReset)) {
-      setConditions(defaultConditions);
+      setConditions(orig?.conditions || []);
+      touchConditions();
     }
   };
 
-  // Guardar condiciones
   const handleSaveConditions = (e) => {
     e.preventDefault();
-    if (onNotify) {
-      onNotify(t.tab4.title, t.tab4.saveAlert);
-    }
-    alert(t.tab4.saveAlert);
+    finishSave('conditions', t.tab4.title, validateConditions(conditions), changedConditions(orig?.conditions, conditions));
   };
 
-  // Conteo de activas
   const activeCount = conditions.filter((c) => c.activa).length;
 
   // --- ESTADOS DE TARJETA 5 (CORREOS AUTOMÁTICOS) ---
-  const [emailConfig, setEmailConfig] = useState({
-    // Notificaciones internas
-    activarInternos: true,
-    copiarComprador: true,
-    copiarAdministradores: true,
+  const [emailConfig, setEmailConfig] = useState(emailFrom(null));
 
-    // Comunicaciones al cliente
-    activarCliente: false,
-    confirmarRequisicion: false,
-    avisarAvances: false,
-    avisarCotizacion: false,
-    avisarEntrega: false,
-    avisarFactura: false,
-
-    // Remitente y comportamiento
-    nombreRemitente: 'Grupo Gerez',
-    correoResponder: 'compras@grupogerez.com',
-    idiomaCliente: 'Español',
-    maxDestinatarios: 0,
-  });
-
-  // Estado de búsqueda y filtro para el historial
+  // Historial real (email_delivery_logs): búsqueda y filtro en el servidor, 10 por página.
   const [searchHistory, setSearchHistory] = useState('');
-  const [filterStatus, setFilterStatus] = useState('Todos los resultados');
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [historyPage, setHistoryPage] = useState(1);
+  const [history, setHistory] = useState({ status: 'loading', data: null, error: null });
 
-  // Handlers de cambio de input y checkbox
   const handleEmailCheckChange = (e) => {
     const { name, checked } = e.target;
     setEmailConfig((prev) => ({ ...prev, [name]: checked }));
+    setTabMsg('email', null);
   };
 
   const handleEmailInputChange = (e) => {
     const { name, value } = e.target;
     setEmailConfig((prev) => ({ ...prev, [name]: value }));
+    setTabMsg('email', null);
   };
 
   const handleSaveEmails = (e) => {
     e.preventDefault();
-    if (onNotify) {
-      onNotify(t.tab5.historyTitle, t.tab5.saveAlert);
-    }
-    alert(t.tab5.saveAlert);
+    finishSave('email', t.tab5.historyTitle, validateEmail(emailConfig), changedFields(orig?.email, emailConfig));
   };
 
-  // Mock de Historial adaptado para Grupo Gerez
-  const mockEmailHistory = [
-    {
-      id: 1,
-      fecha: '2026-09-08T23:49:40.009Z',
-      evento: 'Flujo de Orden de Compra',
-      referencia: 'OC-2026-0026',
-      destinatarios: [
-        'Para: usuario.compras@grupogerez.com',
-        'CC: admin.sistema@grupogerez.com',
-        'CC: gerencia@grupogerez.com',
-      ],
-      resultado: 'Enviado',
-      detalle: 'Enviado a 3 destinatario(s).',
-    },
-    {
-      id: 2,
-      fecha: '2026-09-08T23:49:29.778Z',
-      evento: 'Flujo de Orden de Compra',
-      referencia: 'OC-2026-0025',
-      destinatarios: [
-        'Para: usuario.compras@grupogerez.com',
-        'CC: admin.sistema@grupogerez.com',
-      ],
-      resultado: 'Enviado',
-      detalle: 'Enviado a 2 destinatario(s).',
-    },
-    {
-      id: 3,
-      fecha: '2026-09-08T23:47:52.096Z',
-      evento: 'Notificación de Requisición',
-      referencia: 'REQ-2026-0104',
-      destinatarios: ['Para: solicitante@grupogerez.com'],
-      resultado: 'Enviado',
-      detalle: 'Enviado a 1 destinatario(s).',
-    },
-  ];
-
-  const filteredHistory = mockEmailHistory.filter((item) => {
-    const matchesSearch = 
-      item.evento.toLowerCase().includes(searchHistory.toLowerCase()) ||
-      item.referencia.toLowerCase().includes(searchHistory.toLowerCase()) ||
-      item.resultado.toLowerCase().includes(searchHistory.toLowerCase()) ||
-      item.destinatarios.some(d => d.toLowerCase().includes(searchHistory.toLowerCase()));
-
-    const matchesStatus = 
-      filterStatus === 'Todos los resultados' || filterStatus === 'All outcomes' || 
-      item.resultado.toLowerCase() === filterStatus.toLowerCase();
-
-    return matchesSearch && matchesStatus;
-  });
-
-  // --- ESTADOS Y HANDLERS DE TARJETA 6 (RESPALDO E IMPORTACIÓN) ---
+  // --- TARJETA 6: exportar la configuración leída de MariaDB; importar solo verifica el archivo ---
   const fileInputRef = useRef(null);
 
-  const handleExportBackup = () => {
-    const backupData = {
-      empresa: identityForm.nombreSistema,
-      fechaExportacion: new Date().toISOString(),
-      identidad: identityForm,
-      parametros: paramsForm,
-      aprobaciones: approvalForm,
-      condiciones: conditions,
-      correos: emailConfig,
-    };
-
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupData, null, 2));
+  const handleExportBackup = (section = 'backup') => {
+    if (!ready) { setTabMsg(section, { kind: 'error', text: t.loadFirst }); return; }
+    const dataStr = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(exportConfig(settings), null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `Respaldo_GrupoGerez_${new Date().toISOString().slice(0, 10)}.json`);
+    downloadAnchor.setAttribute('download', `Configuracion_SupplyFlow_${new Date().toISOString().slice(0, 10)}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+    setTabMsg(section, { kind: 'info', text: t.tab6.exportDone });
   };
 
   const handleTriggerImport = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
+    if (fileInputRef.current) fileInputRef.current.click();
   };
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
-      alert(t.tab6.invalidJson);
+      setTabMsg('backup', { kind: 'error', text: t.tab6.invalidJson });
+      e.target.value = '';
       return;
     }
-
-    const confirmImport = window.confirm(
-      t.tab6.confirmImport.replace('{0}', file.name)
-    );
-
-    if (confirmImport) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          const json = JSON.parse(event.target.result);
-          console.log('Datos importados:', json);
-          alert(t.tab6.importSuccess);
-        } catch (err) {
-          alert(t.tab6.jsonError);
-        }
-      };
-      reader.readAsText(file);
-    }
-
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const r = importCheck(String(event.target.result || ''));
+      setTabMsg('backup', { kind: r.ok ? 'locked' : 'error', text: r.message });
+    };
+    reader.readAsText(file);
     e.target.value = '';
   };
 
-  // --- HANDLER PARA TARJETA 7 (REINICIO DEL SISTEMA) ---
+  // --- TARJETA 7: solo limpia el almacenamiento local de este navegador (no toca MariaDB) ---
   const handleResetSystem = () => {
     const confirmFirst = window.confirm(t.tab7.confirmFirst);
-
     if (confirmFirst) {
       const confirmSecond = window.prompt(t.tab7.promptConfirm);
-
       if (confirmSecond === t.tab7.keyword) {
-        localStorage.clear();
-        alert(t.tab7.resetSuccess);
-        window.location.reload();
+        try { localStorage.clear(); } catch { /* almacenamiento no disponible */ }
+        setTabMsg('reset', { kind: 'info', text: t.tab7.resetSuccess });
       } else if (confirmSecond !== null) {
-        alert(t.tab7.resetError);
+        setTabMsg('reset', { kind: 'error', text: t.tab7.resetError });
       }
     }
   };
+
+  useEffect(() => {
+    const c = new AbortController();
+    setLoad((l) => ({ ...l, status: 'loading', error: null }));
+    getSettings(c.signal).then((d) => {
+      if (c.signal.aborted) return;
+      const o = { identity: identityFrom(d), params: paramsFrom(d), approvals: approvalFrom(d), conditions: conditionsFrom(d), email: emailFrom(d) };
+      setOrig(o); setIdentityForm(o.identity); setParamsForm(o.params); setApprovalForm(o.approvals); setConditions(o.conditions); setEmailConfig(o.email);
+      setLogoFile(null); setLogoRemoved(false); setLogoMissing(false); setMsg({});
+      setLoad({ status: 'ready', data: d, error: null });
+    }).catch((e) => { if (!c.signal.aborted) setLoad({ status: 'error', data: null, error: e }); });
+    return () => c.abort();
+  }, [reload]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const id = setTimeout(() => { if (searchHistory.trim() !== historyQuery) { setHistoryQuery(searchHistory.trim()); setHistoryPage(1); } }, 300);
+    return () => clearTimeout(id);
+  }, [searchHistory]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeTab !== 5) return undefined;
+    const c = new AbortController();
+    setHistory((h) => ({ ...h, status: 'loading', error: null }));
+    getEmailLog({ q: historyQuery, status: filterStatus, page: historyPage, page_size: 10 }, c.signal)
+      .then((d) => { if (!c.signal.aborted) setHistory({ status: 'ready', data: d, error: null }); })
+      .catch((e) => { if (!c.signal.aborted) setHistory((h) => ({ ...h, status: 'error', error: e })); });
+    return () => c.abort();
+  }, [activeTab, historyQuery, filterStatus, historyPage, reload]);
+  const historyRows = history.data?.items || [];
+  const historyPages = Math.max(1, Math.ceil((history.data?.total || 0) / 10));
+
+  const saveMsg = (section) => {
+    const m = msg[section];
+    if (!m) return null;
+    const tone = m.kind === 'error' ? 'border-rose-200 bg-rose-50 text-rose-700' : m.kind === 'locked' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-blue-200 bg-blue-50 text-blue-800';
+    return <div role={m.kind === 'error' ? 'alert' : 'status'} data-testid={`cfg-msg-${section}`} className={`rounded-xl border px-4 py-2.5 text-[12px] font-semibold ${tone}`}>{m.kind === 'locked' ? '🔒 ' : ''}{m.text}</div>;
+  };
+  const metaOf = group => settings?.meta?.[group] || null;
+  const metaText = group => { const m = metaOf(group); return m && (m.updated_at || m.updated_by) ? t.updatedText.replace('{0}', utcText(m.updated_at, isEn)).replace('{1}', m.updated_by || t.unknownUser) : t.noRecord; };
 
   return (
     <div className="space-y-6">
@@ -739,6 +658,25 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
           {t.headerSubtitle}
         </p>
       </div>
+
+      {/* Estado de la lectura de MariaDB */}
+      {load.status === 'loading' && (
+        <div role="status" data-testid="cfg-status" className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-600">⏳ {t.statusLoading}</div>
+      )}
+      {load.status === 'error' && (
+        <div role="alert" data-testid="cfg-status" className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+          <span><b>{t.statusError}</b> {load.error?.message || ''}</span>
+          {![401, 403].includes(load.error?.status) && (
+            <button type="button" onClick={() => setReload((n) => n + 1)} className="shrink-0 rounded-xl bg-rose-600 px-4 py-2 font-extrabold text-white hover:bg-rose-700 cursor-pointer">{t.retry}</button>
+          )}
+        </div>
+      )}
+      {ready && (
+        <div role="status" data-testid="cfg-status" className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-xs text-emerald-900">
+          <span className="shrink-0 rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">{t.statusReady}</span>
+          <span className="font-medium leading-relaxed">{t.statusReadyNote}</span>
+        </div>
+      )}
 
       {/* GRID DE TARJETAS DE CONFIGURACIÓN */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
@@ -789,11 +727,12 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
       </div>
 
       {/* ÁREA DE CONTENIDO DINÁMICO SEGÚN LA TARJETA SELECCIONADA CON ANIMACIÓN FADE-IN */}
-      <div className="pt-2 animate-fadeIn transition-all duration-300">
+      {/* text-xs en el contenedor: la regla global "font: inherit" de index.css hace que campos y botones hereden este tamaño. */}
+      <div className="pt-2 animate-fadeIn transition-all duration-300 text-xs">
         
         {/* 1. IDENTIDAD Y FORMATOS */}
         {activeTab === 1 && (
-          <form onSubmit={handleSaveIdentity} className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fadeIn">
+          <form noValidate onSubmit={handleSaveIdentity} className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fadeIn">
             
             {/* COLUMNA IZQUIERDA: Identidad visual del sistema */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5 flex flex-col justify-between">
@@ -870,8 +809,18 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                           alt="Logotipo Principal"
                           className="max-h-full max-w-full object-contain"
                         />
+                      ) : ready && settings.identity?.logo?.configured && !logoRemoved && !logoMissing ? (
+                        <img
+                          src={SETTINGS_LOGO_URL}
+                          alt="Logotipo Principal"
+                          data-testid="cfg-logo"
+                          onError={() => setLogoMissing(true)}
+                          className="max-h-full max-w-full object-contain"
+                        />
                       ) : (
-                        <span className="text-[11px] font-medium text-slate-400">{t.tab1.noLogo}</span>
+                        <span className="text-[11px] font-medium text-slate-400">
+                          {ready && settings.identity?.logo?.configured && !logoRemoved ? (isEn ? 'Registered logo; file not available on this computer' : 'Logotipo registrado; archivo no disponible en este equipo') : t.tab1.noLogo}
+                        </span>
                       )}
                     </div>
 
@@ -879,7 +828,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                     <div className="space-y-2 w-full">
                       <input
                         type="file"
-                        accept="image/*"
+                        accept="image/png,image/jpeg,image/webp"
                         onChange={handleLogoUpload}
                         className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-extrabold file:bg-white file:text-slate-800 hover:file:bg-slate-100 file:border-slate-200 file:border border border-slate-200 rounded-xl cursor-pointer"
                       />
@@ -932,6 +881,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                       onChange={handleIdentityChange}
                       className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     >
+                      <option value="" disabled>{isEn ? 'Not defined' : 'Sin definir'}</option>
                       <option value="English">English</option>
                       <option value="Español">Español</option>
                     </select>
@@ -948,6 +898,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                       onChange={handleIdentityChange}
                       className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     >
+                      <option value="" disabled>{isEn ? 'Not defined' : 'Sin definir'}</option>
                       <option value="English">English</option>
                       <option value="Español">Español</option>
                     </select>
@@ -964,6 +915,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                       onChange={handleIdentityChange}
                       className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     >
+                      <option value="" disabled>{isEn ? 'Not defined' : 'Sin definir'}</option>
                       <option value="English">English</option>
                       <option value="Español">Español</option>
                     </select>
@@ -988,6 +940,8 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                   <span>💾</span> {t.tab1.btnSave}
                 </button>
               </div>
+              <p className="text-[10px] font-medium text-slate-400">{metaText('legacy_branding')}</p>
+              {saveMsg('identity')}
             </div>
 
           </form>
@@ -995,7 +949,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
 
         {/* 2. MATRIZ DE PARÁMETROS */}
         {activeTab === 2 && (
-          <form onSubmit={handleSaveParams} className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 animate-fadeIn">
+          <form noValidate onSubmit={handleSaveParams} className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 animate-fadeIn">
             
             {/* Encabezado con badge */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1025,9 +979,8 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                   onChange={handleParamsChange}
                   className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 >
-                  <option value="MXN">MXN</option>
-                  <option value="USD">USD</option>
-                  <option value="EUR">EUR</option>
+                  {!currencies.some((c) => c.code === paramsForm.monedaBase) && <option value={paramsForm.monedaBase} disabled>{paramsForm.monedaBase || (isEn ? 'Not defined' : 'Sin definir')}</option>}
+                  {currencies.map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
                 </select>
               </div>
 
@@ -1191,13 +1144,15 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                 <span>💾</span> {t.tab2.btnSave}
               </button>
             </div>
+            <p className="text-[10px] font-medium text-slate-400">{metaText('legacy_purchasing')}</p>
+            {saveMsg('params')}
 
           </form>
         )}
 
         {/* 3. APROBACIONES DE COTIZACIÓN */}
         {activeTab === 3 && (
-          <form onSubmit={handleSaveApprovals} className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 animate-fadeIn">
+          <form noValidate onSubmit={handleSaveApprovals} className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 animate-fadeIn">
             
             {/* Encabezado con badge amarillo */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1219,6 +1174,20 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
               <span className="font-extrabold">{t.tab3.activeRule}</span> {t.tab3.bannerText}
             </div>
 
+            {ready && (
+              <div data-testid="cfg-policy" className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 leading-relaxed space-y-1">
+                {policy ? (
+                  <p><span className="font-extrabold text-slate-900">{isEn ? 'Versioned policy in force' : 'Política versionada vigente'} v{policy.version_number}</span>{' · '}
+                    {isEn ? 'item' : 'artículo'} {policy.unit_price_limit ?? '—'} · {isEn ? 'total' : 'total'} {policy.document_limit ?? '—'} {policy.currency || ''}{' · '}
+                    {isEn ? 'effective' : 'vigente desde'} {utcText(policy.effective_from, isEn)}</p>
+                ) : (
+                  <p>{isEn ? 'No versioned customer-quote policy is registered (approval_policy_versions).' : 'No hay una política versionada de cotización al cliente registrada (approval_policy_versions).'}</p>
+                )}
+                <p className="text-slate-500">{isEn ? 'Total base' : 'Base del total'}: {TOTAL_BASES[settings.approvals?.total_base] || settings.approvals?.total_base || '—'}{' · '}{metaText('legacy_quote_policy')}</p>
+                {approvalNotes.map((w) => <p key={w} className="font-semibold text-amber-800">⚠ {w}</p>)}
+              </div>
+            )}
+
             {/* CAMPOS DE FORMULARIO DE LÍMITES */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Activar regla por monto */}
@@ -1232,6 +1201,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                   onChange={handleApprovalChange}
                   className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 >
+                  <option value="" disabled>{isEn ? 'Not defined' : 'Sin definir'}</option>
                   <option value="Sí, aplicar automáticamente">{t.tab3.optYes}</option>
                   <option value="No, requerir siempre 3 firmas">{t.tab3.optNo}</option>
                 </select>
@@ -1248,7 +1218,8 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                   onChange={handleApprovalChange}
                   className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 >
-                  <option value="MXN · Peso mexicano">MXN · Peso mexicano</option>
+                  {!currencies.some((c) => c.code === approvalForm.monedaRegla) && <option value={approvalForm.monedaRegla} disabled>{approvalForm.monedaRegla || (isEn ? 'Not defined' : 'Sin definir')}</option>}
+                  {currencies.map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}</option>)}
                 </select>
               </div>
 
@@ -1259,6 +1230,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                 </label>
                 <input
                   type="number"
+                  step="0.01"
                   name="limiteArticulo"
                   value={approvalForm.limiteArticulo}
                   onChange={handleApprovalChange}
@@ -1379,13 +1351,14 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                 <span>💾</span> {t.tab3.btnSave}
               </button>
             </div>
+            {saveMsg('approvals')}
 
           </form>
         )}
 
         {/* 4. CONDICIONES DE COTIZACIÓN */}
         {activeTab === 4 && (
-          <form onSubmit={handleSaveConditions} className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 animate-fadeIn">
+          <form noValidate onSubmit={handleSaveConditions} className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6 animate-fadeIn">
             
             {/* Encabezado con badge púrpura */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1453,6 +1426,9 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
               </div>
 
               <div className="divide-y divide-slate-200/60 p-2 space-y-2">
+                {ready && conditions.length === 0 && (
+                  <p className="p-3 text-center text-xs font-medium text-slate-500">{t.tab4.emptyList}</p>
+                )}
                 {conditions.map((item) => (
                   <div
                     key={item.id}
@@ -1511,7 +1487,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                     .filter((c) => c.activa)
                     .map((c) => (
                       <li key={c.id} className="leading-snug">
-                        {c.es.replace('{CURRENCY}', 'MXN')}
+                        {c.es.replaceAll('{CURRENCY}', paramsForm.monedaBase || 'MXN')}
                       </li>
                     ))}
                 </ul>
@@ -1524,7 +1500,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                     .filter((c) => c.activa)
                     .map((c) => (
                       <li key={c.id} className="leading-snug">
-                        {c.en.replace('{CURRENCY}', 'MXN')}
+                        {c.en.replaceAll('{CURRENCY}', paramsForm.monedaBase || 'MXN')}
                       </li>
                     ))}
                 </ul>
@@ -1540,6 +1516,8 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                 <span>💾</span> {t.tab4.btnSave}
               </button>
             </div>
+            <p className="text-[10px] font-medium text-slate-400">{metaText('legacy_quote_conditions')}</p>
+            {saveMsg('conditions')}
 
           </form>
         )}
@@ -1547,7 +1525,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
         {/* 5. CORREOS AUTOMÁTICOS */}
         {activeTab === 5 && (
           <div className="space-y-6 animate-fadeIn">
-            <form onSubmit={handleSaveEmails} className="space-y-6">
+            <form noValidate onSubmit={handleSaveEmails} className="space-y-6">
               
               {/* SECCIÓN SUPERIOR: 2 COLUMNAS (INTERNAS Y CLIENTE) */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1759,6 +1737,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                       onChange={handleEmailInputChange}
                       className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     >
+                      <option value="" disabled>{isEn ? 'Not defined' : 'Sin definir'}</option>
                       <option value="Español">{t.tab5.optEs}</option>
                       <option value="Inglés">{t.tab5.optEn}</option>
                       <option value="Usar el idioma de documentos para clientes">{t.tab5.optUseDoc}</option>
@@ -1792,12 +1771,14 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
 
                   <button
                     type="button"
-                    onClick={() => alert(t.tab5.quotaAlert)}
+                    onClick={() => setTabMsg('email', { kind: 'info', text: t.tab5.quotaAlert })}
                     className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer"
                   >
                     <span>✉️</span> {t.tab5.btnCheckQuota}
                   </button>
                 </div>
+                <p className="text-[10px] font-medium text-slate-400">{metaText('legacy_email')}</p>
+                {saveMsg('email')}
               </div>
             </form>
 
@@ -1813,7 +1794,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                   </p>
                 </div>
                 <span className="px-3 py-1 bg-purple-100 text-purple-700 font-extrabold text-[11px] rounded-full">
-                  {filteredHistory.length} {t.tab5.recordsCount}
+                  {history.data?.total ?? 0} {t.tab5.recordsCount}
                 </span>
               </div>
 
@@ -1828,13 +1809,11 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                 />
                 <select
                   value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
+                  onChange={(e) => { setFilterStatus(e.target.value); setHistoryPage(1); }}
                   className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 >
-                  <option value="Todos los resultados">{t.tab5.filterAll}</option>
-                  <option value="Enviado">Enviado</option>
-                  <option value="Omitido">Omitido</option>
-                  <option value="Error">Error</option>
+                  <option value="">{t.tab5.filterAll}</option>
+                  {(history.data?.statuses || []).map((st) => <option key={st.status} value={st.status}>{st.status} ({st.count})</option>)}
                 </select>
               </div>
 
@@ -1852,36 +1831,60 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                    {filteredHistory.map((item) => (
-                      <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="py-3 px-4 text-[11px] text-slate-500 font-mono whitespace-nowrap">
-                          {item.fecha}
-                        </td>
-                        <td className="py-3 px-4 font-bold text-slate-900">
-                          {item.evento}
-                        </td>
-                        <td className="py-3 px-4 text-slate-700 font-semibold whitespace-nowrap">
-                          {item.referencia}
-                        </td>
-                        <td className="py-3 px-4 text-[11px] space-y-0.5">
-                          {item.destinatarios.map((dest, i) => (
-                            <div key={i} className="text-slate-600 font-mono">
-                              {dest}
-                            </div>
-                          ))}
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-black">
-                            {item.resultado}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-slate-600">
-                          {item.detalle}
-                        </td>
-                      </tr>
-                    ))}
+                    {history.status === 'loading' && !historyRows.length && (
+                      <tr><td colSpan={6} className="py-6 px-4 text-center text-slate-500">{t.tab5.historyLoading}</td></tr>
+                    )}
+                    {history.status === 'error' && (
+                      <tr><td colSpan={6} role="alert" className="py-6 px-4 text-center text-rose-700 font-semibold">{t.tab5.historyError} {history.error?.message || ''}</td></tr>
+                    )}
+                    {history.status === 'ready' && !historyRows.length && (
+                      <tr><td colSpan={6} className="py-6 px-4 text-center text-slate-500">{t.tab5.historyEmpty}</td></tr>
+                    )}
+                    {history.status !== 'error' && historyRows.map((item, idx) => {
+                      const tone = { green: 'bg-emerald-100 text-emerald-800', amber: 'bg-amber-100 text-amber-800', red: 'bg-rose-100 text-rose-800', gray: 'bg-slate-100 text-slate-700' }[statusTone(item.status)];
+                      return (
+                        <tr key={`${item.occurred_at}-${item.reference}-${idx}`} data-testid="cfg-mail-row" className="hover:bg-slate-50/50 transition-colors">
+                          <td className="py-3 px-4 text-[11px] text-slate-500 font-mono whitespace-nowrap">
+                            {utcText(item.occurred_at, isEn)}
+                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-900">
+                            {item.event || '—'}
+                          </td>
+                          <td className="py-3 px-4 text-slate-700 font-semibold whitespace-nowrap">
+                            {item.reference || '—'}
+                          </td>
+                          <td className="py-3 px-4 text-[11px] space-y-0.5">
+                            {recipientLines(item.recipients).map((dest, i) => (
+                              <div key={i} className="text-slate-600 font-mono break-all">
+                                {dest}
+                              </div>
+                            ))}
+                            {!item.recipients?.length && <span className="text-slate-400">—</span>}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${tone}`}>
+                              {item.status || '—'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-slate-600">
+                            {item.detail || '—'}{item.attempt > 1 ? ` · ${isEn ? 'attempt' : 'intento'} ${item.attempt}` : ''}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Paginación del historial */}
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-slate-500 font-medium">{t.tab5.pageText.replace('{0}', historyPage).replace('{1}', historyPages)}</span>
+                <div className="flex gap-2">
+                  <button type="button" disabled={historyPage <= 1 || history.status === 'loading'} onClick={() => setHistoryPage((n) => Math.max(1, n - 1))}
+                    className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-extrabold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">{t.tab5.prev}</button>
+                  <button type="button" disabled={historyPage >= historyPages || history.status === 'loading'} onClick={() => setHistoryPage((n) => Math.min(historyPages, n + 1))}
+                    className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white font-extrabold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">{t.tab5.next}</button>
+                </div>
               </div>
             </div>
           </div>
@@ -1936,7 +1939,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
             <div className="flex items-center gap-3 pt-1">
               <button
                 type="button"
-                onClick={handleExportBackup}
+                onClick={() => handleExportBackup('backup')}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer"
               >
                 <span>🡻</span> {t.tab6.btnExport}
@@ -1950,6 +1953,8 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                 <span>🡹</span> {t.tab6.btnImport}
               </button>
             </div>
+
+            {saveMsg('backup')}
 
             {/* BANNER INFORMATIVO INFERIOR */}
             <div className="p-3.5 bg-amber-50/70 border-l-4 border-amber-500 rounded-xl text-xs text-amber-950 font-medium leading-relaxed">
@@ -1989,7 +1994,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
             <div className="flex items-center gap-3 pt-1">
               <button
                 type="button"
-                onClick={handleExportBackup}
+                onClick={() => handleExportBackup('reset')}
                 className="px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 font-extrabold text-xs rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
               >
                 <span>🡻</span> {t.tab7.btnExportBefore}
@@ -2003,6 +2008,7 @@ export const Configuration = ({ onNotify, lang = 'es', language, isEnglish }) =>
                 <span>🗑️</span> {t.tab7.btnResetSystem}
               </button>
             </div>
+            {saveMsg('reset')}
           </div>
         )}
       </div>
