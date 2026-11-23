@@ -15,6 +15,30 @@
 
 `App.jsx` ya no muestra el aviso genérico «Módulo pendiente de integración» en ningún módulo del menú: Configuración, Flujo del Proceso y la vista previa del Portal del Cliente tienen su propio aviso «solo lectura».
 
+## 1.1 Auditoría del 23 nov 2026 (código + recorrido en vivo)
+
+- **Recorrido** (`tests/frontend/system_audit_e2e.cjs`, solo lectura):
+  - 18 módulos del menú y 87 pantallas (cada tarjeta o pestaña superior).
+  - 97 respuestas de la API, todas 200.
+  - Sin errores de JavaScript, sin pantallas detenidas en «Cargando» y sin avisos de «pendiente de integración» ni datos de demostración.
+  - Las pestañas sin consultas propias reutilizan lo cargado al entrar al módulo.
+- **Código activo**:
+  - 134 archivos alcanzables desde `main.jsx`.
+  - Sin `mock`/`demo`, sin `console.log` y sin guardados simulados.
+  - Las listas fijas son opciones de catálogo (estatus, tipos, monedas).
+- **Regresión completa**: 24 suites de interfaz, 17 HTTP, 385 pruebas unitarias e INT03-D1, todas en verde.
+- **Hallazgos**:
+  1. **Guardado de catálogos en la PC del usuario.** El arranque documentado en `CLAUDE.md` no incluye `compose.supply-catalogwrite.yml`, y la cuenta `supplyflow_catalogwrite_local` no está en el contrato 77/52. Sin aprovisionarla (requiere autorización), el alta y edición de Clientes, Proveedores y Suministros avisa que no está habilitada y no guarda.
+  2. **Código sin uso, sin efecto en la operación (limpieza pendiente):**
+     - 8 vistas antiguas con datos de demostración (unas 15,800 líneas) y `src/views/clients/clientWriteApi.js`.
+     - El estado `quotes` que `App.jsx` guarda en `localStorage` y que ningún módulo usa.
+     - El estado de ejemplo que `ContractorManagement.jsx` conserva sin mostrarlo (partidas y 2 validaciones ficticias).
+     - Los textos `saveAlert` de Configuración.
+  3. **Botón «PORTAL» de la Matriz de clientes.** Abre el Portal del Cliente sin preseleccionar a ese cliente en la vista previa.
+  4. **Endpoints de detalle no usados por ninguna pantalla** (lecturas adicionales, sin riesgo): `reception/receipts/{id}`, `quotes/supplier-quotes/{id}`, `quotes/rfq-requisitions/{id}` y `requisition-changes/candidates`.
+  5. **Permisos.** El servidor solo distingue `master_admin`; los permisos por sección (`role_permissions`, `user_permissions`) se leen pero no se aplican.
+  6. **Historial de Git.** Conserva los datos reales que traía `ClientPortal.jsx` (retirados del código el 23 nov).
+
 ## 2. Cuentas SQL
 
 | Cuenta SQL (overlay) | Qué puede escribir | La usan |
