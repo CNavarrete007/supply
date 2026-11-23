@@ -7,9 +7,9 @@
 
 | Estado | Módulos |
 |---|---|
-| **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles, Configuración (pestañas 1 a 5, 23 nov 2026), Flujo del Proceso (7 pestañas, 23 nov 2026) |
+| **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles, Configuración (pestañas 1 a 5, 23 nov 2026), Flujo del Proceso (7 pestañas, 23 nov 2026), campana de Notificaciones (lectura, 23 nov 2026) |
 | **Inicio y Dashboard** | Conectado (23 nov 2026) salvo 3 cifras sin fuente o regla: estatus de pago / «Pagadas» (no hay registro de pagos), ahorro potencial y costo promedio (falta la regla del original) |
-| **Pendientes (datos fijos o de demostración)** | Portal del Cliente (`mockQuote`, `mockPO`; el acceso no autentica), campana de Notificaciones (solo notificaciones locales del navegador) |
+| **Pendientes (datos fijos o de demostración)** | Portal del Cliente (`mockQuote`, `mockPO`; el acceso no autentica). Campana: marcar como leída en MariaDB (requiere permiso de escritura) |
 | **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
 | **Validan pero no guardan** | Todo lo demás: termina con «Datos validados, pero no se guardó…» |
 
@@ -29,7 +29,7 @@ Rutas de escritura en `backend/app/Config/Routes.php` (19): login/logout; `catal
 
 El servidor solo distingue el rol `master_admin`; **no evalúa permisos por sección** (`role_permissions`, `user_permissions` se leen pero no se aplican).
 
-Tablas del DDL que ninguna pantalla consulta todavía: `units`, `contracts`, `projects`, `customer_quote_adjustments`, `delivery_item_allocations`, `outbox_messages`, `email_delivery_logs`, `ai_runs`, `portal_access_tokens`, `import_batches`, `import_records`, `import_issues`, `legacy_id_map`. `notifications` solo se cuenta en Órdenes de Compra (no leídas); la campana no la usa.
+Tablas del DDL que ninguna pantalla consulta todavía: `units`, `contracts`, `projects`, `customer_quote_adjustments`, `delivery_item_allocations`, `outbox_messages`, `email_delivery_logs`, `ai_runs`, `portal_access_tokens`, `import_batches`, `import_records`, `import_issues`, `legacy_id_map`. `notifications` la leen la campana (23 nov) y Órdenes de Compra (no leídas de OC).
 
 ## 3. Inventario módulo por módulo
 
@@ -42,7 +42,7 @@ Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Dem
 | Inicio y Dashboard | Estatus de pago / «Pagadas»; ahorro potencial y costo promedio | **No** | N/A | — | Pagos: definir su registro (DDL nuevo, requiere autorización). Ahorro y costo promedio: compartir la regla de comparación del sistema original |
 | Flujo del Proceso | Mapa, flujo de servicios, detalle por etapa, comercial, rutas especiales, matriz, indicadores | **Sí** (23 nov): procesos por etapa, KPI y cuellos de botella reales | N/A (solo consulta) | Documentos de cada etapa | Ver §4.B; tiempo en etapa pendiente |
 | Portal del Cliente | Acceso y seguimiento | **No** (`mockQuote`, `mockPO`; el acceso no valida credenciales) | Demo | `portal_access_tokens`, `clients.portal_enabled`/`portal_locked` y vistas filtradas por cliente | Ver §4.E |
-| Campana (encabezado) | Notificaciones | **No**: solo notificaciones locales de la sesión | — | `notifications` | Ver §4.D |
+| Campana (encabezado) | Notificaciones | **Sí** (23 nov): las del usuario en sesión + avisos de la sesión aparte | Bloqueada: marcar como leída requiere `UPDATE` | `notifications` | Ver §4.D |
 | Clientes | Alta y edición | Sí | **Real** | `clients` y contactos | Eliminar e importar siguen bloqueados |
 | Proveedores | Alta y edición | Sí | **Real** | `suppliers` y contactos | Eliminar e importar siguen bloqueados |
 | Suministros | Alta y edición | Sí | **Real** | `supplier_offerings` | Eliminar sigue bloqueado |
@@ -108,8 +108,9 @@ Endpoints de solo lectura (Master Admin, sin caché, 422 ante parámetros descon
 
 La escritura viene después y requiere autorización: una cuenta `settingswrite` con `UPDATE organization_settings` e `INSERT approval_policy_versions`, versionando la política (cambia aprobaciones y folios) y con auditoría. Pestañas 6 y 7: no se conectan.
 
-### D. Campana de notificaciones
-`GET /api/v1/notifications` con solo las notificaciones **del usuario en sesión** (`recipient_user_id`), paginado. Marcar como leída es una escritura mínima (`UPDATE notifications (is_read, read_at)`) y requiere autorización para el grant.
+### D. Campana de notificaciones — conectada en lectura el 23 nov 2026
+`GET /api/v1/notifications` (`status` all/unread, `page`, `page_size` ≤ 50; sin caché; cuenta API con SELECT): solo las notificaciones **del usuario en sesión** (`recipient_user_id`), para cualquier usuario interno activo (no requiere Master Admin, porque cada quien ve solo las suyas). Devuelve remitente, documento ligado (tipo, id público y folio) para abrir su módulo y el resumen total / no leídas. La campana (`src/views/notifications/NotificationBell.jsx`) muestra el contador real (no leídas de MariaDB + avisos de la sesión), filtro «No leídas», «Ver más» y, aparte, los avisos de la sesión del navegador (no se guardan); se actualiza al abrirla y cada minuto.
+**Pendiente de autorización:** marcar como leída es una escritura mínima (`UPDATE notifications (is_read, read_at)` del destinatario) que requiere un grant nuevo; hoy «Marcar leídas» solo limpia los avisos de la sesión y el panel lo dice. Pruebas: `tests/frontend/notifications_model.test.mjs` (4), `tests/frontend/notifications_ui_e2e.cjs` (19) y `tests/notifications_http_check.py` (12; aislamiento entre usuarios y, con `SF_SQLQ`, comparación con la tabla).
 
 ### E. Portal del Cliente (seguridad externa)
 No se puede conectar solo con lectura: hoy el acceso no autentica. Requiere diseñar un acceso independiente del de usuarios internos:
@@ -140,12 +141,12 @@ Mismo patrón que R2 y R3:
 
 | Fase | Trabajo | Grants nuevos | Riesgo |
 |---|---|---|---|
-| **0 · Solo lectura** (sin grants) | 1. ~~Inicio y Dashboard~~ (hecho el 23 nov). 2. ~~Configuración pestañas 1 a 5~~ (hecho el 23 nov, §4.C). 3. ~~Flujo del Proceso~~ (hecho el 23 nov, §4.B). 4. Campana: lectura (§4.D) | No | Bajo |
+| **0 · Solo lectura** (sin grants) | 1. ~~Inicio y Dashboard~~ (hecho el 23 nov). 2. ~~Configuración pestañas 1 a 5~~ (hecho el 23 nov, §4.C). 3. ~~Flujo del Proceso~~ (hecho el 23 nov, §4.B). 4. ~~Campana: lectura~~ (hecho el 23 nov, §4.D) | No | Bajo |
 | **1 · Operativo, no comercial** | 5. Categorías. 6. Crear desde historial. 7. Servicios: requisición maestra y expediente. 8. Gestión del Contratista: validación, estrategia y lotes. 9. Configuración: escritura versionada. 10. Usuarios y roles, con permisos por sección en el servidor. 11. Notificaciones: marcar como leídas | Sí, por módulo | Medio; Usuarios es alto |
 | **2 · Comercial** (bloqueado hasta autorizar) | 12. Cotizaciones. 13. OC. 14. Recepción y Entrega. 15. Factura (y registro de pagos si se define). 16. Escrituras R3C2/R3C3 | Sí | Alto |
 | **3 · Seguridad externa** | 17. Portal del Cliente con tokens propios | Sí | Alto |
 
-Ya completado de la fase 0: Dashboard de Servicios (23 nov.), Control de cambios R3A/R3B (23 nov.), Inicio y Dashboard (23 nov.), Configuración en lectura (23 nov.) y Flujo del Proceso (23 nov.).
+Ya completado de la fase 0: Dashboard de Servicios (23 nov.), Control de cambios R3A/R3B (23 nov.), Inicio y Dashboard (23 nov.), Configuración en lectura (23 nov.), Flujo del Proceso (23 nov.) y la campana en lectura (23 nov.). **La fase 0 está completa.**
 
 ## 7. Código sin uso
 

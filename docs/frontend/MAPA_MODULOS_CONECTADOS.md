@@ -20,6 +20,7 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | Contratista (`contractors`) — tarjeta 2 | `Contractors` en `src/views/Contractors.jsx` (lógica `src/views/contractors/model.mjs`) | `src/views/contractors/api.js` | `/api/v1/contractors` (`q`, `status` all/active/inactive), `/contractors/{id}/personnel` | `ContractorController` (base `ReadOnlyModuleController`) → `ContractorReadRepository` (cuenta API, SELECT) | Master Admin |
 | Gestión del Contratista (`contractor_mgmt`) — 4 tarjetas | `ValidationRegister`, `StrategyLots`, `ValidationMatrix` y `SmartRules` en `src/views/contractorMgmt/` (lógica `validationForm.mjs`, `strategyModel.mjs`, `validationMatrix.mjs`, `rulesModel.mjs`), montados por `src/views/ContractorManagement.jsx` | `src/views/contractorMgmt/api.js` | `/api/v1/contractor-management/validation-setup`, `/requisitions/{id}`, `/strategy-setup`, `/strategy/{id}`, `/validations`, `/rules` | `ContractorManagementController` (base `ReadOnlyModuleController`) → `ContractorManagementReadRepository` (cuenta API, SELECT) | Master Admin |
 | Servicios Operativos (`operational_services`) — secciones 1 Dashboard, 2 Nueva solicitud (y Nuevo servicio), 3 Matriz y 4 Reportes | `ServiceDashboard`, `NewServiceRequest`, `ServiceForm`, `ServiceMatrix` y `ServiceReports` en `src/views/services/` (lógica `dashboardModel.mjs`, `newRequestModel.mjs`, `serviceFormModel.mjs`, `serviceMatrix.mjs`, `serviceReports.mjs`), montados por `src/views/OperationalServices.jsx` | `src/views/services/api.js` | `/api/v1/services/matrix` (`client`, `buyer`, `service`, `status`, `q`, `from`, `to`, `page`, `page_size`), `/services/{id}`; Nueva solicitud: `/services/new-request`, `/services/new-request/reference` (`project`, `date`), `/services/new-request/availability` (`folio`, `reference`), `/services/new-request/contracting`, más `/recovery/catalogs` y `/recovery/folio` existentes | `ServiceController` (base `ReadOnlyModuleController`) → `ServiceReadRepository` (cuenta API, SELECT) | Master Admin |
+| Campana del encabezado (todas las pantallas) | `NotificationBell` en `src/views/notifications/NotificationBell.jsx` (textos en `model.mjs`), montada por `App.jsx` | `src/views/notifications/api.js` | `/api/v1/notifications` (`status` all/unread, `page`, `page_size` ≤ 50) | `NotificationController` (`guardUser`: cualquier usuario activo, solo sus notificaciones) → `NotificationReadRepository` (cuenta API, SELECT) | Usuario en sesión |
 | Flujo del Proceso (`process`) — 7 pestañas | `ProcessFlow` en `src/views/ProcessFlow.jsx` (textos en `src/views/processFlow/model.mjs`) | `src/views/processFlow/api.js` | `/api/v1/analytics/process-flow` | `ProcessFlowController` (base `ReadOnlyModuleController`) → `ProcessFlowReadRepository` (cuenta API, SELECT; reutiliza `RequisitionRecoveryRepository::stage`, `QuoteReadRepository::STATUS_KEY`, `ReceptionReadRepository` y `AnalyticsReadRepository`) | Master Admin |
 | Configuración (`config`) — pestañas 1 a 5 (6 y 7 no se conectan) | `Configuration` en `src/views/Configuration.jsx` (lógica `src/views/settings/settingsModel.mjs`) | `src/views/settings/api.js` | `/api/v1/settings`, `/api/v1/settings/email-log` (`q`, `status`, `page`, `page_size` ≤ 50), `/api/v1/settings/logo` | `SettingsController` (base `ReadOnlyModuleController`) → `SettingsReadRepository` (cuenta API, SELECT) | Master Admin |
 | Usuarios y roles (`users_roles`) | `UsersRoles` en `src/views/UsersRoles.jsx` (lógica en `src/views/usersRoles/model.mjs`, cliente `src/views/usersRoles/api.js`) | `src/views/usersRoles/api.js` | `/api/v1/users?page=` (todas las páginas), `/api/v1/roles`, `/api/v1/users/functions`, `/api/v1/audit-events` | `UserDirectoryController` → `SupplyAuthRepository` (cuenta auth) y `UserActivityReadRepository` (cuenta API, SELECT) | Master Admin (`users.read`) |
@@ -48,6 +49,7 @@ Objetivo: modificar el **frontend** de estos módulos sin romper su conexión co
 | `quotes/rfq-requisitions` | `page`, `page_size`, `q`, `buyer` (`all`, `unassigned`, UUID de usuario o `legacy-<16 hex>`), `rfq` (`any`, `with`, `quoted`) | `page_size` 1–50 |
 | `reception/matrix` | `page`, `page_size`, `q`, `client` (UUID o `all`), `kind` (`all`/`receipt`/`delivery`) | `page_size` 1–50 |
 | `analytics/process-flow` | ninguno | Cualquier parámetro → 422 |
+| `notifications` | `status` (`all`/`unread`), `page`, `page_size` | `page_size` 1–50 |
 | `settings` | ninguno | Cualquier parámetro → 422 |
 | `settings/email-log` | `page`, `page_size`, `q`, `status` (texto del resultado) | `page_size` 1–50 |
 | `settings/logo` | ninguno | Con parámetros o sin archivo verificado → 404 |
@@ -328,4 +330,16 @@ Pantalla `src/views/ProcessFlow.jsx` con el mismo diseño; todas las cifras fija
 - **Indicadores y cuellos de botella**: KPI según la ruta activa y lista real de procesos abiertos (los más antiguos primero, máximo 12, con motivo). Se retiró la lista de folios escrita a mano.
 - El tiempo en etapa no se muestra: falta la regla del original sobre `workflow_events`.
 - Pruebas: `tests/frontend/process_flow_model.test.mjs` (5), `tests/frontend/process_flow_ui_e2e.cjs` (26; sin escrituras a la API) y `tests/process_flow_http_check.py` (34).
+
+## Campana de notificaciones (conexión 23 nov 2026)
+
+`NotificationBell` reemplaza la campana local de `App.jsx`. Lee `GET /api/v1/notifications` (solo las del usuario en sesión) al cargar, al abrirla y cada minuto.
+- **Contador**: no leídas en MariaDB más los avisos de esta sesión sin leer.
+- **Panel**: resumen «N sin leer · M en MariaDB», filtro Todas / No leídas, notificaciones con título, mensaje, fecha (relativa en las últimas 24 h), remitente y documento ligado. El documento ligado abre su módulo (OC, cotización, requisición, servicio, recepción, factura…).
+- **Avisos de la sesión**: los que generan las pantallas con `onNotify` se muestran aparte, en «En esta sesión (no se guardan)».
+- **Marcar como leídas**: guardarlo en MariaDB requiere el permiso `UPDATE notifications (is_read, read_at)`, pendiente de autorización. «Marcar leídas» solo limpia los avisos de la sesión.
+- **Pruebas**:
+  - `tests/frontend/notifications_model.test.mjs` (4)
+  - `tests/frontend/notifications_ui_e2e.cjs` (19)
+  - `tests/notifications_http_check.py` (12)
 

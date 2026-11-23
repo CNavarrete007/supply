@@ -47,6 +47,20 @@ abstract class ReadOnlyModuleController extends BaseController
     }
 
     /**
+     * Any active internal user with a valid server session (no role required). Only for resources scoped to the
+     * signed-in user themself (e.g. their own notifications); module data keeps using guard() (Master Admin).
+     */
+    protected function guardUser(): ?ResponseInterface
+    {
+        $actor = (new SupplyAuthRepository())->currentUser($_COOKIE['sf_session'] ?? null);
+        if (! $actor) {
+            return $this->fail(401, 'NOT_AUTHENTICATED', 'Se requiere iniciar sesión.');
+        }
+        $this->actor = $actor;
+        return null;
+    }
+
+    /**
      * @param array<string,array{0:string,1:string}> $spec name => [regex, default]; page/page_size are added automatically.
      * @return array<string,mixed>|null Parsed values, or null when anything is invalid or unknown.
      */

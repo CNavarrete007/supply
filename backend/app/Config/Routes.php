@@ -59,6 +59,8 @@ $routes->get('api/v1/contractor-management/rules', 'ContractorManagementControll
 // Requisiciones › Control de cambios: historial y candidatos (solo lectura, cuenta API SELECT).
 $routes->get('api/v1/requisition-changes', 'RequisitionChangeReadController::overview');
 $routes->get('api/v1/requisition-changes/candidates', 'RequisitionChangeReadController::candidates');
+// Campana: notificaciones del usuario en sesión (solo lectura; marcar como leída no está habilitado).
+$routes->get('api/v1/notifications', 'NotificationController::index');
 // Configuración › pestañas 1 a 5: parámetros del original, política vigente, historial de correos y logotipo (solo lectura).
 $routes->get('api/v1/settings', 'SettingsController::index');
 $routes->get('api/v1/settings/email-log', 'SettingsController::emailLog');

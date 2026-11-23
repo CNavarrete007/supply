@@ -18,6 +18,7 @@ import { PurchaseOrdersModule as PurchaseOrders } from './views/purchaseOrders/P
 import { ReceptionModule as ReceptionDelivery } from './views/reception/ReceptionModule';
 import { InvoiceModule as Invoice } from './views/invoices/InvoiceModule';
 import { OperationalServices } from './views/OperationalServices';
+import { NotificationBell } from './views/notifications/NotificationBell';
 import { GeneralMatrix } from './views/GeneralMatrix';
 import { Reports } from './views/Reports';
 import { UsersRoles } from './views/UsersRoles';
@@ -50,7 +51,6 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
   const [language, setLanguage] = useState('es');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [showNotifMenu, setShowNotifMenu] = useState(false);
 
   const [quotes, setQuotes] = useState(() => {
     const saved = localStorage.getItem('grupo_gerez_quotes');
@@ -145,8 +145,6 @@ export default function App() {
     };
     setNotifications((prev) => [newNotif, ...prev]);
   };
-
-  const unreadCount = notifications.filter(n => !n.read).length;
 
   const markAllAsRead = () => {
     setNotifications((prev) => prev.map(n => ({ ...n, read: true })));
@@ -318,64 +316,13 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="relative">
-              <button 
-                onClick={() => setShowNotifMenu(!showNotifMenu)}
-                className="w-11 h-11 bg-white rounded-2xl border border-blue-100 flex items-center justify-center shadow-2xs hover:bg-slate-50 transition cursor-pointer"
-                title={language === 'es' ? 'Notificaciones' : 'Notifications'}
-              >
-                <span className="text-xl select-none">🔔</span>
-              </button>
-              {unreadCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-[#5b6e82] text-white text-[11px] font-black rounded-full w-5 h-5 flex items-center justify-center shadow-xs border-2 border-[#f0f4f8]">
-                  {unreadCount}
-                </span>
-              )}
-
-              {showNotifMenu && (
-                <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-200 p-3 z-50">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
-                    <h3 className="text-xs font-black text-slate-800">
-                      {language === 'es' ? 'Notificaciones' : 'Notifications'}
-                    </h3>
-                    {unreadCount > 0 ? (
-                      <button 
-                        onClick={markAllAsRead} 
-                        className="text-[10px] text-blue-600 font-bold hover:underline cursor-pointer"
-                      >
-                        {language === 'es' ? 'Marcar leídas' : 'Mark as read'}
-                      </button>
-                    ) : (
-                      <span className="text-[10px] text-slate-400 font-bold">
-                        {notifications.length} {language === 'es' ? 'recientes' : 'recent'}
-                      </span>
-                    )}
-                  </div>
-                  <div className="max-h-60 overflow-y-auto space-y-2 custom-scrollbar">
-                    {notifications.length > 0 ? (
-                      notifications.map(n => (
-                        <div 
-                          key={n.id} 
-                          className={`p-2 rounded-xl border text-left ${
-                            n.read ? 'bg-slate-50 border-slate-100 opacity-75' : 'bg-blue-50/50 border-blue-100'
-                          }`}
-                        >
-                          <div className="flex justify-between items-center">
-                            <p className="text-xs font-bold text-slate-800">{n.title}</p>
-                            <span className="text-[9px] text-slate-400">{n.time}</span>
-                          </div>
-                          <p className="text-[11px] text-slate-600 mt-0.5">{n.desc}</p>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-xs text-center text-slate-400 py-4">
-                        {language === 'es' ? 'No hay notificaciones' : 'No notifications'}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
+            {/* Campana: notificaciones del usuario en MariaDB (solo lectura) + avisos de esta sesión */}
+            <NotificationBell
+              language={language}
+              local={notifications}
+              onMarkLocalRead={markAllAsRead}
+              onNavigate={(tab) => handleNavigate(tab)}
+            />
 
             <button
               onClick={handleLogout}
