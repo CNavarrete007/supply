@@ -1688,3 +1688,28 @@ radial-gradient(circle at 100% 10%,rgba(124,58,237,.13),transparent 30%),var(--b
 .sf-rf1 .sf-hist-add .btn{width:100%;justify-content:center;padding:12px}
 @media (max-width:1100px){.sf-rf1 .sf-hist-steps,.sf-rf1 .sf-hist-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sf-rf1 .sf-hist-filters{grid-template-columns:1fr}}
 @media (max-width:650px){.sf-rf1 .sf-hist-steps,.sf-rf1 .sf-hist-grid,.sf-rf1 .sf-hist-new-grid{grid-template-columns:1fr}.sf-rf1 .sf-hist-grid .span2{grid-column:span 1}.sf-rf1 .sf-hist-new-grid .sf-hist-add,.sf-rf1 .sf-hist-new-grid .field:nth-child(4){grid-column:auto}}
+
+/* Requisición › Control de cambios con el diseño "Control de modificaciones / Change Requests" (alcance .sf-chg). */
+.sf-rf1 .sf-chg .subsection-header{align-items:flex-start}
+.sf-rf1 .sf-chg-badge{padding:6px 11px}
+.sf-rf1 .sf-chg .note.warn{margin:2px 0 4px}
+.sf-rf1 .sf-chg-table{min-width:1500px}
+.sf-rf1 .sf-chg-table th{white-space:nowrap}
+.sf-rf1 .sf-chg-table td{font-size:12px}
+.sf-rf1 .sf-chg-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.sf-rf1 .sf-chg-actions{min-width:200px}
+.sf-rf1 .sf-prov179-chip.warn{background:#ffedd5;color:#9a3412}
+.sf-rf1 .sf-prov179-chip.muted{background:#eef1f5;color:#5b6b80}
+.sf-rf1 .sf-chg-modal{width:min(1040px,96vw)}
+.sf-rf1 .sf-chg-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 16px}
+.sf-rf1 .sf-chg-summary label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+.sf-rf1 .sf-chg-summary div div{font-size:12px;color:#12213a;overflow-wrap:anywhere}
+.sf-rf1 .sf-chg-h{margin:16px 0 8px;font-size:13px;font-weight:900}
+.sf-rf1 .sf-chg-diff{min-width:760px}
+.sf-rf1 .sf-chg-list{margin:4px 0 8px;padding-left:18px}
+.sf-rf1 .sf-chg-form{margin-top:6px;padding:12px 14px;border:1px solid #dce6f2;border-radius:14px;background:#fafcff}
+.sf-rf1 .sf-chg-radios{display:flex;gap:18px;margin-bottom:10px}
+.sf-rf1 .sf-chg-radios label,.sf-rf1 .sf-chg-ack{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700}
+.sf-rf1 .sf-chg-radios input,.sf-rf1 .sf-chg-ack input{width:auto}
+.sf-rf1 .sf-chg-ack{margin-top:10px;font-weight:600}
+@media (max-width:860px){.sf-rf1 .sf-chg-summary{grid-template-columns:1fr}}

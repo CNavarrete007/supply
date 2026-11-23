@@ -25,6 +25,7 @@ final class RequisitionChangeReadController extends ReadOnlyModuleController
             $f = $this->query([
                 'status' => ['/^(all|closed|' . implode('|', RequisitionChangeReadRepository::STATUSES) . ')$/D', 'all'],
                 'scope' => ['/^(all|mine|review|imported)$/D', 'all'],
+                'state' => ['/^(all|applied|intervention|' . implode('|', RequisitionChangeReadRepository::FLOW_STATES) . ')$/D', 'all'],
                 'q' => [self::TEXT, ''],
             ]);
             if ($f === null) {

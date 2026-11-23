@@ -71,7 +71,27 @@ final class RequisitionChangeReadRepository
                    CASE WHEN cr.status_code IN ('applied','rejected','withdrawn') AND ce.imported_at IS NULL THEN ce.updated_at END AS resolved_at,
                    (SELECT COUNT(*) FROM requisition_change_items ci WHERE ci.organization_id=cr.organization_id AND ci.change_request_id=cr.id) AS change_count,
                    (cr.status_code='pending_review' AND ce.created_by<>? AND re.imported_at IS NULL AND re.archived_at IS NULL AND {$rf1}) AS reviewable,
-                   (cr.status_code='pending_review' AND re.created_by=? AND re.imported_at IS NULL AND re.archived_at IS NULL AND {$rf1}) AS withdrawable
+                   (cr.status_code='pending_review' AND re.created_by=? AND re.imported_at IS NULL AND re.archived_at IS NULL AND {$rf1}) AS withdrawable,
+                   (SELECT COUNT(*) FROM customer_quote_versions q WHERE q.organization_id=r.organization_id AND q.requisition_id=r.id) AS cq_count,
+                   (SELECT q.folio FROM customer_quote_versions q WHERE q.organization_id=r.organization_id AND q.requisition_id=r.id ORDER BY q.id DESC LIMIT 1) AS cq_latest,
+                   (SELECT q.folio FROM customer_quote_versions q WHERE q.organization_id=cr.organization_id AND q.change_request_id=cr.id ORDER BY q.id DESC LIMIT 1) AS cq_change_folio,
+                   EXISTS(SELECT 1 FROM requisition_change_commercial_executions x JOIN requisition_change_commercial_execution_reviews xv
+                            ON xv.execution_id=x.id AND xv.organization_id=x.organization_id AND xv.decision_code='verified'
+                          WHERE x.organization_id=cr.organization_id AND x.change_request_id=cr.id AND x.document_kind='customer_quote_versions'
+                            AND x.action_code IN ('client_confirmation_documented','replacement_quote_verified')) AS client_confirmed,
+                   (SELECT COUNT(DISTINCT por.purchase_order_id) FROM purchase_order_requisitions por WHERE por.organization_id=r.organization_id AND por.requisition_id=r.id) AS po_count,
+                   (SELECT po.folio FROM purchase_order_requisitions por JOIN purchase_orders po ON po.id=por.purchase_order_id AND po.organization_id=por.organization_id
+                     WHERE por.organization_id=r.organization_id AND por.requisition_id=r.id ORDER BY po.id DESC LIMIT 1) AS po_latest,
+                   (SELECT po.folio FROM purchase_orders po WHERE po.organization_id=cr.organization_id AND po.change_request_id=cr.id ORDER BY po.id DESC LIMIT 1) AS po_change_folio,
+                   (SELECT COUNT(*) FROM goods_receipts g JOIN purchase_order_requisitions por ON por.purchase_order_id=g.purchase_order_id AND por.organization_id=g.organization_id
+                     WHERE por.organization_id=r.organization_id AND por.requisition_id=r.id) AS receipt_count,
+                   EXISTS(SELECT 1 FROM requisition_change_commercial_executions x JOIN requisition_change_commercial_execution_reviews xv
+                            ON xv.execution_id=x.id AND xv.organization_id=x.organization_id AND xv.decision_code='verified'
+                          WHERE x.organization_id=cr.organization_id AND x.change_request_id=cr.id AND x.document_kind='purchase_orders'
+                            AND x.action_code='formal_amendment_verified') AS po_amended,
+                   (SELECT COUNT(*) FROM requisition_change_commercial_assessments a WHERE a.organization_id=cr.organization_id AND a.change_request_id=cr.id) AS assessment_count,
+                   (SELECT COUNT(*) FROM requisition_change_commercial_executions x WHERE x.organization_id=cr.organization_id AND x.change_request_id=cr.id
+                      AND NOT EXISTS(SELECT 1 FROM requisition_change_commercial_execution_reviews xv WHERE xv.execution_id=x.id AND xv.organization_id=x.organization_id)) AS executions_pending
             FROM requisition_change_requests cr
             JOIN business_entities ce ON ce.id=cr.id AND ce.organization_id=cr.organization_id AND ce.entity_kind='requisition_change_request'
             JOIN requisitions r ON r.id=cr.requisition_id AND r.organization_id=cr.organization_id
@@ -81,13 +101,38 @@ final class RequisitionChangeReadRepository
             SQL;
     }
 
+    /**
+     * Business state of the original card (Apps Script) derived from R3 facts, never stored:
+     *  applied → partial_resupply (requires sourcing) | approved; pending_review with an affected customer quote and no
+     *  verified client confirmation (R3C3) → pending_client; with linked PO/receipts and no verified formal amendment →
+     *  po_reconciliation; otherwise pending_review (independent R3B review); rejected; withdrawn; anything else → other.
+     */
+    public const FLOW_STATES = ['pending_client', 'approved', 'partial_resupply', 'po_reconciliation', 'pending_review', 'rejected', 'withdrawn', 'other'];
+    private static function flow(): string
+    {
+        $state = "CASE WHEN V.status_code='applied' AND V.requires_sourcing THEN 'partial_resupply' WHEN V.status_code='applied' THEN 'approved'
+            WHEN V.status_code='rejected' THEN 'rejected' WHEN V.status_code='withdrawn' THEN 'withdrawn'
+            WHEN V.status_code='pending_review' AND V.cq_count>0 AND NOT V.client_confirmed THEN 'pending_client'
+            WHEN V.status_code='pending_review' AND V.po_count>0 AND NOT V.po_amended THEN 'po_reconciliation'
+            WHEN V.status_code='pending_review' THEN 'pending_review' ELSE 'other' END";
+        $label = "CASE WHEN V.status_code='applied' AND V.requires_sourcing THEN 'Reabastecimiento parcial requerido' WHEN V.status_code='applied' THEN 'Cambio aprobado'
+            WHEN V.status_code='rejected' THEN 'Rechazada' WHEN V.status_code='withdrawn' THEN 'Retirada'
+            WHEN V.status_code='pending_review' AND V.cq_count>0 AND NOT V.client_confirmed THEN 'Pendiente de aprobación del cliente'
+            WHEN V.status_code='pending_review' AND V.po_count>0 AND NOT V.po_amended THEN 'Conciliación de OC/recepción requerida'
+            WHEN V.status_code='pending_review' THEN 'Pendiente de revisión independiente' ELSE COALESCE(V.legacy_status, V.status_code) END";
+        $intervention = "(V.status_code IN ('pending_review','applied') AND (V.requires_sourcing OR V.requires_supplier_confirmation OR (V.po_count>0 AND NOT V.po_amended)))";
+        return "SELECT V.*, {$state} AS flow_state, {$label} AS flow_label, {$intervention} AS intervention FROM (" . self::base() . ') V';
+    }
+
     private static function format(array $r): array
     {
         unset($r['change_db_id']);
-        foreach (['version', 'previous_revision_number', 'new_revision_number', 'current_revision_number', 'change_count'] as $k) {
+        foreach (['version', 'previous_revision_number', 'new_revision_number', 'current_revision_number', 'change_count',
+                  'cq_count', 'po_count', 'receipt_count', 'assessment_count', 'executions_pending'] as $k) {
             $r[$k] = $r[$k] === null ? null : (int) $r[$k];
         }
-        foreach (['requires_sourcing', 'requires_supplier_confirmation', 'imported', 'mine', 'reviewable', 'withdrawable'] as $k) {
+        foreach (['requires_sourcing', 'requires_supplier_confirmation', 'imported', 'mine', 'reviewable', 'withdrawable',
+                  'client_confirmed', 'po_amended', 'intervention'] as $k) {
             $r[$k] = (bool) $r[$k];
         }
         return $r;
@@ -96,13 +141,16 @@ final class RequisitionChangeReadRepository
     /**
      * @param array{status:string,scope:string,q:string,page:int,page_size:int} $f
      *   status: all|pending_review|applied|rejected|withdrawn|closed (rejected+withdrawn) · scope: all|mine|review|imported
+     *   state (optional): all|applied|intervention|<FLOW_STATES>
      */
     public function overview(int $org, int $actor, array $f): array
     {
         $binds = [$actor, $actor, $actor, $org];
-        $all = $this->rows('SELECT V.status_code,V.mine,V.reviewable,V.imported FROM (' . self::base() . ') V', $binds);
+        $from = '(' . self::flow() . ') W';
+        $all = $this->rows("SELECT W.status_code,W.mine,W.reviewable,W.imported,W.flow_state,W.intervention FROM {$from}", $binds);
         $k = ['total' => count($all), 'pending_review' => 0, 'applied' => 0, 'rejected' => 0, 'withdrawn' => 0, 'other' => 0,
-              'mine_pending' => 0, 'to_review' => 0, 'imported' => 0];
+              'mine_pending' => 0, 'to_review' => 0, 'imported' => 0, 'intervention' => 0,
+              'flow' => array_fill_keys(self::FLOW_STATES, 0)];
         foreach ($all as $r) {
             $s = (string) $r['status_code'];
             in_array($s, self::STATUSES, true) ? $k[$s]++ : $k['other']++;
@@ -115,33 +163,46 @@ final class RequisitionChangeReadRepository
             if ((int) $r['imported'] === 1) {
                 $k['imported']++;
             }
+            if ((int) $r['intervention'] === 1) {
+                $k['intervention']++;
+            }
+            $k['flow'][(string) $r['flow_state']]++;
         }
         $w = '';
         $wb = [];
         if ($f['status'] === 'closed') {
-            $w .= " AND V.status_code IN ('rejected','withdrawn')";
+            $w .= " AND W.status_code IN ('rejected','withdrawn')";
         } elseif ($f['status'] !== 'all') {
-            $w .= ' AND V.status_code=?';
+            $w .= ' AND W.status_code=?';
             $wb[] = $f['status'];
         }
+        $state = $f['state'] ?? 'all';
+        if ($state === 'applied') {
+            $w .= " AND W.status_code='applied'";
+        } elseif ($state === 'intervention') {
+            $w .= ' AND W.intervention=1';
+        } elseif ($state !== 'all') {
+            $w .= ' AND W.flow_state=?';
+            $wb[] = $state;
+        }
         if ($f['scope'] === 'mine') {
-            $w .= ' AND V.mine=1';
+            $w .= ' AND W.mine=1';
         } elseif ($f['scope'] === 'review') {
-            $w .= ' AND V.reviewable=1';
+            $w .= ' AND W.reviewable=1';
         } elseif ($f['scope'] === 'imported') {
-            $w .= ' AND V.imported=1';
+            $w .= ' AND W.imported=1';
         }
         if ($f['q'] !== '') {
             $l = self::like($f['q']);
-            $cols = ['V.folio', 'V.requisition_folio', 'V.client', 'V.client_code', 'V.change_type', 'V.requested_by', 'V.requester_name', 'V.reference'];
+            $cols = ['W.folio', 'W.requisition_folio', 'W.client', 'W.client_code', 'W.change_type', 'W.requested_by', 'W.requester_name', 'W.reference', 'W.reason', 'W.flow_label'];
             $w .= ' AND (' . implode(' OR ', array_map(static fn ($c) => "LOWER({$c}) LIKE ? ESCAPE '!'", $cols)) . ')';
             array_push($wb, ...array_fill(0, count($cols), $l));
         }
-        $count = (int) ($this->rows('SELECT COUNT(*) AS n FROM (' . self::base() . ') V WHERE 1=1' . $w, [...$binds, ...$wb])[0]['n'] ?? 0);
+        $count = (int) ($this->rows("SELECT COUNT(*) AS n FROM {$from} WHERE 1=1" . $w, [...$binds, ...$wb])[0]['n'] ?? 0);
         $pages = max(1, (int) ceil($count / $f['page_size']));
         $page = min($f['page'], $pages);
-        $rows = $this->rows('SELECT V.* FROM (' . self::base() . ') V WHERE 1=1' . $w
-            . ' ORDER BY (V.status_code=\'pending_review\') DESC,V.change_db_id DESC LIMIT ' . (int) $f['page_size'] . ' OFFSET ' . (int) (($page - 1) * $f['page_size']),
+        $rows = $this->rows("SELECT W.* FROM {$from} WHERE 1=1" . $w
+            . ' ORDER BY (W.status_code=\'pending_review\') DESC,W.change_db_id DESC LIMIT ' . (int) $f['page_size'] . ' OFFSET ' . (int) (($page - 1) * $f['page_size']),
             [...$binds, ...$wb]);
         return ['kpis' => $k, 'items' => array_map(self::format(...), $rows), 'total' => $count, 'page' => $page,
             'page_size' => $f['page_size'], 'pages' => $pages, 'read_only' => true];
