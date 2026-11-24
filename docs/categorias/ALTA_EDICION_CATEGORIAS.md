@@ -107,6 +107,22 @@ Los comandos están en esa misma sección; la lista de overlays debe incluir `co
   desactiva el guardado de Clientes, Proveedores y Suministros.
 - Las categorías ya creadas permanecen.
 
+## Verificación con datos reales (24 nov 2026)
+
+Se validaron localmente las 12 categorías del respaldo del 9 nov con las reglas reales del servidor (`CategoryInput`). No se
+copiaron datos al repositorio.
+
+- **Códigos:** todos tienen formato válido, así que todas se pueden editar y eliminar por su código.
+- **Nombre, descripción y estatus:** todos dentro de las reglas.
+- **Sin nombres repetidos** (sin distinguir mayúsculas ni acentos).
+- **Uso antes de eliminar:**
+  - Partidas: se cuentan por vínculo y por etiqueta histórica.
+  - Proveedores y suministros: solo por vínculo. Los 415 proveedores con categoría en texto heredado usan etiquetas que no
+    coinciden con ninguna de las 12 categorías, así que ninguna se vería «sin uso» por error.
+- **Cuenta `catalogwrite` en la PC:** quedó aprovisionada con 33 permisos, incluidos los 4 de Categorías (`verify` → PASS).
+- **Pruebas después de los cambios del 24 nov** en el manejo de errores de catálogos: lectura 14/14, escritura 28/28, interfaz
+  35/35 y 49/49.
+
 ## Pruebas (sandbox sintético, 24 nov 2026)
 
 | Prueba | Resultado | Qué cubre |
