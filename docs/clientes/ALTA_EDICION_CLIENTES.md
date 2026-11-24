@@ -115,34 +115,95 @@ SF_API=http://127.0.0.1:8080 SF_USER=<correo admin> SF_QA_PASSWORD=<clave> pytho
 
 ## Activación en la PC (requiere autorización explícita)
 
-> Crea una cuenta SQL y recrea solo el contenedor `api`. Hacer antes un respaldo SQL posterior a INT03.
-> No agregues el overlay a la lista de arranque antes de crear el secreto: Compose fallaría por el archivo faltante.
+Crea la cuenta SQL `supplyflow_catalogwrite_local` con sus 33 permisos de tabla y recrea solo el contenedor `api`:
+- No toca datos, esquema ni las cuentas del contrato 77/52.
+- En PowerShell, desde `C:\Dev\supply`, con la aplicación ya en marcha.
+- El aprovisionamiento muestra JSON sin contraseñas.
+
+**Paso 0 · Consultar (solo lectura).** Con sesión de Master Admin, abrir en el navegador
+`http://localhost:8080/api/v1/catalogs/write-status`. Hoy debe decir `"code":"CATALOG_WRITE_NOT_PROVISIONED"`.
+
+**Paso 1 · Variables y respaldo.** Usa `mariadb-dump` dentro del contenedor:
+- La contraseña de root no se muestra.
+- El respaldo incluye las 55 CHECK, que la exportación de phpMyAdmin omite.
+- Queda en `backups\` del directorio privado.
 
 ```powershell
 $root = 'C:\Dev\supply'
 $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR = 'C:\Dev\supply-docker-private'
-$secret = Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets\catalogwrite-db-password.txt'
+$priv = $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR
+$secret = Join-Path $priv 'secrets\catalogwrite-db-password.txt'
+$files = @('docker-compose.yml','compose.supply-db.yml','compose.supply-dev.yml','compose.supply-auth.yml',
+           'compose.supply-reqwrite.yml','compose.supply-recovery.yml','compose.supply-dbadmin.yml')
+$compose = @('compose','-p','supply','--project-directory',$root)
+foreach ($f in $files) { $compose += @('-f', (Join-Path $root $f)) }
+$stamp = Get-Date -Format 'yyyyMMdd-HHmm'
+$backup = Join-Path $priv "backups\antes-catalogwrite-$stamp.sql"
+New-Item -ItemType Directory -Force -Path (Join-Path $priv 'backups') | Out-Null
+& docker.exe @compose exec -T db sh -c 'MYSQL_PWD=$(cat /run/secrets/root_password) mariadb-dump -uroot --single-transaction --routines --triggers --events --default-character-set=utf8mb4 --result-file=/tmp/antes-catalogwrite.sql supplyflow_dev'
+& docker.exe cp supply-db-1:/tmp/antes-catalogwrite.sql $backup
+& docker.exe @compose exec -T db rm -f /tmp/antes-catalogwrite.sql
+Get-Item $backup | Select-Object Name, Length
+```
+
+El archivo debe pesar varios MB y terminar con `-- Dump completed on …`. Si el tamaño es 0 o hay un error, **detenerse**.
+
+**Paso 2 · Secreto de la cuenta** (64 caracteres hexadecimales aleatorios; no se muestra). Copia los permisos de Windows
+(ACL) de otro secreto existente.
+
+```powershell
 if (-not (Test-Path -LiteralPath $secret)) {
   $bytes = New-Object byte[] 32
   [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
   -join ($bytes | ForEach-Object { $_.ToString('x2') }) | Set-Content -LiteralPath $secret -NoNewline -Encoding ascii
 }
-# Aplicar al archivo las mismas ACL que a los demás secretos. No mostrar su contenido.
-$files = @('docker-compose.yml','compose.supply-db.yml','compose.supply-dev.yml','compose.supply-auth.yml',
-           'compose.supply-reqwrite.yml','compose.supply-recovery.yml','compose.supply-dbadmin.yml','compose.supply-catalogwrite.yml')
-$compose = @('compose','-p','supply','--project-directory',$root)
-foreach ($f in $files) { $compose += @('-f', (Join-Path $root $f)) }
-& docker.exe @compose --profile dev config --quiet
-& docker.exe @compose --profile catalogwrite-tools run --rm catalogwrite-db-tools provision
-& docker.exe @compose --profile catalogwrite-tools run --rm catalogwrite-db-tools verify
-& docker.exe @compose --profile dev up -d --no-deps --force-recreate api
+# Copia solo los permisos de acceso (no el propietario) del secreto de la API:
+$ref = Get-Acl -LiteralPath (Join-Path $priv 'secrets\api-db-password.txt')
+$acl = Get-Acl -LiteralPath $secret
+$acl.SetSecurityDescriptorSddlForm($ref.GetSecurityDescriptorSddlForm('Access'), 'Access')
+Set-Acl -LiteralPath $secret -AclObject $acl
 ```
 
-Comprobaciones: `verify` → `"result": "PASS"`, `"grants": 33` (29 hasta el 23 nov; los 4 nuevos son de Categorías, ver `docs/categorias/ALTA_EDICION_CATEGORIAS.md`); `http://localhost:8080/api/v1/recovery/catalogs` sin
-sesión → 401; `/api/v1/catalogs/write-status` (con sesión) → `"code": "OK"`; en Clientes, dar de alta un cliente de prueba
-identificable y revisarlo en la bitácora (Usuarios y roles → Bitácora, módulo `catalogs`). Desde entonces, el arranque de
-`CLAUDE.md` y `SupplyFlow-Restore-INT03.ps1 -Phase Start` incluyen `compose.supply-catalogwrite.yml` automáticamente (existe el
-secreto); en cualquier otro comando de arranque hay que incluirlo a mano.
+**Paso 3 · Agregar el overlay y comprobar sin cambiar nada.** `verify` es de solo lectura. La primera vez construye la
+imagen de la herramienta y necesita internet para instalar PyMySQL.
+
+```powershell
+$compose += @('-f', (Join-Path $root 'compose.supply-catalogwrite.yml'))
+& docker.exe @compose --profile dev config --quiet; if ($LASTEXITCODE) { throw 'Compose inválido' }
+& docker.exe @compose --profile catalogwrite-tools run --rm catalogwrite-db-tools verify
+```
+
+| `error_code` de `verify` | Qué significa | Qué hacer |
+|---|---|---|
+| `SQL_ACCOUNT_MISSING` | La cuenta todavía no existe (caso normal) | Continuar |
+| `SQL_CREDENTIAL_MISMATCH` | La cuenta ya existía con otra contraseña | **Detenerse** y consultar; no recrearla |
+| `"result": "PASS"` | Ya estaba aprovisionada | Pasar directo al paso 5 |
+| `PRIVILEGES_INCOMPLETE` | Le faltan los 4 permisos de Categorías | El paso 4 los agrega |
+
+**Paso 4 · Crear la cuenta y sus permisos** (este es el cambio).
+
+```powershell
+& docker.exe @compose --profile catalogwrite-tools run --rm catalogwrite-db-tools provision
+& docker.exe @compose --profile catalogwrite-tools run --rm catalogwrite-db-tools verify
+```
+
+Resultado esperado:
+- `provision` → `"result": "PASS"`, `"grants": 33`, `"account_status": "CREATED"` (o `EXISTING_VERIFIED`).
+- `verify` → `"result": "PASS"`, `"grants": 33`.
+
+**Paso 5 · Recrear solo la API con la cuenta.**
+
+```powershell
+& docker.exe @compose --profile dev up -d --no-deps --force-recreate api
+& docker.exe @compose ps api
+```
+
+**Paso 6 · Comprobar.**
+- `http://localhost:8080/api/v1/catalogs/write-status` → `"code":"OK"`, `"missing_grants":[]`.
+- Recargar la página (Ctrl+F5): el aviso amarillo desaparece.
+- Al capturar un cliente real aparece «✓ Guardado automáticamente en la matriz · versión 1». No hace falta crear registros de prueba en la base real.
+- El alta queda en Usuarios y roles → Bitácora (módulo `catalogs`).
+- Desde entonces, el arranque de `CLAUDE.md` y `SupplyFlow-Restore-INT03.ps1 -Phase Start` incluye el overlay automáticamente, porque ya existe el secreto. En otro comando de arranque hay que agregar `compose.supply-catalogwrite.yml` a mano.
 
 **Reversión**: quitar el overlay de la lista y recrear solo `api` (el guardado vuelve a 503). Eliminar la cuenta SQL solo
 con autorización.
