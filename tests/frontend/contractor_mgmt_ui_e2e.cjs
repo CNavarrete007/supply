@@ -165,6 +165,11 @@ const flat = s => String(s).replace(/\s+/g, ' ');
     const manual = await addSel.locator('option').nth(1).getAttribute('value');
     await addSel.selectOption(manual); await page.getByTestId('strategy-lot').first().getByRole('button', { name: 'Agregar', exact: true }).click();
     check('agregar proveedor manual', flat(await page.getByTestId('strategy-lot').first().innerText()).includes('Asignación manual'));
+    // La base sintética acumula proveedores (las pruebas de Proveedores no pueden eliminarlos): para provocar la advertencia
+    // de mínimo deben quedar menos de 20 seleccionados en el lote 1, sin depender de cuántos sugiera el catálogo.
+    const boxes = page.getByTestId('strategy-lot').first().locator('input[type=checkbox][aria-label^="Seleccionar "]');
+    let selected = 0; for (let i = 0; i < await boxes.count(); i++) if (await boxes.nth(i).isChecked()) selected++;
+    for (let i = 0; selected >= 20 && i < await boxes.count(); i++) if (await boxes.nth(i).isChecked()) { await boxes.nth(i).uncheck(); selected--; }
     await sg.getByLabel('Mínimo de cotizaciones del lote 1').fill('20');
     await sg.getByRole('button', { name: 'Guardar estrategia', exact: true }).click();
     const sv = flat(await page.getByTestId('strategy-msg').innerText());
