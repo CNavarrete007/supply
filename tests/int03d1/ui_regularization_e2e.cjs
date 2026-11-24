@@ -171,6 +171,8 @@ const rowOf = (page, folio) => page.getByTestId('reg-row').filter({ hasText: fol
     await page.getByRole('button', { name: /Limpiar/ }).click();
     // CONTINUAR: etapa 1 → Validación interna en Gestión del Contratista.
     await page.getByRole('button', { name: /Sin requisición \/ Regularización/ }).click();
+    // Al volver a la tarjeta el buscador se reinicia: con muchas provisionales (corridas anteriores) la fila puede quedar en otra página.
+    await page.getByLabel('Buscar solicitud provisional').fill(`UI-${tag}`);
     check('CONTINUAR indica el siguiente paso', (await rowOf(page, open.folio).getByRole('button', { name: 'CONTINUAR' }).getAttribute('title')) === 'Siguiente paso: Validación interna (Gestión del Contratista)');
     await rowOf(page, open.folio).getByRole('button', { name: 'CONTINUAR' }).click();
     await page.getByTestId('contractor-mgmt-notice').waitFor({ timeout: 15000 });

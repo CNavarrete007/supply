@@ -93,6 +93,7 @@ def php_classes():
     names = set(classes)
     for cls, info in classes.items():
         info['uses'] = sorted(o for o in names if o != cls and re.search(r'\b' + o + r'\b', info['code']))
+        info['news'] = sorted(o for o in names if o != cls and re.search(r'\bnew\s+\\?(?:App\\\w+\\)?' + o + r'\s*\(', info['code']))
     return classes
 
 
@@ -108,13 +109,14 @@ def inherited(classes, cls, key):
     return out if out else None
 
 
-def closure(classes, start):
+def closure(classes, start, key='uses'):
+    """Clases alcanzables desde `start`: por cualquier referencia (key='uses') o solo por instancias `new X(` (key='news')."""
     seen, todo = set(), [start]
     while todo:
         c = todo.pop()
         if c in seen or c not in classes:
             continue
-        seen.add(c); todo += classes[c]['uses'] + ([classes[c]['parent']] if classes[c]['parent'] else [])
+        seen.add(c); todo += classes[c][key] + ([classes[c]['parent']] if classes[c]['parent'] else [])
     return seen
 
 
@@ -213,11 +215,11 @@ def main():
         r['ok'] = c in classes and r['action'] in (inherited(classes, c, 'public') or set())
         if not r['ok']:
             problems.append(f"Ruta {r['method']} {r['path']}: {c}::{r['action']} no existe")
-        deps = sorted(closure(classes, c) - {c})
-        r['libraries'] = [d for d in deps if classes[d]['kind'] == 'Libraries']
-        accs = {classes[d]['account'] for d in closure(classes, c) if classes[d]['account']}
-        # La cuenta de un controlador es la de las librerías que usa (o la heredada, p. ej. CatalogWriteBase → catalogwrite).
-        r['accounts'] = sorted(accs)
+        # Conexiones reales: solo las clases que se INSTANCIAN (new X) desde el controlador; las referencias estáticas
+        # (constantes o funciones de política, p. ej. RequisitionRecoveryRepository::stage) no abren conexión.
+        inst = closure(classes, c, 'news')
+        r['libraries'] = sorted(d for d in inst - {c} if classes[d]['kind'] == 'Libraries')
+        r['accounts'] = sorted({inherited(classes, d, 'account') for d in inst if inherited(classes, d, 'account')})
     # Lo que cada clase con cuenta propia lee/escribe debe estar concedido a esa cuenta (si no: error 1142 en ejecución).
     contract = grants()
     for c, info in sorted(classes.items()):
@@ -262,8 +264,12 @@ def main():
                 called_missing[(d['method'], d['path'], d['files'][0] if d['files'] else '?')] += 1
                 continue
             key = (r['method'], r['path'])
-            for f in d['files']:
-                origin[key].add(f); by_file[f].add(key)
+            # La pila asíncrona incluye ancestros lejanos (React encadena actualizaciones): cuenta el archivo más cercano a la
+            # petición que no sea un cliente HTTP (componente .jsx o hook .js, p. ej. useMatrixData.js o useCatalogAutosave.js).
+            fs = [f for f in d['files'] if f != 'src/main.jsx']
+            caller = next((f for f in fs if f.startswith('(') or not files.get(f, {}).get('fetch')), fs[0] if fs else None)
+            if caller:
+                origin[key].add(caller); by_file[caller].add(key)
     for (m, p, f), n in sorted(called_missing.items()):
         problems.append(f'El frontend ({f}) llamó {m} {p}, que no es una ruta de la API ({n} vez/veces)')
 
@@ -295,7 +301,10 @@ def main():
     L = []
     w = L.append
     nlive = sum(1 for r in rts if live.get((r['method'], r['path'])))
-    nui = sum(1 for r in rts if live.get((r['method'], r['path']), {}).get('ui'))
+    # «Desde la interfaz» = la pila de llamadas del navegador la originó (CDP). Sin ese registro se usa el agente de usuario, que también
+    # cuenta las llamadas por API que hacen las pruebas desde Playwright.
+    from_ui = (lambda k: bool(origin.get(k))) if a.initiator_log else (lambda k: bool(live.get(k, {}).get('ui')))
+    nui = sum(1 for r in rts if from_ui((r['method'], r['path'])))
     s5 = sorted({(m, p) for (m, p), v in live.items() for src in ('ui', 'http') for st in v[src] if st.startswith('5')})
     w('## Resumen\n')
     w('| Concepto | Resultado |\n|---|---|')
@@ -311,16 +320,16 @@ def main():
     w(f'| Problemas (rutas rotas, llamadas a rutas inexistentes, permisos SQL faltantes) | {len(problems)} |\n')
 
     w('## Rutas: controlador → librerías → cuenta SQL → origen en la interfaz\n')
-    w('Origen: archivos `/src` en la pila de llamadas de las peticiones reales del navegador (el primero es el cliente HTTP). Verificación: códigos de respuesta observados (`ui` = navegador, `http` = pruebas HTTP).\n')
-    w('| Método | Ruta | Controlador::método | Librerías | Cuenta SQL | Componentes que la llaman | Verificación en vivo |\n|---|---|---|---|---|---|---|')
+    w('Componentes: archivos `/src` en la pila de llamadas de las peticiones que hizo el navegador. Respuestas: códigos que devolvió la API en la corrida (interfaz y pruebas HTTP juntas).\n')
+    w('| Método | Ruta | Controlador::método | Librerías | Cuenta SQL | Componentes que la llaman | Respuestas en vivo |\n|---|---|---|---|---|---|---|')
     for r in rts:
         k = (r['method'], r['path'])
-        comps_k = sorted(f for f in origin.get(k, ()) if f.endswith('.jsx') and f not in ('src/App.jsx', 'src/main.jsx'))
-        cli = sorted(f for f in origin.get(k, ()) if not f.endswith('.jsx'))
+        comps_k = sorted(origin.get(k, ()))
+        cli = []
         v = live.get(k)
-        ver = '—' if not v else ' · '.join(f"{s}: " + ','.join(f'{st}×{n}' for st, n in sorted(v[s].items())) for s in ('ui', 'http') if v[s])
+        ver = '—' if not v else ', '.join(f'{st}×{n}' for st, n in sorted((v['ui'] + v['http']).items()))
         uses = ', '.join(x.replace('Repository', 'Repo') for x in r['libraries'] if 'Input' not in x and x not in ('CatalogConflict', 'CatalogStale', 'CatalogWriteUnavailable', 'RequisitionChangeConflict', 'RequisitionChangeStale'))
-        place = ', '.join(c.replace('src/views/', '') for c in comps_k) or (', '.join(c.replace('src/', '') for c in cli) if cli else ('scripts de arranque (`*.ps1`)' if r['scripts'] else '—'))
+        place = ', '.join(c.replace('src/views/', '').replace('src/', '') for c in comps_k) or ('scripts de arranque (`*.ps1`)' if r['scripts'] else '—')
         w(f"| {r['method']} | `{r['path']}` | {r['controller']}::{r['action']}{'' if r['ok'] else ' ⚠'} | {uses or '—'} | {', '.join(r['accounts']) or 'sin BD'} | {place} | {ver} |")
 
     w('\n## Clases PHP\n')
@@ -356,8 +365,10 @@ def main():
         if kids:
             return 'contenedor (' + ', '.join(os.path.basename(i) for i in kids) + ')'
         return 'por props (desde ' + ', '.join(sorted(os.path.basename(u) for u in users[f])) + ')'
+    def hooks(f):  # módulos .js/.mjs que el componente importa y que no son clientes HTTP (p. ej. useMatrixData.js)
+        return [i for i in files[f]['imports'] if not files[i]['component'] and not files[i]['fetch']]
     for f in comps:
-        got = sorted(by_file.get(f, ()))
+        got = sorted(set(by_file.get(f, ())).union(*[by_file.get(h, set()) for h in hooks(f)]))
         live_txt = '—' if not a.initiator_log else (f"{len(got)}: " + ', '.join(f'{m} {p[8:]}' for m, p in got[:5]) + (' …' if len(got) > 5 else '') if got else '0')
         w(f"| `{f[4:]}` | {kind(f)} | {live_txt} |")
 
@@ -373,7 +384,7 @@ def main():
         never = [f"{r['method']} {r['path']}" for r in rts if not live.get((r['method'], r['path'])) and not r['scripts']]
         if never:
             w(f"- Rutas sin ninguna petición en la corrida ({len(never)}): {', '.join(f'`{x}`' for x in never)}.")
-        nui_only = [f"{r['method']} {r['path']}" for r in rts if live.get((r['method'], r['path'])) and not live[(r['method'], r['path'])]['ui']]
+        nui_only = [f"{r['method']} {r['path']}" for r in rts if live.get((r['method'], r['path'])) and not from_ui((r['method'], r['path']))]
         if nui_only:
             w(f"- Rutas probadas solo por HTTP, sin pantalla que las llame ({len(nui_only)}): {', '.join(f'`{x}`' for x in nui_only)}.")
         if s5:

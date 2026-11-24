@@ -39,6 +39,20 @@
   5. **Permisos.** El servidor solo distingue `master_admin`; los permisos por sección (`role_permissions`, `user_permissions`) se leen pero no se aplican.
   6. **Historial de Git.** Conserva los datos reales que traía `ClientPortal.jsx` (retirados del código el 23 nov).
 
+## 1.2 Mapa de clases conectadas al Backend (24 nov 2026)
+
+Detalle en `docs/bd/MAPA_CLASES_BACKEND.md`, generado con `tests/class_connection_audit.py`.
+
+- **Rutas:** 117/117 con controlador y método existentes.
+- **Clases PHP:** 81, ninguna huérfana.
+- **Frontend:** 134 archivos JS/JSX alcanzables desde `src/main.jsx`.
+- **Permisos SQL:** las tablas que lee y escribe cada clase están concedidas a su cuenta.
+- **Verificación en vivo** (sandbox sintético): 113/117 rutas recibieron peticiones reales y 106 las originó la interfaz, sin respuestas 5xx.
+- **Sin pantalla:**
+  - Las 3 escrituras R3C2/R3C3, bloqueadas por política.
+  - 4 consultas que responden 200 (`health`, `candidates`, el CSV de analítica y la lista de borradores v0.7).
+- **Retirado:** la vista genérica `CatalogReadOnly`, que ninguna pantalla mostraba.
+
 ## 2. Cuentas SQL
 
 | Cuenta SQL (overlay) | Qué puede escribir | La usan |
