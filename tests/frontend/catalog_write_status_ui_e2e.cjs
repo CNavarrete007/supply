@@ -80,12 +80,13 @@ const STATUS = code => ({ enabled: false, code, expected_grants: 33, missing_gra
     mockStatus = { enabled: true, code: 'OK', expected_grants: 33, missing_grants: [], read_only: true };
     mockPost = { error: { code: 'CATALOG_WRITE_ACCOUNT_REJECTED', message: 'MariaDB rechazó la cuenta de escritura del catálogo.' } };
     await fresh(); await openClients();
+    // La ficha termina de cargar (catálogo y selectores) antes de capturar: si no, la carga tardía reinicia el formulario.
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
     check('sin aviso previo cuando el estado es OK', await banner().count() === 0);
-    await page.getByLabel('No. de cliente', { exact: true }).fill('QA-AVISO-SIMULADO');
-    await page.getByLabel('Razón social', { exact: true }).fill('Cliente simulado (no se envía al servidor)');
-    await page.getByLabel('Proyecto', { exact: true }).fill('PRY-SIM');
-    await page.getByLabel('Número de contrato', { exact: true }).fill('CTR-SIM');
-    await page.getByTestId('save-message').waitFor({ timeout: 10000 });
+    const fields = [['No. de cliente', 'QA-AVISO-SIMULADO'], ['Razón social', 'Cliente simulado (no se envía al servidor)'], ['Proyecto', 'PRY-SIM'], ['Número de contrato', 'CTR-SIM']];
+    for (const [label, value] of fields) await page.getByLabel(label, { exact: true }).fill(value);
+    for (const [label, value] of fields) if (await page.getByLabel(label, { exact: true }).inputValue() !== value) await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByTestId('save-message').waitFor({ timeout: 15000 });
     await page.waitForTimeout(4000); // tiempo suficiente para que un reintento automático ocurriera
     const msg = await page.getByTestId('save-message').innerText();
     check('al guardar: mensaje de configuración (no «intenta de nuevo»)', msg.includes('MariaDB rechazó la cuenta de escritura del catálogo. No se guardó nada.') && !msg.includes('intenta de nuevo'), msg);
