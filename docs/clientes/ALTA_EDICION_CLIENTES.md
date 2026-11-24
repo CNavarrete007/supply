@@ -80,6 +80,39 @@ Archivos: `docker/supply-catalogwrite/provision.py` (provision | verify; no modi
 opcional `compose.supply-catalogwrite.yml`. **Mientras no se active, el arranque actual no cambia**: la API responde
 503 `CATALOG_WRITE_NOT_PROVISIONED` al guardar y la ficha lo indica en ámbar sin perder lo capturado.
 
+## Diagnóstico: «Clientes no guarda» (24 nov 2026)
+
+**Causa más común.** La API se inició sin la cuenta de escritura del catálogo, porque el arranque omitió
+`compose.supply-catalogwrite.yml`. Hasta el 24 nov el bloque de arranque de `CLAUDE.md` y `SupplyFlow-Restore-INT03.ps1` no
+lo incluían, así que ocurría aunque la cuenta se hubiera configurado antes. Hoy ambos lo incluyen **solo si existe**
+`secrets\catalogwrite-db-password.txt`; si no existe, todo arranca igual que antes y la pantalla lo avisa.
+
+**Cómo saberlo.** Al abrir la ficha de Clientes, Proveedores, Suministros o Categorías aparece un aviso amarillo cuando el
+guardado no está habilitado. Para el detalle (con sesión de Master Admin): `http://localhost:8080/api/v1/catalogs/write-status`.
+Es de solo lectura y no muestra secretos.
+
+| `code` | Qué significa | Qué hacer |
+|---|---|---|
+| `OK` | La cuenta existe y tiene los 33 permisos | Nada |
+| `CATALOG_WRITE_NOT_PROVISIONED` | La API se inició sin el overlay o sin su secreto | Crear el secreto y arrancar con el overlay (sección siguiente) |
+| `CATALOG_WRITE_ACCOUNT_REJECTED` | MariaDB rechazó la cuenta: no existe o su contraseña no coincide con el secreto | `provision` y `verify` (sección siguiente) |
+| `CATALOG_WRITE_GRANTS_INCOMPLETE` | Faltan permisos; `missing_grants` los lista | Volver a ejecutar `provision`: solo agrega los que faltan |
+| `CATALOG_WRITE_UNAVAILABLE` | No se pudo conectar (base caída u otro error) | Revisar `docker compose ps -a` y `/api/v1/ready` |
+
+**Al guardar.**
+- Con cualquiera de esas causas, la pantalla dice exactamente cuál es, pausa el guardado automático (reintentar no lo
+  resuelve) y no guarda nada.
+- Antes, la cuenta rechazada o los permisos incompletos mostraban «No se pudo guardar… intenta de nuevo».
+
+**Comprobación de solo lectura** (también sirve en la base real):
+- **Desde el navegador:** con la sesión de Master Admin iniciada, abrir la dirección de arriba. No hace falta Python ni Node
+  en Windows.
+- **Prueba automática** (opcional, en un equipo con Python): imprime el `code` del estado.
+
+```bash
+SF_API=http://127.0.0.1:8080 SF_USER=<correo admin> SF_QA_PASSWORD=<clave> python3 tests/catalog_write_status_http_check.py
+```
+
 ## Activación en la PC (requiere autorización explícita)
 
 > Crea una cuenta SQL y recrea solo el contenedor `api`. Hacer antes un respaldo SQL posterior a INT03.
@@ -106,8 +139,10 @@ foreach ($f in $files) { $compose += @('-f', (Join-Path $root $f)) }
 ```
 
 Comprobaciones: `verify` → `"result": "PASS"`, `"grants": 33` (29 hasta el 23 nov; los 4 nuevos son de Categorías, ver `docs/categorias/ALTA_EDICION_CATEGORIAS.md`); `http://localhost:8080/api/v1/recovery/catalogs` sin
-sesión → 401; en Clientes, dar de alta un cliente de prueba identificable y revisarlo en la bitácora (Usuarios y roles →
-Bitácora, módulo `catalogs`). Desde entonces, incluir `compose.supply-catalogwrite.yml` en la lista de overlays.
+sesión → 401; `/api/v1/catalogs/write-status` (con sesión) → `"code": "OK"`; en Clientes, dar de alta un cliente de prueba
+identificable y revisarlo en la bitácora (Usuarios y roles → Bitácora, módulo `catalogs`). Desde entonces, el arranque de
+`CLAUDE.md` y `SupplyFlow-Restore-INT03.ps1 -Phase Start` incluyen `compose.supply-catalogwrite.yml` automáticamente (existe el
+secreto); en cualquier otro comando de arranque hay que incluirlo a mano.
 
 **Reversión**: quitar el overlay de la lista y recrear solo `api` (el guardado vuelve a 503). Eliminar la cuenta SQL solo
 con autorización.

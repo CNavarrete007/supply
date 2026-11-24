@@ -67,11 +67,13 @@ $root='C:\Dev\supply'; $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR='C:\Dev\supply-docker-p
 $compose=@('compose','-p','supply','--project-directory',$root)
 foreach($f in 'docker-compose.yml','compose.supply-db.yml','compose.supply-dev.yml','compose.supply-auth.yml',
   'compose.supply-reqwrite.yml','compose.supply-recovery.yml','compose.supply-dbadmin.yml'){ $compose+=@('-f',(Join-Path $root $f)) }
+# Guardado de catálogos (cuenta catalogwrite): solo si existe su secreto; si se omite, Clientes/Proveedores/Suministros/Categorías no guardan.
+if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\catalogwrite-db-password.txt"){ $compose+=@('-f',(Join-Path $root 'compose.supply-catalogwrite.yml')) }
 & docker.exe @compose --profile dev config --quiet; if($LASTEXITCODE){throw 'BLOCKED'}
 ```
 4. Solo la base (camino A: restaurar aquí; camino B: instalar esquema sintético aquí): `& docker.exe @compose up -d db`
 5. Verificar cuentas (script SQL de solo lectura). Si no da 77/52, **detenerse**.
-6. Aplicación: `& docker.exe @compose --profile dev up -d --build api frontend web` (siempre con **los 7 archivos**: recrear `api` sin `auth`/`reqwrite` fue la causa del BLOCKED de INT03).
+6. Aplicación: `& docker.exe @compose --profile dev up -d --build api frontend web` (siempre con **los 7 archivos**, más `compose.supply-catalogwrite.yml` si existe su secreto: recrear `api` sin `auth`/`reqwrite` fue la causa del BLOCKED de INT03, y sin `catalogwrite` los catálogos no guardan).
 7. Comprobar: `http://localhost:8080/api/v1/health` 200 · `/api/v1/ready` 200 · `/api/v1/recovery/catalogs` sin sesión **401** · `http://localhost:8080` login.
 8. Opcional: `& docker.exe @compose --profile dev --profile db-admin up -d phpmyadmin` (127.0.0.1:8081).
 

@@ -28,7 +28,11 @@
   - Las listas fijas son opciones de catálogo (estatus, tipos, monedas).
 - **Regresión completa**: 24 suites de interfaz, 17 HTTP, 385 pruebas unitarias e INT03-D1, todas en verde.
 - **Hallazgos**:
-  1. **Guardado de catálogos en la PC del usuario.** El arranque documentado en `CLAUDE.md` no incluye `compose.supply-catalogwrite.yml`, y la cuenta `supplyflow_catalogwrite_local` no está en el contrato 77/52. Sin aprovisionarla (requiere autorización), el alta y edición de Clientes, Proveedores, Suministros y (desde el 24 nov) Categorías avisa que no está habilitada y no guarda. Si ya estaba aprovisionada con 29 permisos, basta volver a ejecutar `provision` para agregar los 4 de Categorías (`docs/categorias/ALTA_EDICION_CATEGORIAS.md`).
+  1. **Guardado de catálogos en la PC del usuario** (atendido el 24 nov; ver `docs/clientes/ALTA_EDICION_CLIENTES.md` § Diagnóstico):
+     - El arranque de `CLAUDE.md` y `SupplyFlow-Restore-INT03.ps1` incluye `compose.supply-catalogwrite.yml` cuando existe su secreto.
+     - `GET /api/v1/catalogs/write-status` diagnostica la causa.
+     - Las cuatro pantallas de catálogo la avisan al abrir la ficha.
+     - Antecedente: el arranque documentado en `CLAUDE.md` no incluía `compose.supply-catalogwrite.yml`, y la cuenta `supplyflow_catalogwrite_local` no está en el contrato 77/52. Sin aprovisionarla (requiere autorización), el alta y edición de Clientes, Proveedores, Suministros y (desde el 24 nov) Categorías avisa que no está habilitada y no guarda. Si ya estaba aprovisionada con 29 permisos, basta volver a ejecutar `provision` para agregar los 4 de Categorías (`docs/categorias/ALTA_EDICION_CATEGORIAS.md`).
   2. **Código sin uso, sin efecto en la operación (eliminado el 23 nov, a petición del usuario):**
      - 8 vistas antiguas con datos de demostración (unas 15,800 líneas) y `src/views/clients/clientWriteApi.js`.
      - El estado `quotes` que `App.jsx` guarda en `localStorage` y que ningún módulo usa.

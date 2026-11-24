@@ -4,6 +4,7 @@ import { listSupplierOfferings, getCatalogRecord, listCatalog, getSupplierOfferi
 import { typeLabel, statusKey, statusLabel, STATUS_TONE, leadTime, credit, supplierCommercial, supplierCards, avatarText } from './model.mjs';
 import { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage, TYPES, OTHER_TYPE, CATEGORIES as OFF_CATEGORIES, LEAD_UNITS, CREDIT_TYPES, CURRENCIES as OFF_CURRENCIES, STATUSES as OFF_STATUSES } from './form.mjs';
 import { useCatalogAutosave } from '../catalog/useCatalogAutosave';
+import { CatalogWriteStatus } from '../catalog/CatalogWriteStatus';
 
 // Suministros de proveedores · diseño Grupo Gerez (3 tarjetas) conectado a MariaDB en modo consulta.
 // Fuente: GET /api/v1/catalogs/supplier-offerings (+ /catalogs/suppliers/{id} para condiciones habituales y calificación).
@@ -149,6 +150,7 @@ export function SupplierSupplyCatalog({ lang = 'es', language, isEnglish, onNoti
     <div className="bg-white p-6 md:p-8 rounded-2xl border border-slate-200/80 shadow-sm min-h-[400px]">
       {/* TARJETA 1: Registro (alta/edición real con guardado automático; catálogo sin precios) */}
       {tab === 'register' && <div className="space-y-5" data-testid="offering-form">
+        <CatalogWriteStatus entity={{ es: 'suministros', en: 'supplies' }} en={en} />
         <div className="flex items-start justify-between gap-3 pb-2 border-b border-slate-100">
           <div><h3 className="text-lg font-black text-slate-900">{tx('Producto, servicio o suministro del proveedor', 'Supplier product, service or supply')}</h3>
             <p className="text-xs text-blue-700/80 mt-0.5">{tx('Registra exactamente qué puede proveer y bajo qué condiciones comerciales.', 'Record exactly what the supplier can provide and under which commercial terms.')}</p>

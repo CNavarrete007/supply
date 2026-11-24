@@ -35,6 +35,11 @@ $ImportHash = 'cd9a8d0eb37b7c461cc1a269f7eb554d89fd76040963d539e4c3f6fbd8754619'
 $Secrets = @('mariadb-root.txt', 'api-db-password.txt', 'auth-db-password.txt', 'reqwrite-db-password.txt', 'recovery-db-password.txt')
 $Files = @('docker-compose.yml', 'compose.supply-db.yml', 'compose.supply-dev.yml', 'compose.supply-auth.yml',
   'compose.supply-reqwrite.yml', 'compose.supply-recovery.yml', 'compose.supply-dbadmin.yml')
+# Catalogos (Clientes, Proveedores, Suministros y Categorias): la cuenta de escritura solo se monta si su secreto existe.
+# Sin el, la API arranca igual y esas pantallas avisan que el guardado no esta habilitado. Aqui nunca se crea ni concede nada:
+# habilitarla (secreto + provision) se hace aparte, con respaldo y autorizacion (docs/clientes/ALTA_EDICION_CLIENTES.md).
+$CatalogWrite = Test-Path -LiteralPath (Join-Path $PrivateDir 'secrets\catalogwrite-db-password.txt') -PathType Leaf
+if ($CatalogWrite) { $Files += 'compose.supply-catalogwrite.yml' }
 $script:Problems = New-Object System.Collections.Generic.List[string]
 
 function Say([string]$Status, [string]$Text) { Write-Host ('[{0,-7}] {1}' -f $Status, $Text) }
@@ -202,6 +207,8 @@ switch ($Phase) {
       if ($s -eq $c[1]) { Say 'OK' "$($c[0]) -> $s" } else { Say 'BLOCKED' "$($c[0]) -> $s (esperado $($c[1]))"; $ok = $false }
     }
     & docker @Compose ps -a | Out-Host
+    if ($CatalogWrite) { Say 'OK' 'Guardado de catalogos: overlay compose.supply-catalogwrite.yml incluido (si la cuenta no esta aprovisionada, Clientes lo indica al abrir la ficha).' }
+    else { Say 'INFO' 'Guardado de catalogos NO habilitado: falta secrets\catalogwrite-db-password.txt. Clientes, Proveedores, Suministros y Categorias solo consultan (ver docs/clientes/ALTA_EDICION_CLIENTES.md).' }
     if ($ok) { Say 'PASS' 'SupplyFlow en http://localhost:8080 (inicia sesion con tu usuario de la PC anterior).'; exit 0 }
     exit 1
   }

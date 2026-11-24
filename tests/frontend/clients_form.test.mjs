@@ -45,7 +45,7 @@ test('cuerpo JSON: sin filas vacías, sin portal y logotipo según acción', () 
 test('mensajes de error del guardado', () => {
   assert.equal(serverField('repeat_policy.min_margin_pct'), 'margin'); assert.equal(serverField('code'), 'code');
   assert.match(saveErrorMessage(409, 'CODE_TAKEN'), /ya está registrado/); assert.match(saveErrorMessage(412, 'STALE_VERSION'), /Otra persona/);
-  assert.match(saveErrorMessage(503, 'CATALOG_WRITE_NOT_PROVISIONED'), /aprovisionar/); assert.match(saveErrorMessage(401, 'NOT_AUTHENTICATED'), /sesión/);
+  assert.match(saveErrorMessage(503, 'CATALOG_WRITE_NOT_PROVISIONED'), /no está habilitado en este equipo\. No se guardó nada\. .*Activación en la PC/); assert.match(saveErrorMessage(401, 'NOT_AUTHENTICATED'), /sesión/);
   assert.match(saveErrorMessage(500, 'X', true), /No partial changes/);
 });
 

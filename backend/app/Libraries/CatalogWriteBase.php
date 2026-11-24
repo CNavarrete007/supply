@@ -18,6 +18,21 @@ use Throwable;
 abstract class CatalogWriteBase
 {
     public const STORAGE = 'supplyflow_catalog_private_v1';
+    /**
+     * Contrato de permisos de supplyflow_catalogwrite_local (33). Debe coincidir con docker/supply-catalogwrite/provision.py
+     * (tests/catalogwrite_contract_check.py lo comprueba). Solo se usa para diagnosticar; nunca concede nada.
+     */
+    public const GRANTS = [
+        'SELECT' => ['business_entities', 'categories', 'clients', 'entity_files', 'files', 'idempotency_keys', 'party_contact_channels',
+            'party_contacts', 'requisition_items', 'supplier_offerings', 'suppliers'],
+        'INSERT' => ['audit_events', 'business_entities', 'categories', 'clients', 'entity_files', 'files', 'idempotency_keys',
+            'party_contact_channels', 'party_contacts', 'supplier_offerings', 'suppliers'],
+        'UPDATE' => ['business_entities', 'categories', 'clients', 'entity_files', 'idempotency_keys', 'party_contact_channels',
+            'party_contacts', 'supplier_offerings', 'suppliers'],
+        'DELETE' => ['categories', 'party_contact_channels'],
+    ];
+    /** Errores de MariaDB que indican que la cuenta no existe, su contraseña no coincide o no tiene acceso al esquema. */
+    private const ACCOUNT_REJECTED_ERRNO = [1044, 1045, 1698];
     protected const LOGO_ROLE = '';
     protected const LOGO_KEY = '';
     protected mysqli $db;
@@ -44,10 +59,36 @@ abstract class CatalogWriteBase
             $this->db = new mysqli((string) (getenv('DB_HOST') ?: 'db'), $user, $password, 'supplyflow_dev', (int) (getenv('DB_PORT') ?: 3306));
             SessionContract::initialize($this->db, 'supplyflow_dev');
         } catch (Throwable $error) {
-            throw new CatalogWriteUnavailable('CATALOG_WRITE_UNAVAILABLE', 0, $error);
+            $errno = $error instanceof \mysqli_sql_exception ? (int) $error->getCode() : 0;
+            throw new CatalogWriteUnavailable(in_array($errno, self::ACCOUNT_REJECTED_ERRNO, true) ? 'CATALOG_WRITE_ACCOUNT_REJECTED' : 'CATALOG_WRITE_UNAVAILABLE', 0, $error);
         } finally {
             unset($password);
         }
+    }
+
+    /**
+     * Diagnóstico de solo lectura: permisos del contrato que la cuenta en uso NO tiene (["INSERT clients", ...]).
+     * Consulta information_schema.TABLE_PRIVILEGES, donde cada cuenta ve sus propios permisos; no modifica nada.
+     * @return list<string>
+     */
+    public function missingGrants(): array
+    {
+        $user = (string) ($this->one('SELECT CURRENT_USER() AS u')['u'] ?? '');
+        $at = strrpos($user, '@');
+        $grantee = "'" . substr($user, 0, $at === false ? null : $at) . "'@'" . ($at === false ? '%' : substr($user, $at + 1)) . "'";
+        $have = [];
+        foreach ($this->rows('SELECT TABLE_NAME AS t, PRIVILEGE_TYPE AS p FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE=? AND TABLE_SCHEMA=?', 'ss', [$grantee, 'supplyflow_dev']) as $r) {
+            $have[$r['p'] . ' ' . $r['t']] = true;
+        }
+        $missing = [];
+        foreach (self::GRANTS as $privilege => $tables) {
+            foreach ($tables as $table) {
+                if (! isset($have[$privilege . ' ' . $table])) {
+                    $missing[] = $privilege . ' ' . $table;
+                }
+            }
+        }
+        return $missing;
     }
 
     public function __destruct()

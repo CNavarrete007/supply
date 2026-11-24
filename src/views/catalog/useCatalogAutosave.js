@@ -4,6 +4,7 @@
 // matriz, selectores e indicadores SIN recargar la ficha, así no se pisa lo que se está escribiendo.
 import React, { useEffect, useRef, useState } from 'react';
 import { saveCatalogRecord, fetchCatalogLogo, compressLogo } from './writeApi';
+import { WRITE_BLOCKING_CODES } from './writeStatus.mjs';
 
 export const AUTOSAVE_MS = 1500;
 const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
@@ -124,10 +125,10 @@ export function useCatalogAutosave({ kind, ficha, setSelectedId, onSaved, notify
         if (code === 'CODE_TAKEN') setErrors(x => ({ ...x, code: tx('Número ya registrado.', 'Number already registered.') }));
         // 4xx: el contenido debe corregirse (nueva clave); 5xx/en proceso: se reintenta con la misma clave.
         if (r.status < 500 && !String(code).startsWith('IDEMPOTENCY')) keyFor.current = { sig: '', key: '' };
-        if (r.status === 412 || code === 'CATALOG_WRITE_NOT_PROVISIONED') paused.current = true;
+        if (r.status === 412 || WRITE_BLOCKING_CODES.includes(code)) paused.current = true; // configuración: reintentar no lo resuelve
         if ((r.status === 409 || r.status === 422) && !String(code).startsWith('IDEMPOTENCY')) rejectedSig.current = sig;
         setAuto({ state: 'error' });
-        setSaveMsg({ kind: code === 'CATALOG_WRITE_NOT_PROVISIONED' ? 'warn' : 'error', text: r.status === 422 && r.data?.error?.message && code === 'INVALID_VALUE' ? r.data.error.message : saveErrorMessage(r.status, code, en), reload: r.status === 412 });
+        setSaveMsg({ kind: WRITE_BLOCKING_CODES.includes(code) ? 'warn' : 'error', text: r.status === 422 && r.data?.error?.message && code === 'INVALID_VALUE' ? r.data.error.message : saveErrorMessage(r.status, code, en), reload: r.status === 412 });
         return 'failed';
       } catch {
         setAuto({ state: 'error' });

@@ -1,5 +1,6 @@
 // Proveedores · formulario de alta/actualización (lógica pura, sin red). La validación aquí solo ayuda al usuario:
 // el servidor vuelve a validar todo (SupplierInput.php) y es la única autoridad.
+import { writeConfigErrorText } from '../catalog/writeStatus.mjs';
 
 // Opciones del diseño. Estatus se guarda como código (valores existentes en MariaDB); crédito y unidad, como texto
 // (así están los registros importados). Un valor guardado fuera de estas listas se conserva como "Valor histórico".
@@ -107,6 +108,6 @@ export function saveErrorMessage(status, code, en = false) {
   if (code === 'IDEMPOTENCY_CONFLICT' || code === 'IDEMPOTENCY_PENDING') return m('La operación anterior sigue en proceso; espera y reintenta.', 'The previous operation is still running; wait and retry.');
   if (status === 413) return m('El logotipo es demasiado grande.', 'The logo is too large.');
   if (status === 422) return m('Revisa los campos marcados.', 'Check the highlighted fields.');
-  if (code === 'CATALOG_WRITE_NOT_PROVISIONED') return m('El guardado de proveedores aún no está habilitado en este equipo: falta aprovisionar la cuenta de escritura del catálogo. No se guardó nada.', 'Saving suppliers is not enabled on this computer yet: the catalog write account is not provisioned. Nothing was saved.');
+  { const cfg = writeConfigErrorText(code, { es: 'proveedores', en: 'suppliers' }, en); if (cfg) return cfg; } // cuenta catalogwrite: no habilitada, rechazada o sin permisos
   return m('No se pudo guardar. No se confirmaron cambios parciales; intenta de nuevo.', 'Could not save. No partial changes were committed; try again.');
 }

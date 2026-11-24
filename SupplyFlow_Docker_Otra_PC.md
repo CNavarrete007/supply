@@ -28,6 +28,8 @@ $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR='C:\Dev\supply-docker-private'
 $files=@('docker-compose.yml','compose.supply-db.yml','compose.supply-dev.yml',
   'compose.supply-auth.yml','compose.supply-reqwrite.yml',
   'compose.supply-recovery.yml','compose.supply-dbadmin.yml')
+# Guardado de catálogos (Clientes, Proveedores, Suministros, Categorías): solo si existe su secreto.
+if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\catalogwrite-db-password.txt"){ $files+='compose.supply-catalogwrite.yml' }
 $compose=@('compose','-p','supply','--project-directory',$root)
 foreach($f in $files) {
   $p=Join-Path $root $f

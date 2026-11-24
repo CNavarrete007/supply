@@ -92,6 +92,11 @@ $files = @(
   'compose.supply-recovery.yml',
   'compose.supply-dbadmin.yml'
 )
+# Guardado de Clientes, Proveedores, Suministros y Categorías (cuenta catalogwrite): incluir su overlay SIEMPRE que exista
+# su secreto; si se omite, la API arranca sin esa cuenta y esas pantallas no guardan (avisan al abrir la ficha).
+if (Test-Path -LiteralPath (Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets\catalogwrite-db-password.txt') -PathType Leaf) {
+  $files += 'compose.supply-catalogwrite.yml'
+}
 $compose = @('compose','-p','supply','--project-directory',$root)
 foreach ($file in $files) {
   $path = Join-Path $root $file

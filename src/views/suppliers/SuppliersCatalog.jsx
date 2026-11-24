@@ -6,6 +6,7 @@ import { initials } from '../clients/model.mjs';
 import { analyzeSupplierImport, SUPPLIER_TEMPLATE_HEADERS, supplierIndicators, leadTime, ratingText, CURRENCIES } from './model.mjs';
 import { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage, STATUSES as STATUS_OPTS, CURRENCIES as SUP_CURRENCIES, CREDIT_TYPES, LEAD_UNITS } from './form.mjs';
 import { useCatalogAutosave } from '../catalog/useCatalogAutosave';
+import { CatalogWriteStatus } from '../catalog/CatalogWriteStatus';
 
 // Proveedores · diseño Grupo Gerez (4 tarjetas) conectado a MariaDB.
 // Lectura real: /api/v1/catalogs/suppliers[/{id}]. Sin datos de demostración. Alta y edición reales con guardado
@@ -197,6 +198,7 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
 
       {/* TAB 1: Registro y actualización (alta/edición real con guardado automático) */}
       {tab === 'register' && <div className="space-y-6" data-testid="supplier-form">
+        <CatalogWriteStatus entity={{ es: 'proveedores', en: 'suppliers' }} en={en} />
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-4">
           <div><h3 className="text-base font-black text-slate-800">{tx('Alta y actualización de proveedores', 'Supplier Registration and Updates')}</h3>
             <p className="text-[11px] text-slate-400 mt-0.5">{tx('El número de proveedor debe ser asignado manualmente por el usuario y no puede repetirse.', 'The supplier number is assigned manually by the user and cannot be repeated.')}</p>

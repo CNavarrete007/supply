@@ -127,6 +127,14 @@ abstract class CatalogWriteController extends BaseController
         if ($e instanceof CatalogWriteUnavailable && $e->getMessage() === 'CATALOG_WRITE_NOT_PROVISIONED') {
             return $this->fail(503, 'CATALOG_WRITE_NOT_PROVISIONED', static::NOT_PROVISIONED_MESSAGE);
         }
+        // Causas de configuración (no se arreglan reintentando): se informan con su propio código para que la pantalla lo diga.
+        if ($e instanceof CatalogWriteUnavailable && $e->getMessage() === 'CATALOG_WRITE_ACCOUNT_REJECTED') {
+            return $this->fail(503, 'CATALOG_WRITE_ACCOUNT_REJECTED', 'MariaDB rechazó la cuenta de escritura del catálogo (no existe o su contraseña no coincide con el secreto). No se guardaron cambios.');
+        }
+        if ($e instanceof \mysqli_sql_exception && in_array((int) $e->getCode(), [1044, 1142, 1143], true)) {
+            log_message('error', 'SupplyFlow catalog write: missing table privilege (errno ' . (string) $e->getCode() . ').');
+            return $this->fail(503, 'CATALOG_WRITE_GRANTS_INCOMPLETE', 'A la cuenta de escritura del catálogo le faltan permisos en MariaDB. No se guardaron cambios.');
+        }
         log_message('error', 'SupplyFlow catalog write failed: ' . get_class($e) . ' code ' . (string) $e->getCode());
         return $this->fail(503, static::UNAVAILABLE_CODE, static::UNAVAILABLE_MESSAGE);
     }

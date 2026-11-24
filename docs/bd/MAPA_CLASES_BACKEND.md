@@ -4,6 +4,12 @@
 **Entorno verificado:** sandbox local con base sintética (77 tablas, contrato 77/52 y `catalogwrite` con 33 permisos). No es tu PC ni la base comercial.
 **Pregunta:** ¿qué clases del sistema están conectadas al Backend y hacen su función?
 
+> **Actualización del 24 nov, tarde.** Se agregaron:
+> - `GET /api/v1/catalogs/write-status`: diagnóstico de solo lectura del guardado de catálogos.
+> - `CatalogWriteStatusController` y `CatalogWriteProbe`.
+>
+> Ahora hay 118 rutas y 83 clases PHP, verificadas con `tests/catalog_write_status_http_check.py` y `tests/frontend/catalog_write_status_ui_e2e.cjs`. El resto de este informe corresponde a la corrida descrita abajo.
+
 ## Conclusión
 
 **Todas las clases en uso están conectadas.** No hay rutas rotas, llamadas a rutas inexistentes, clases huérfanas ni permisos SQL faltantes.

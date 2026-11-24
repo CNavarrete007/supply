@@ -1,6 +1,7 @@
 // Requisición › Catálogo de categorías · lógica pura (diseño del Apps Script original).
 // Fuente: GET /api/v1/catalogs/categories. Alta, edición y estatus (POST/PUT) y eliminación de categorías nunca usadas (DELETE) se
 // guardan en MariaDB con la cuenta catalogwrite; aquí se validan antes de enviar y se traducen las respuestas del servidor.
+import { WRITE_BLOCKING_CODES, writeConfigErrorText } from '../catalog/writeStatus.mjs';
 export const CATEGORY_TABS = [
   ['form', '＋', 'Nueva / editar categoría', 'Captura una categoría nueva o modifica una existente.'],
   ['matrix', '📋', 'Matriz de categorías', 'Consulta, busca, edita, activa o desactiva categorías.'],
@@ -101,7 +102,7 @@ export function writeErrorText(err, action = 'guardar') {
   const code = err?.code || '', status = err?.status || 0;
   if (status === 401) return ['danger', 'Tu sesión expiró. Inicia sesión nuevamente; no se guardaron cambios.', false];
   if (status === 403) return ['danger', code === 'CSRF_INVALID' ? 'La sesión de seguridad cambió. Vuelve a intentarlo.' : 'Solo un Master Admin puede modificar el catálogo de categorías.', false];
-  if (code === 'CATALOG_WRITE_NOT_PROVISIONED') return ['warn', err.message || 'El guardado de categorías aún no está habilitado en este equipo.', false];
+  if (WRITE_BLOCKING_CODES.includes(code)) return ['warn', writeConfigErrorText(code, { es: 'categorías', en: 'categories' }), false];
   if (status === 412 || code === 'STALE_VERSION') return ['warn', action === 'guardar'
     ? `${err.message || 'La categoría cambió.'} Se abrió la versión vigente de MariaDB; vuelve a aplicar tus cambios y guarda.`
     : `${err.message || 'La categoría cambió.'} Se recargó la categoría; revisa los datos y vuelve a ${action}.`, false];

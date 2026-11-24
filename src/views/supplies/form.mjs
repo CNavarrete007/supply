@@ -1,5 +1,6 @@
 // Suministros de proveedores · formulario de alta/actualización (lógica pura, sin red). Catálogo SIN precios.
 // La validación aquí solo ayuda al usuario: el servidor vuelve a validar todo (OfferingInput.php).
+import { writeConfigErrorText } from '../catalog/writeStatus.mjs';
 
 export const OTHER_TYPE = '__other__';
 // Tipo: se guarda como código (como la mayoría de los registros existentes); "Otro/agregar nuevo tipo" guarda el texto capturado.
@@ -100,6 +101,6 @@ export function saveErrorMessage(status, code, en = false) {
   if (status === 412) return m('Otra persona modificó este suministro. Recarga la ficha antes de guardar.', 'Someone else changed this supply. Reload the record before saving.');
   if (code === 'IDEMPOTENCY_CONFLICT' || code === 'IDEMPOTENCY_PENDING') return m('La operación anterior sigue en proceso; espera y reintenta.', 'The previous operation is still running; wait and retry.');
   if (status === 422) return m('Revisa los campos marcados.', 'Check the highlighted fields.');
-  if (code === 'CATALOG_WRITE_NOT_PROVISIONED') return m('El guardado de suministros aún no está habilitado en este equipo: falta aprovisionar la cuenta de escritura del catálogo. No se guardó nada.', 'Saving supplies is not enabled on this computer yet: the catalog write account is not provisioned. Nothing was saved.');
+  { const cfg = writeConfigErrorText(code, { es: 'suministros', en: 'supplies' }, en); if (cfg) return cfg; } // cuenta catalogwrite: no habilitada, rechazada o sin permisos
   return m('No se pudo guardar. No se confirmaron cambios parciales; intenta de nuevo.', 'Could not save. No partial changes were committed; try again.');
 }
