@@ -237,7 +237,7 @@ La empresa contratista de SupplyFlow es la **organización de la sesión** (`org
   correo, dirección multilínea y logotipo; CSRF, `If-Match`, `Idempotency-Key`, bitácora `contractor.update`). El estatus no se
   edita; sin EDITAR, «Guardar» explica que registrar otras empresas sigue bloqueado. La matriz muestra el logotipo subido. Los
   formatos impresos siguen con la identidad fija. Detalle, activación (+2 permisos) y pruebas: `docs/contratista/DATOS_EMPRESA.md`
-  (modelo 9, UI lectura 29, HTTP lectura 19, HTTP escritura 31, UI escritura 20).
+  (modelo 9, UI lectura 29, HTTP lectura 19, HTTP escritura 31, UI escritura 21).
 
 ## Gestión del Contratista (conexión 19 nov 2026)
 

@@ -144,6 +144,9 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
+    // Al corregir el campo marcado desaparece su aviso (y el mensaje de validación general).
+    setFieldErr(x => (x[name] ? { ...x, [name]: undefined } : x));
+    setFormMsg(m => (m && m[0] === 'danger' ? null : m));
   };
 
   const handleAddContact = () => setContacts([...contacts, '']);

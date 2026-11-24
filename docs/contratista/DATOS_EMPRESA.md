@@ -86,7 +86,7 @@ organizations)» **solo en Contratista**; Clientes, Proveedores, Suministros y C
 | Prueba | Tipo | Resultado (sandbox sintético) |
 |---|---|---|
 | `tests/contractors_write_http_check.py` | HTTP, **escribe** (`SF_SYNTHETIC_WRITES=1`), restaura los datos al final | 31/31 |
-| `tests/frontend/contractors_write_ui_e2e.cjs` | Navegador, **escribe** (`SF_SYNTHETIC_WRITES=1`), restaura los datos al final | 20/20 |
+| `tests/frontend/contractors_write_ui_e2e.cjs` | Navegador, **escribe** (`SF_SYNTHETIC_WRITES=1`), restaura los datos al final | 21/21 |
 | `tests/frontend/contractors_ui_e2e.cjs` | Navegador, solo lectura (aborta toda escritura) | 29/29 |
 | `tests/contractors_http_check.py` | HTTP, solo lectura | 19/19 |
 | `tests/frontend/contractors_model.test.mjs` | Lógica pura | 9/9 |

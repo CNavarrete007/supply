@@ -61,6 +61,9 @@ function png(w, h, rgb) {
     await page.getByTestId('company-err-phone').waitFor();
     check('teléfono inválido: aviso en el campo y sin PUT', (await page.getByTestId('company-err-phone').innerText()).includes('Teléfono inválido') && puts.length === 0, puts.join(','));
 
+    await page.locator('input[name="phone"]').fill('+52 55 0000 0000');
+    check('al corregir el campo desaparece su aviso', await page.getByTestId('company-err-phone').count() === 0 && await page.getByTestId('company-msg').count() === 0);
+
     const NEW = { name: `${org.legal_name} UI ${RUN}`.slice(0, 255), rfc: `UIQ${RUN}`, phone: '+52 55 8000 1234', email: `ui.${RUN.toLowerCase()}@supplyflow.invalid`, address: 'Av. Sintética 200\nPiso 3, CDMX' };
     await page.locator('input[name="companyName"]').fill(NEW.name);
     await page.locator('input[name="rfc"]').fill(NEW.rfc);

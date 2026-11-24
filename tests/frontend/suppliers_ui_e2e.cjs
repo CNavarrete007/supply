@@ -72,8 +72,14 @@ const waitValue = (page, v) => page.waitForFunction(x => [...document.querySelec
     const stResp = page.waitForResponse(r => /\/api\/v1\/catalogs\/suppliers\?.*status=suspended/.test(r.url()));
     await page.getByRole('combobox', { name: 'Estatus' }).selectOption('suspended');
     check('filtro de estatus en servidor (200)', (await stResp).status() === 200);
+    // Las pruebas de escritura de Proveedores dejan proveedores suspendidos (no se pueden eliminar) y el sembrado puede quedar
+    // en la página 2: se acota por nombre en lugar de depender del orden de la paginación.
+    const stQ = page.waitForResponse(r => /\/api\/v1\/catalogs\/suppliers\?.*q=Ficticios/.test(r.url()) && /status=suspended/.test(r.url()));
+    await page.getByLabel('Buscar en catálogo').fill('Ficticios');
+    await stQ;
     await page.getByText('Servicios Ficticios de Mantenimiento', { exact: true }).waitFor();
     check('filtro muestra solo suspendidos', await page.getByText('Aceros Sintéticos del Norte', { exact: true }).count() === 0);
+    await page.getByLabel('Buscar en catálogo').fill('');
     await page.getByRole('combobox', { name: 'Estatus' }).selectOption('all');
     await row.waitFor();
     const detResp = page.waitForResponse(r => /\/api\/v1\/catalogs\/suppliers\/[0-9a-f-]{36}$/.test(r.url()));
