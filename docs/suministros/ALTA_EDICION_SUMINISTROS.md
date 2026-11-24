@@ -52,6 +52,25 @@ Si el servidor rechazaba un contenido (409/422; p. ej. número o nombre repetido
 intentaba guardarlo otra vez, recibía el mismo rechazo y no dejaba cambiar de registro. Ahora un contenido ya rechazado no
 se reintenta ni bloquea la navegación; los fallos de red o del servidor siguen protegiendo lo capturado.
 
+## Verificación con datos reales (24 nov 2026)
+
+Se reconstruyó, para cada uno de los 24 suministros del respaldo del 9 nov, el envío que hace la pantalla al editarlo y se
+validó con las reglas reales del servidor (`OfferingInput` y el repositorio). El análisis fue local y no se copiaron datos al
+repositorio.
+
+**Lo que pasa todo.** Nombre, tipo, descripción, cobertura, notas, vigencia, unidad, crédito y estatus. Los valores históricos se
+aceptan porque coinciden con el catálogo o con el valor ya guardado.
+
+**Moneda** (corregido con Proveedores). La base solo tiene MXN y USD. Ahora el selector ofrece solo las monedas dadas de alta, y
+una moneda inexistente responde 422 en el campo «Moneda».
+
+**Nombres repetidos importados** (corregido). Un proveedor tiene 3 suministros importados con nombre idéntico:
+- **Antes:** al editar cualquiera que no fuera «la primera coincidencia», el servidor respondía 409 `DUPLICATE_OFFERING` («Este
+  proveedor ya tiene registrado ese producto…») aunque no se cambiara el nombre.
+- **Ahora:** la búsqueda excluye el propio registro, y un suministro que conserva su proveedor y su nombre se puede editar.
+- **Sigue rechazándose:** crear uno nuevo con un nombre ocupado o renombrar uno hacia él.
+- **Los duplicados no se fusionan ni se borran.** Si se quieren unificar, es una decisión de negocio, con autorización.
+
 ## Pruebas (sandbox sintético)
 
 | Prueba | Resultado |

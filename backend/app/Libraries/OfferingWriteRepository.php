@@ -27,10 +27,17 @@ final class OfferingWriteRepository extends CatalogWriteBase
 
     private function assertNameFree(int $org, int $supplierId, string $name, ?int $except): void
     {
-        $row = $this->one('SELECT id FROM supplier_offerings WHERE organization_id=? AND supplier_id=? AND name=? FOR UPDATE', 'iis', [$org, $supplierId, $name]);
-        if ($row && (int) $row['id'] !== $except) {
+        // Excluye el propio registro: con nombres repetidos importados, «la primera coincidencia» podía ser el gemelo.
+        $row = $this->one('SELECT id FROM supplier_offerings WHERE organization_id=? AND supplier_id=? AND name=? AND id<>? LIMIT 1 FOR UPDATE', 'iisi', [$org, $supplierId, $name, $except ?? 0]);
+        if ($row) {
             throw new CatalogConflict('DUPLICATE_OFFERING', 'Este proveedor ya tiene registrado ese producto, servicio o suministro.');
         }
+    }
+
+    /** ¿El suministro conserva su proveedor y su nombre (misma colación que la base)? Entonces no se exige nombre único. */
+    private function keepsName(int $org, int $id, int $supplierId, string $name): bool
+    {
+        return $this->one('SELECT 1 AS x FROM supplier_offerings WHERE organization_id=? AND id=? AND supplier_id=? AND name=?', 'iiis', [$org, $id, $supplierId, $name]) !== null;
     }
 
     private static function choice(string $value, array $allowed, ?string $current, string $label, bool $free = false): ?string
@@ -117,7 +124,11 @@ final class OfferingWriteRepository extends CatalogWriteBase
             }
             $before = $this->snapshot($org, $id);
             $supplierId = (int) $this->supplier($org, $p['supplier_id'])['id'];
-            $this->assertNameFree($org, $supplierId, $p['name'], $id);
+            // Los repetidos históricos (importados) se pueden editar sin renombrarlos; crear o renombrar hacia un nombre ocupado
+            // sigue rechazándose (DUPLICATE_OFFERING).
+            if (! $this->keepsName($org, $id, $supplierId, $p['name'])) {
+                $this->assertNameFree($org, $supplierId, $p['name'], $id);
+            }
             $r = $this->resolve($org, $p, $before);
             $this->exec("UPDATE supplier_offerings SET supplier_id=?,name=?,offering_type=?,category_id=?,legacy_category_label=?,brand=?,model=?,description=?,lead_time_value=?,lead_time_unit=?,credit_type=?,credit_days=?,currency_code=?,minimum_order_text=?,valid_until=?,coverage=?,status_code=?,notes=?,updated_at=GREATEST(UTC_TIMESTAMP(6),COALESCE(updated_at,'2000-01-01') + INTERVAL 1 MICROSECOND) WHERE organization_id=? AND id=?",
                 'ississsssssissssssii', [$supplierId, $p['name'], $r['type'], $r['category_id'], $r['category_label'], $p['brand'] ?: null, $p['model'] ?: null, $p['description'] ?: null,
