@@ -79,14 +79,15 @@ datos ni esquema) y `verify` exige exactamente los 33.
 - **Si ya activaste el guardado de Clientes, Proveedores y Suministros** (overlay `compose.supply-catalogwrite.yml` y
   secreto `catalogwrite-db-password.txt` existentes):
   1. Ejecutar `provision` para que agregue los 4 permisos nuevos.
-  2. Ejecutar `verify`. Debe responder `"result": "PASS"` y `"grants": 33`.
+  2. Ejecutar `verify`. Debe responder `"result": "PASS"` y `"grants": 35` (33 hasta el 24 nov; los 2 nuevos son de
+     Contratista, `docs/contratista/DATOS_EMPRESA.md`).
   3. Recrear solo `api`.
 
   Mientras no se ejecute `provision`, `verify` responde `PRIVILEGES_INCOMPLETE` y el guardado de categorías responde 503,
   pero Clientes, Proveedores y Suministros siguen funcionando.
 - **Si nunca se activó**: seguir completa la sección «Activación en la PC» de
   `docs/clientes/ALTA_EDICION_CLIENTES.md`. Esa sección cubre el secreto, el overlay, `provision`, `verify` y la recreación
-  de `api`; con este cambio, `verify` debe responder `"grants": 33`.
+  de `api`; hoy `verify` debe responder `"grants": 35`.
 
 Los comandos están en esa misma sección; la lista de overlays debe incluir `compose.supply-catalogwrite.yml`.
 
@@ -120,6 +121,7 @@ copiaron datos al repositorio.
   - Proveedores y suministros: solo por vínculo. Los 415 proveedores con categoría en texto heredado usan etiquetas que no
     coinciden con ninguna de las 12 categorías, así que ninguna se vería «sin uso» por error.
 - **Cuenta `catalogwrite` en la PC:** quedó aprovisionada con 33 permisos, incluidos los 4 de Categorías (`verify` → PASS).
+  Desde el 24 nov el contrato es de 35 (Contratista); falta volver a ejecutar `provision` con tu autorización.
 - **Pruebas después de los cambios del 24 nov** en el manejo de errores de catálogos: lectura 14/14, escritura 28/28, interfaz
   35/35 y 49/49.
 

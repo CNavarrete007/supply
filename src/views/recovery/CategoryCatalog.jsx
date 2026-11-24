@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { categoryCatalog, saveCategory, deleteCategory } from './api';
 import { CatalogWriteStatus } from '../catalog/CatalogWriteStatus';
+import { WRITE_TABLES } from '../catalog/writeStatus.mjs';
 import { CATEGORY_TABS, CATEGORY_STATUSES, HELP, NAME_MAX, DESCRIPTION_MAX, MODE_NOTE, emptyCategory, fromCategory, usageText, usageDetail, filterCategories, validateCategory, categoryWarnings, payloadOf, savedText, writeErrorText, deleteBlock, deleteError, deletedText } from './categoryModel.mjs';
 
 // Requisición › Catálogo de categorías (diseño del Apps Script original).
@@ -104,7 +105,7 @@ export function CategoryCatalog({ onBack, onChanged }) {
     const [tone, text] = MODE_NOTE[mode];
     return <div className="card sf-cat-panel" data-testid="cat-form-panel">
       <div className="subsection-header"><div><h3>Alta y actualización de categorías</h3><p>Agrega una categoría cuando no exista en la lista desplegable de partidas.</p></div><span className="badge sf-cat-badge">Catálogo operativo</span></div>
-      <CatalogWriteStatus entity={{ es: 'categorías', en: 'categories' }} variant="legacy" />
+      <CatalogWriteStatus entity={{ es: 'categorías', en: 'categories', tables: WRITE_TABLES.categories }} variant="legacy" />
       <div className={'sf-cat-mode ' + tone} role="status" data-testid="cat-mode"><span className="dot" aria-hidden="true" /><b>{text}</b></div>
       {mode === 'edit' && original && <p className="sf-prov179-small" data-testid="cat-editing" style={{ margin: '-6px 0 12px' }}>Editando «{original.name}» · código {original.code} · {usageText(original)} ({usageDetail(original)}){original.imported ? ' · importada del Apps Script' : ''}</p>}
       <form onSubmit={save} noValidate>

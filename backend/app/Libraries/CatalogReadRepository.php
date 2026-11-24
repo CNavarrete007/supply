@@ -246,6 +246,12 @@ final class CatalogReadRepository
     }
 
     /** Storage of the current logo of a client/supplier (for the authorized GET .../logo endpoint). Never sent to the browser. */
+    /** Logotipo de la organización de la sesión (Contratista): archivo apuntado por organizations.logo_file_id. */
+    public function organizationLogo(int $organizationId, string $publicId): ?array
+    {
+        return $this->queryOne('SELECT f.storage_backend,f.storage_key,f.detected_mime AS mime,LOWER(HEX(f.sha256)) AS sha256 FROM organizations o JOIN files f ON f.id=o.logo_file_id AND f.organization_id=o.id WHERE o.id=? AND o.public_id=?', [$organizationId, $publicId]);
+    }
+
     public function entityLogo(int $organizationId, string $entityKind, string $role, string $publicId): ?array
     {
         if (! in_array([$entityKind, $role], [['client', 'clientLogo'], ['supplier', 'supplierLogo']], true)) {

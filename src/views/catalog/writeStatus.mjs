@@ -4,14 +4,26 @@
 
 export const WRITE_STATUS_URL = '/api/v1/catalogs/write-status';
 export const WRITE_BLOCKING_CODES = ['CATALOG_WRITE_NOT_PROVISIONED', 'CATALOG_WRITE_ACCOUNT_REJECTED', 'CATALOG_WRITE_GRANTS_INCOMPLETE'];
-const GUIDE = 'docs/clientes/ALTA_EDICION_CLIENTES.md';
+const DEFAULT_GUIDE = 'docs/clientes/ALTA_EDICION_CLIENTES.md';
 
-/** entity: { es: 'clientes', en: 'clients' }. Returns null when saving is enabled (or the status is unknown/not applicable). */
+// Tablas que usa el guardado de cada pantalla: un permiso faltante de OTRA tabla no afecta a esa pantalla (no se avisa ahí).
+export const WRITE_TABLES = {
+  clients: ['clients', 'business_entities', 'party_contacts', 'party_contact_channels', 'files', 'entity_files', 'audit_events', 'idempotency_keys'],
+  suppliers: ['suppliers', 'business_entities', 'party_contacts', 'party_contact_channels', 'files', 'entity_files', 'categories', 'audit_events', 'idempotency_keys'],
+  supplies: ['supplier_offerings', 'suppliers', 'business_entities', 'categories', 'audit_events', 'idempotency_keys'],
+  categories: ['categories', 'requisition_items', 'suppliers', 'supplier_offerings', 'audit_events', 'idempotency_keys'],
+  company: ['organizations', 'files', 'audit_events', 'idempotency_keys'],
+};
+
+/** entity: { es: 'clientes', en: 'clients', tables?, guide? }. Returns null when saving is enabled for that screen (or the status is unknown). */
 export function writeStatusNotice(status, entity, en = false) {
   if (!status || status.enabled) return null;
   const m = (es, e) => (en ? e : es);
   const ent = en ? entity.en : entity.es;
-  const missing = Array.isArray(status.missing_grants) ? status.missing_grants : [];
+  const GUIDE = entity.guide || DEFAULT_GUIDE;
+  const all = Array.isArray(status.missing_grants) ? status.missing_grants : [];
+  const missing = Array.isArray(entity.tables) ? all.filter(g => entity.tables.includes(String(g).split(' ')[1])) : all;
+  if (status.code === 'CATALOG_WRITE_GRANTS_INCOMPLETE' && all.length && !missing.length) return null; // faltan permisos de otras pantallas
   switch (status.code) {
     case 'CATALOG_WRITE_NOT_PROVISIONED':
       return { code: status.code, title: m(`El guardado de ${ent} no está habilitado en este equipo`, `Saving ${ent} is not enabled on this computer`),

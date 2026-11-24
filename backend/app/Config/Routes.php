@@ -57,6 +57,9 @@ $routes->get('api/v1/reception/closure', 'ReceptionController::closure');
 $routes->get('api/v1/reception/deliverable', 'ReceptionController::deliverable');
 $routes->get('api/v1/contractors', 'ContractorController::index');
 $routes->get('api/v1/contractors/(:segment)/personnel', 'ContractorController::personnel/$1');
+// Contratista: edición de los datos de la empresa de la sesión (cuenta catalogwrite; CSRF, If-Match, Idempotency-Key, bitácora).
+$routes->put('api/v1/contractors/(:segment)', 'ContractorWriteController::update/$1');
+$routes->get('api/v1/contractors/(:segment)/logo', 'ContractorWriteController::logo/$1');
 $routes->get('api/v1/contractor-management/validation-setup', 'ContractorManagementController::validationSetup');
 $routes->get('api/v1/contractor-management/requisitions/(:segment)', 'ContractorManagementController::requisition/$1');
 $routes->get('api/v1/contractor-management/strategy-setup', 'ContractorManagementController::strategySetup');

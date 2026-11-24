@@ -19,15 +19,15 @@ abstract class CatalogWriteBase
 {
     public const STORAGE = 'supplyflow_catalog_private_v1';
     /**
-     * Contrato de permisos de supplyflow_catalogwrite_local (33). Debe coincidir con docker/supply-catalogwrite/provision.py
+     * Contrato de permisos de supplyflow_catalogwrite_local (35). Debe coincidir con docker/supply-catalogwrite/provision.py
      * (tests/catalogwrite_contract_check.py lo comprueba). Solo se usa para diagnosticar; nunca concede nada.
      */
     public const GRANTS = [
-        'SELECT' => ['business_entities', 'categories', 'clients', 'entity_files', 'files', 'idempotency_keys', 'party_contact_channels',
+        'SELECT' => ['business_entities', 'categories', 'clients', 'entity_files', 'files', 'idempotency_keys', 'organizations', 'party_contact_channels',
             'party_contacts', 'requisition_items', 'supplier_offerings', 'suppliers'],
         'INSERT' => ['audit_events', 'business_entities', 'categories', 'clients', 'entity_files', 'files', 'idempotency_keys',
             'party_contact_channels', 'party_contacts', 'supplier_offerings', 'suppliers'],
-        'UPDATE' => ['business_entities', 'categories', 'clients', 'entity_files', 'idempotency_keys', 'party_contact_channels',
+        'UPDATE' => ['business_entities', 'categories', 'clients', 'entity_files', 'idempotency_keys', 'organizations', 'party_contact_channels',
             'party_contacts', 'supplier_offerings', 'suppliers'],
         'DELETE' => ['categories', 'party_contact_channels'],
     ];
@@ -257,6 +257,18 @@ abstract class CatalogWriteBase
         if (isset($logo['remove'])) {
             return;
         }
+        $fileId = $this->storeLogoFile($org, $actor, $logo);
+        $size = strlen($logo['bytes']);
+        $this->exec('INSERT INTO entity_files (organization_id,entity_id,file_id,association_key,file_role,original_filename,declared_mime,declared_size_bytes,created_at) VALUES (?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))',
+            'iiissssi', [$org, $entity, $fileId, static::LOGO_KEY . self::uuid(), static::LOGO_ROLE, $logo['name'], $logo['mime'], $size]);
+    }
+
+    /**
+     * Guarda los bytes de un logotipo ya validado en el almacenamiento privado del catálogo (direccionado por SHA-256) y
+     * devuelve el id de `files` (reutiliza el existente si es el mismo archivo). Lo usan los catálogos y la empresa (Contratista).
+     */
+    protected function storeLogoFile(int $org, int $actor, array $logo): int
+    {
         $sha = hash('sha256', $logo['bytes']);
         $size = strlen($logo['bytes']);
         $file = $this->one('SELECT id,storage_backend,storage_key FROM files WHERE organization_id=? AND sha256=? AND size_bytes=?', 'isi', [$org, hex2bin($sha), $size]);
@@ -284,8 +296,7 @@ abstract class CatalogWriteBase
         } else {
             $fileId = (int) $file['id'];
         }
-        $this->exec('INSERT INTO entity_files (organization_id,entity_id,file_id,association_key,file_role,original_filename,declared_mime,declared_size_bytes,created_at) VALUES (?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))',
-            'iiissssi', [$org, $entity, $fileId, static::LOGO_KEY . self::uuid(), static::LOGO_ROLE, $logo['name'], $logo['mime'], $size]);
+        return $fileId;
     }
 
     protected static function diff(array $before, array $after): array

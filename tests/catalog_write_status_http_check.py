@@ -39,7 +39,7 @@ try:
     check('Master Admin: 200 sin caché', st == 200 and 'no-store' in (hd.get('Cache-Control') or ''), f'{st} {hd.get("Cache-Control")}')
     check('forma exacta de la respuesta', set(body) == {'enabled', 'code', 'expected_grants', 'missing_grants', 'read_only'} and body['read_only'] is True, str(sorted(body)))
     check('código conocido y coherente con enabled', body['code'] in CODES and body['enabled'] == (body['code'] == 'OK'), f"{body['code']} {body['enabled']}")
-    check('contrato de 33 permisos', body['expected_grants'] == 33, str(body['expected_grants']))
+    check('contrato de 35 permisos', body['expected_grants'] == 35, str(body['expected_grants']))
     check('permisos faltantes solo si el código lo indica', (body['missing_grants'] != []) == (body['code'] == 'CATALOG_WRITE_GRANTS_INCOMPLETE')
           and all(re.fullmatch(r'(SELECT|INSERT|UPDATE|DELETE) [a-z_]+', m) for m in body['missing_grants']), str(body['missing_grants']))
     check('sin secretos ni rutas internas', not re.search(r'(?i)password|secret|/run/|\.txt|[0-9a-f]{64}', raw.decode()), raw.decode()[:200])

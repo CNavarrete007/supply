@@ -1,5 +1,5 @@
 // Contratista · tarjeta 2 "Matriz de contratistas" · E2E de interfaz (Chromium) contra Vite + API + MariaDB SINTÉTICAS.
-// Solo lectura: toda petición /api que no sea GET (salvo login/logout) se aborta. Valores esperados desde la API.
+// Solo lectura: toda petición /api que no sea GET (salvo login/logout) se aborta (el guardado real: contractors_write_ui_e2e.cjs). Valores esperados desde la API.
 // Uso: SF_UI=http://127.0.0.1:5173 SF_QA_PASSWORD=... [SF_SHOTS=<dir>] node tests/frontend/contractors_ui_e2e.cjs
 const { chromium } = require('playwright');
 
@@ -44,7 +44,7 @@ const low = s => String(s).replace(/\s+/g, ' ').toLowerCase();
     check('título y explicación del diseño', head.includes('matriz de contratistas') && head.includes('cada empresa conserva sus datos generales y logotipo. selecciona una como activa para documentos y operaciones.'));
     check('"+ Nuevo contratista", buscador y filtro de estatus', await mx.getByRole('button', { name: /Nuevo contratista/ }).isVisible() && await mx.getByPlaceholder('Buscar por empresa, RFC, correo o dirección...').isVisible()
       && JSON.stringify(await mx.getByLabel('Estatus').locator('option').allInnerTexts()) === '["Todos los estatus","Activo","Inactivo"]');
-    check('sin aviso genérico de "pendiente de integración"; aviso propio de escrituras bloqueadas', await page.getByText('Módulo pendiente de integración').count() === 0 && (await page.getByTestId('contractors-lock').innerText()).includes('conectada a MariaDB (solo lectura)'));
+    check('sin aviso genérico de "pendiente de integración"; aviso propio de escrituras bloqueadas', await page.getByText('Módulo pendiente de integración').count() === 0 && (await page.getByTestId('contractors-lock').innerText()).includes('Con EDITAR actualizas la razón social') && (await page.getByTestId('contractors-lock').innerText()).includes('Registrar otras empresas'));
     check('sin datos de demostración (CME / ISA)', !head.includes('cme estructuras') && !head.includes('isa piping'));
     const hdr = low(await mx.locator('thead').innerText());
     check('columnas del diseño', ['logo', 'empresa', 'rfc / tax id', 'contacto general', 'dirección', 'responsable', 'personal', 'estatus', 'uso', 'acciones'].every(x => hdr.includes(x)), hdr);
@@ -95,12 +95,15 @@ const low = s => String(s).replace(/\s+/g, ' ').toLowerCase();
     await page.getByRole('dialog', { name: 'Eliminar contratista' }).getByRole('button', { name: 'Cerrar', exact: true }).click();
     await r0.getByRole('button', { name: /^editar$/i }).click();
     await page.locator('input[name="companyName"]').waitFor();
-    check('Editar precarga la tarjeta 1 (Trámites Aduanales Gerez S.C y datos reales)', await page.locator('input[name="companyName"]').inputValue() === 'Trámites Aduanales Gerez S.C' && await page.locator('input[name="rfc"]').inputValue() === (org.tax_identifier || ''));
+    check('Editar precarga la tarjeta 1 con la razón social REGISTRADA y datos reales', await page.locator('input[name="companyName"]').inputValue() === org.legal_name && await page.locator('input[name="rfc"]').inputValue() === (org.tax_identifier || '')
+      && await page.locator('textarea[name="address"]').inputValue() === (org.postal_address || ''));
+    check('Editar: modo edición y estatus bloqueado', (await page.getByTestId('company-mode').innerText()).includes('Editando') && await page.locator('select[name="status"]').isDisabled());
+    await page.getByRole('button', { name: /^.*Limpiar$/ }).click();
+    check('Limpiar cancela la edición', (await page.getByTestId('company-mode').innerText()).includes('Captura disponible') && await page.locator('input[name="companyName"]').inputValue() === '');
+    await page.locator('input[name="companyName"]').fill('Empresa Nueva Sintética');
     await page.getByRole('button', { name: /Guardar contratista/ }).click();
-    await page.locator('header button').filter({ hasText: '🔔' }).click();
-    await page.getByText('Contratista no guardado').first().waitFor();
-    check('Guardar contratista valida y NO guarda (sin falso "guardado correctamente")', await page.getByText(/no se guardó "/).count() > 0 && await page.getByText(/guardó .* correctamente/).count() === 0);
-    await page.locator('header button').filter({ hasText: '🔔' }).click();
+    await page.getByTestId('company-msg').waitFor();
+    check('Registrar otra empresa: NO guarda y lo explica (sin PUT/POST)', (await page.getByTestId('company-msg').innerText()).includes('Registrar otra empresa contratista no está habilitado') && await page.getByText(/guardad[oa]s? en MariaDB/).count() === 0);
     await page.getByRole('button', { name: /Matriz de contratistas/ }).first().click();
     await page.getByTestId('contractor-row').first().waitFor();
     check('la matriz no cambia tras guardar (sigue siendo MariaDB)', await page.getByTestId('contractor-row').count() === all.total);

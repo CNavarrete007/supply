@@ -147,6 +147,24 @@ abstract class CatalogWriteController extends BaseController
         return $this->fail(503, static::UNAVAILABLE_CODE, static::UNAVAILABLE_MESSAGE);
     }
 
+    /** Sirve un logotipo guardado en el almacenamiento privado del catálogo (verifica tipo real y SHA-256); otro origen → 404. */
+    protected function serveLogo(?array $f): ResponseInterface
+    {
+        $path = null;
+        if ($f && $f['storage_backend'] === CatalogWriteBase::STORAGE && preg_match('~^[1-9][0-9]*/[a-f0-9]{64}\.(png|jpg|webp)$~D', $f['storage_key'])) {
+            $path = WRITEPATH . 'supplyflow_catalog/files/' . $f['storage_key'];
+        }
+        $bytes = $path && is_file($path) ? (string) file_get_contents($path) : '';
+        $info = $bytes !== '' ? ClientInput::image($bytes) : null;
+        if (! $info || $info['mime'] !== $f['mime'] || hash('sha256', $bytes) !== strtolower($f['sha256'])) {
+            return $this->fail(404, 'NOT_FOUND', 'Logotipo no encontrado.');
+        }
+        return $this->response->setStatusCode(200)->setHeader('Content-Type', $info['mime'])
+            ->setHeader('Cache-Control', 'private, no-store')->setHeader('X-Content-Type-Options', 'nosniff')
+            ->setHeader('Content-Security-Policy', "default-src 'none'; sandbox")->setHeader('Content-Disposition', 'inline; filename="logotipo.' . $info['ext'] . '"')
+            ->setBody($bytes);
+    }
+
     public function create(): ResponseInterface
     {
         if ($denied = $this->authorize()) {
@@ -202,20 +220,7 @@ abstract class CatalogWriteController extends BaseController
             return $this->fail(404, 'NOT_FOUND', 'Logotipo no encontrado.');
         }
         try {
-            $f = (new CatalogReadRepository())->entityLogo((int) $this->actor['organization_id'], static::ENTITY_KIND, static::LOGO_ROLE, strtolower($id));
-            $path = null;
-            if ($f && $f['storage_backend'] === CatalogWriteBase::STORAGE && preg_match('~^[1-9][0-9]*/[a-f0-9]{64}\.(png|jpg|webp)$~D', $f['storage_key'])) {
-                $path = WRITEPATH . 'supplyflow_catalog/files/' . $f['storage_key'];
-            }
-            $bytes = $path && is_file($path) ? (string) file_get_contents($path) : '';
-            $info = $bytes !== '' ? ClientInput::image($bytes) : null;
-            if (! $info || $info['mime'] !== $f['mime'] || hash('sha256', $bytes) !== strtolower($f['sha256'])) {
-                return $this->fail(404, 'NOT_FOUND', 'Logotipo no encontrado.');
-            }
-            return $this->response->setStatusCode(200)->setHeader('Content-Type', $info['mime'])
-                ->setHeader('Cache-Control', 'private, no-store')->setHeader('X-Content-Type-Options', 'nosniff')
-                ->setHeader('Content-Security-Policy', "default-src 'none'; sandbox")->setHeader('Content-Disposition', 'inline; filename="logotipo.' . $info['ext'] . '"')
-                ->setBody($bytes);
+            return $this->serveLogo((new CatalogReadRepository())->entityLogo((int) $this->actor['organization_id'], static::ENTITY_KIND, static::LOGO_ROLE, strtolower($id)));
         } catch (Throwable) {
             log_message('error', 'SupplyFlow client logo unavailable.');
             return $this->fail(503, 'LOGO_UNAVAILABLE', 'No se pudo consultar el logotipo.');

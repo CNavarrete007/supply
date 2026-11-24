@@ -1,7 +1,7 @@
 // Catálogos · aviso de guardado no habilitado (src/views/catalog/writeStatus.mjs). Lógica pura; node --test.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeStatusNotice, writeConfigErrorText, loadWriteStatus, resetWriteStatusCache, WRITE_BLOCKING_CODES, WRITE_STATUS_URL } from '../../src/views/catalog/writeStatus.mjs';
+import { writeStatusNotice, writeConfigErrorText, loadWriteStatus, resetWriteStatusCache, WRITE_BLOCKING_CODES, WRITE_STATUS_URL, WRITE_TABLES } from '../../src/views/catalog/writeStatus.mjs';
 
 const CLI = { es: 'clientes', en: 'clients' };
 
@@ -69,4 +69,17 @@ test('loadWriteStatus: una consulta por minuto; 401/403 o red caída → sin avi
   resetWriteStatusCache();
   assert.equal(await loadWriteStatus(() => Promise.reject(new Error('red')), 1), null);
   resetWriteStatusCache();
+});
+
+test('permisos incompletos: cada pantalla solo avisa de los de sus propias tablas', () => {
+  const st = { enabled: false, code: 'CATALOG_WRITE_GRANTS_INCOMPLETE', expected_grants: 35, missing_grants: ['SELECT organizations', 'UPDATE organizations'] };
+  for (const k of ['clients', 'suppliers', 'supplies', 'categories']) assert.equal(writeStatusNotice(st, { es: k, en: k, tables: WRITE_TABLES[k] }), null, k);
+  const n = writeStatusNotice(st, { es: 'los datos de la empresa', en: 'company data', tables: WRITE_TABLES.company });
+  assert.match(n.text, /^Faltan 2 de 35 permisos \(SELECT organizations, UPDATE organizations\)/);
+  assert.match(n.action, /docs\/clientes\/ALTA_EDICION_CLIENTES\.md/);
+  assert.match(writeStatusNotice(st, { es: 'x', en: 'x', tables: WRITE_TABLES.company, guide: 'docs/contratista/DATOS_EMPRESA.md' }).action, /docs\/contratista\/DATOS_EMPRESA\.md/);
+  assert.match(writeConfigErrorText('CATALOG_WRITE_GRANTS_INCOMPLETE', { es: 'x', en: 'x', guide: 'docs/contratista/DATOS_EMPRESA.md' }), /docs\/contratista\/DATOS_EMPRESA\.md/);
+  const mixed = { ...st, missing_grants: ['INSERT clients', 'UPDATE organizations'] };
+  assert.match(writeStatusNotice(mixed, { es: 'clientes', en: 'clients', tables: WRITE_TABLES.clients }).text, /^Faltan 1 de 35 permisos \(INSERT clients\)/);
+  assert.notEqual(writeStatusNotice({ enabled: false, code: 'CATALOG_WRITE_NOT_PROVISIONED' }, { es: 'clientes', en: 'clients', tables: WRITE_TABLES.clients }), null);
 });

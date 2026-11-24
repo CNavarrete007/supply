@@ -1,6 +1,9 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { listContractors, contractorPersonnel } from './contractors/api';
-import { STATUS_FILTERS, contractorRow, matrixBadge, deleteBlock, activeText, personRow, editPrefill, displayName, serverQuery } from './contractors/model.mjs';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { listContractors, contractorPersonnel, saveCompany, companyLogoUrl } from './contractors/api';
+import { STATUS_FILTERS, contractorRow, matrixBadge, deleteBlock, activeText, personRow, editPrefill, displayName, serverQuery, validateCompany, companyPayload, companySaveError, companySavedText } from './contractors/model.mjs';
+import { compressLogo } from './catalog/writeApi';
+import { CatalogWriteStatus } from './catalog/CatalogWriteStatus';
+import { WRITE_TABLES } from './catalog/writeStatus.mjs';
 import { 
   HardHat, 
   FileSpreadsheet, 
@@ -23,8 +26,26 @@ import {
   X
 } from 'lucide-react';
 
+const COMPANY = { es: 'los datos de la empresa', en: 'company data', tables: WRITE_TABLES.company, guide: 'docs/contratista/DATOS_EMPRESA.md' };
+const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
+  : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
+const MSG_TONES = { info: 'bg-blue-50 border-blue-200 text-blue-900', ok: 'bg-emerald-50 border-emerald-200 text-emerald-900', warn: 'bg-amber-50 border-amber-200 text-amber-900', danger: 'bg-rose-50 border-rose-200 text-rose-800' };
+
+// Logotipo de la fila: el subido desde SupplyFlow (privado, GET /contractors/{id}/logo); si no hay o es importado, el institucional.
+function RowLogo({ c, fallback, alt }) {
+  const [src, setSrc] = useState(null);
+  useEffect(() => {
+    if (!c.logo_stored) return undefined;
+    const ctl = new AbortController(); let url = null;
+    companyLogoUrl(c.id, ctl.signal).then(u => { url = u; if (!ctl.signal.aborted) setSrc(u); else if (u) URL.revokeObjectURL(u); }).catch(() => {});
+    return () => { ctl.abort(); if (url) URL.revokeObjectURL(url); };
+  }, [c.id, c.logo_stored]);
+  return <img src={src || fallback} alt={alt} data-testid={src ? 'contractor-row-logo-stored' : undefined} className="max-w-full max-h-full object-contain" />;
+}
+
 export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
   const isEs = lang === 'es';
+  const notify = (title, text, type) => { if (onNotify) onNotify(title, text, type); };
 
   // Estado para la tarjeta activa ('contractorData', 'matrix', 'identity')
   const [activeTab, setActiveTab] = useState('contractorData');
@@ -50,6 +71,18 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
   const [contacts, setContacts] = useState(['']);
   const [logoFile, setLogoFile] = useState(null);
   const [logoPreview, setLogoPreview] = useState(null);
+  // Edición REAL de los datos de la empresa de la sesión (PUT /api/v1/contractors/{id}); se abre con EDITAR en la matriz.
+  const [editing, setEditing] = useState(null); // { id, version, hasLogo, logoStored }
+  const [saving, setSaving] = useState(false);
+  const [formMsg, setFormMsg] = useState(null); // [tone, text]
+  const [fieldErr, setFieldErr] = useState({});
+  const [logoNext, setLogoNext] = useState(null); // { data, name } comprimido en el navegador
+  const [logoRemoved, setLogoRemoved] = useState(false);
+  const pending = useRef(null); // { sig, key }: reintentar la MISMA operación reutiliza su Idempotency-Key
+  const previewRef = useRef(null);
+  const logoToken = useRef(0);
+  const setPreview = url => { if (previewRef.current) URL.revokeObjectURL(previewRef.current); previewRef.current = url; setLogoPreview(url); };
+  useEffect(() => () => { if (previewRef.current) URL.revokeObjectURL(previewRef.current); }, []);
 
   // Estados de la Matriz
   const [searchTerm, setSearchTerm] = useState('');
@@ -121,71 +154,114 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
     setContacts(updated);
   };
 
-  const handleLogoChange = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (file) {
-      if (logoPreview) URL.revokeObjectURL(logoPreview);
-      setLogoFile(file);
-      const url = URL.createObjectURL(file);
-      setLogoPreview(url);
+  const logoError = code => (code === 'TYPE' ? (isEs ? 'Solo se permiten imágenes PNG, JPG o WEBP.' : 'Only PNG, JPG or WEBP images are allowed.')
+    : code === 'SIZE' ? (isEs ? 'La imagen es demasiado grande (máx. 8 MB antes de comprimir).' : 'The image is too large (max 8 MB before compression).')
+      : (isEs ? 'No se pudo leer la imagen.' : 'The image could not be read.'));
 
-      if (onNotify) {
-        onNotify(
-          isEs ? 'Identidad Visual' : 'Visual Identity', 
-          isEs ? `Imagen "${file.name}" vinculada correctamente.` : `Image "${file.name}" successfully linked.`
-        );
-      }
+  const handleLogoChange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const token = ++logoToken.current;
+    setFieldErr(x => ({ ...x, logo: undefined }));
+    try {
+      const c = await compressLogo(file); // PNG/JPG/WEBP ≤ 8 MB → ≤ 400 KB, 512 px, sin metadatos; el servidor revalida los bytes
+      if (token !== logoToken.current) return;
+      setLogoFile(file); setLogoNext({ data: c.dataUrl, name: c.name }); setLogoRemoved(false);
+      setPreview(URL.createObjectURL(file));
+      notify(isEs ? 'Identidad Visual' : 'Visual Identity', editing
+        ? (isEs ? `Imagen "${file.name}" lista. Se guarda en MariaDB con «Guardar contratista y logotipo».` : `Image "${file.name}" ready. It is saved with "Save Contractor & Logo".`)
+        : (isEs ? `Imagen "${file.name}" vinculada a la captura.` : `Image "${file.name}" linked to the entry.`));
+    } catch (err) {
+      if (token !== logoToken.current) return;
+      const t = logoError(err && err.message);
+      setFieldErr(x => ({ ...x, logo: t }));
+      notify(isEs ? 'Identidad Visual' : 'Visual Identity', t, 'warning');
     }
   };
 
   const handleRemoveLogo = () => {
-    if (logoPreview) URL.revokeObjectURL(logoPreview);
-    setLogoFile(null);
-    setLogoPreview(null);
-    if (onNotify) {
-      onNotify(
-        isEs ? 'Identidad Visual' : 'Visual Identity', 
-        isEs ? 'Se eliminó el logotipo de la captura.' : 'Logo removed from entry.'
-      );
-    }
+    logoToken.current += 1;
+    setPreview(null); setLogoFile(null); setLogoNext(null);
+    setLogoRemoved(!!(editing && editing.hasLogo));
+    setFieldErr(x => ({ ...x, logo: undefined }));
+    notify(isEs ? 'Identidad Visual' : 'Visual Identity', editing && editing.hasLogo
+      ? (isEs ? 'El logotipo se quitará de la empresa al guardar.' : 'The logo will be removed from the company when you save.')
+      : (isEs ? 'Se eliminó el logotipo de la captura.' : 'Logo removed from entry.'));
+  };
+
+  const clearForm = () => {
+    logoToken.current += 1;
+    setFormData(initialFormState); setContacts(['']); setPreview(null); setLogoFile(null); setLogoNext(null); setLogoRemoved(false);
+    setEditing(null); setFieldErr({}); pending.current = null;
   };
 
   const handleResetForm = () => {
-    setFormData(initialFormState);
-    setContacts(['']);
-    if (logoPreview) URL.revokeObjectURL(logoPreview);
-    setLogoFile(null);
-    setLogoPreview(null);
-    if (onNotify) {
-      onNotify(
-        isEs ? 'Formulario Contratistas' : 'Contractors Form', 
-        isEs ? 'Formulario de registro reiniciado.' : 'Registration form reset.'
-      );
+    const wasEditing = !!editing;
+    clearForm(); setFormMsg(null);
+    notify(isEs ? 'Formulario Contratistas' : 'Contractors Form', wasEditing
+      ? (isEs ? 'Edición cancelada: no se guardaron cambios.' : 'Editing cancelled: nothing was saved.')
+      : (isEs ? 'Formulario de registro reiniciado.' : 'Registration form reset.'));
+  };
+
+  // EDITAR (matriz): precarga la empresa de la sesión con su versión vigente y, si se subió desde SupplyFlow, su logotipo.
+  const openEdit = (c) => {
+    clearForm();
+    setFormData({ ...initialFormState, ...editPrefill(c) });
+    setEditing({ id: c.id, version: c.version, hasLogo: !!c.has_logo, logoStored: !!c.logo_stored });
+    setFormMsg(null); setActMsg(null);
+    if (c.logo_stored) {
+      const token = logoToken.current;
+      companyLogoUrl(c.id).then(u => { if (!u) return; if (token === logoToken.current) setPreview(u); else URL.revokeObjectURL(u); }).catch(() => {});
     }
   };
 
-  const handleSaveContractor = (e) => {
-    e.preventDefault();
-    if (!formData.companyName) {
-      if (onNotify) {
-        onNotify(
-          isEs ? 'Registro de Contratista' : 'Contractor Registration', 
-          isEs ? 'Debe especificar la Razón Social del contratista.' : 'You must specify the Contractor Company Name.', 
-          'warning'
-        );
-      }
+  const handleSaveContractor = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (saving) return;
+    const tx = (es, en) => (isEs ? es : en);
+    const title = tx('Datos de la empresa', 'Company data');
+    if (!editing) {
+      // Registrar OTRA empresa contratista no tiene endpoint autorizado: se valida y no se guarda.
+      const t = tx('Registrar otra empresa contratista no está habilitado (escritura bloqueada hasta su autorización): no se guardó nada. Para actualizar los datos de tu empresa ábrela con EDITAR en la Matriz de contratistas.',
+        'Registering another contractor company is not enabled (write blocked until authorized): nothing was saved. To update your company data, open it with EDIT in the Contractors Matrix.');
+      setFormMsg(['warn', t]);
+      notify(tx('Contratista no guardado', 'Contractor not saved'), t, 'warning');
       return;
     }
-
-    // Registrar o editar contratistas es una escritura sin endpoint autorizado: se valida y no se guarda.
-    if (onNotify) {
-      onNotify(
-        isEs ? 'Contratista no guardado' : 'Contractor not saved',
-        isEs ? `Datos validados, pero no se guardó "${formData.companyName}": registrar o editar contratistas y su logotipo es una escritura bloqueada hasta su autorización.` : `Data validated, but "${formData.companyName}" was not saved: registering or editing contractors and their logo is a write blocked until authorized.`,
-        'warning'
-      );
+    const bad = validateCompany(formData, !isEs);
+    if (bad) {
+      setFieldErr({ [bad[0]]: bad[1] }); setFormMsg(['danger', bad[1]]); setActiveTab('contractorData');
+      return;
     }
+    setFieldErr({});
+    const payload = companyPayload(formData, logoNext || (logoRemoved ? { remove: true } : null));
+    const sig = JSON.stringify([editing.id, editing.version, payload]);
+    if (!pending.current || pending.current.sig !== sig) pending.current = { sig, key: newKey() };
+    setSaving(true); setFormMsg(['info', tx('Guardando en MariaDB…', 'Saving to MariaDB…')]);
+    let res;
+    try {
+      res = await saveCompany({ id: editing.id, version: editing.version, payload, key: pending.current.key });
+    } catch (err) {
+      res = { ok: false, status: 0, data: { error: { message: tx('sin conexión con la API', 'no connection to the API') } } };
+    } finally { setSaving(false); }
+    if (res.ok) {
+      const t = companySavedText(res.data, !isEs);
+      clearForm(); setFormMsg(null); setActMsg(t); setRev(x => x + 1); setActiveTab('matrix');
+      notify(title, t, 'success');
+      return;
+    }
+    const er = (res.data && res.data.error) || {};
+    const [tone, text] = companySaveError(res.status, er.code, er.message, er.field, !isEs);
+    if (res.status === 422 && er.field && er.field !== 'body') setFieldErr({ [er.field === 'legal_name' ? 'companyName' : er.field === 'tax_id' ? 'rfc' : er.field]: text });
+    if (res.status === 412) setRev(x => x + 1);
+    setFormMsg([tone, text]);
+    notify(title, text, 'warning');
   };
+
+  const fieldCls = k => `w-full px-3 py-2 text-xs bg-white border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 ${fieldErr[k] ? 'border-rose-400 bg-rose-50/30' : 'border-slate-200'}`;
+  const errP = k => (fieldErr[k] ? <p role="alert" data-testid={`company-err-${k}`} className="text-[10px] text-rose-600 mt-1">{fieldErr[k]}</p> : null);
+  const msgBox = formMsg ? <p role="status" data-testid="company-msg" className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${MSG_TONES[formMsg[0]] || MSG_TONES.info}`}>{saving && <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 mt-0.5" />}<span>{formMsg[1]}</span></p> : null;
 
   return (
     <div className="space-y-6">
@@ -242,7 +318,7 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
       </div>
 
       {/* Estado de integración: la matriz lee MariaDB; las capturas validan y no guardan. */}
-      <div data-testid="contractors-lock" className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 flex items-start gap-2 text-[11px] text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{isEs ? 'Matriz de contratistas conectada a MariaDB (solo lectura). Datos del contratista e Identidad y logotipo validan la captura pero no la guardan: registrar o editar contratistas, su logotipo y su personal son escrituras bloqueadas hasta su autorización.' : 'Contractors matrix connected to MariaDB (read-only). Contractor details and Identity and logo validate the entry but do not save it: registering or editing contractors, their logo and personnel are writes blocked until authorized.'}</span></div>
+      <div data-testid="contractors-lock" className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 flex items-start gap-2 text-[11px] text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{isEs ? 'Matriz de contratistas conectada a MariaDB. Con EDITAR actualizas la razón social, RFC, teléfono, correo, dirección y logotipo de tu empresa (se guardan en MariaDB con bitácora). Registrar otras empresas, cambiar su estatus, eliminarlas y administrar su personal siguen bloqueados hasta su autorización.' : 'Contractors matrix connected to MariaDB. With EDIT you update your company name, tax ID, phone, email, address and logo (saved to MariaDB with an audit log). Registering other companies, changing their status, deleting them and managing personnel remain blocked until authorized.'}</span></div>
 
       {/* Contenedor dinámico principal */}
       <div className="bg-white p-6 md:p-8 rounded-2xl border border-slate-200/80 shadow-sm min-h-[400px]">
@@ -255,15 +331,17 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                   {isEs ? 'Datos generales del contratista' : 'General Contractor Data'}
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  {isEs 
-                    ? 'Registra una empresa. Al guardar, la captura se limpiará y el registro pasará a la matriz.' 
-                    : 'Register a company. Upon saving, entry will clear and the record will move to the matrix.'}
+                  {editing
+                    ? (isEs ? 'Editando los datos de tu empresa registrados en MariaDB. Al guardar se actualiza el registro y vuelves a la matriz.' : 'Editing your company data stored in MariaDB. Saving updates the record and returns to the matrix.')
+                    : (isEs ? 'Captura de una empresa. Para guardar en MariaDB los datos de tu empresa, ábrela con EDITAR en la matriz.' : 'Company entry. To save your company data to MariaDB, open it with EDIT in the matrix.')}
                 </p>
               </div>
-              <span className="px-3 py-1 bg-blue-50 text-blue-700 font-bold text-[10px] rounded-full border border-blue-100">
-                {isEs ? 'Captura disponible' : 'Data Entry Available'}
+              <span data-testid="company-mode" className={`px-3 py-1 font-bold text-[10px] rounded-full border ${editing ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+                {editing ? (isEs ? 'Editando · MariaDB' : 'Editing · MariaDB') : (isEs ? 'Captura disponible' : 'Data Entry Available')}
               </span>
             </div>
+
+            <CatalogWriteStatus entity={COMPANY} en={!isEs} />
 
             {/* Banner Informativo Morado */}
             <div className="p-3.5 bg-purple-50/60 border-l-4 border-l-purple-600 border border-purple-100/60 rounded-r-xl text-xs text-slate-700">
@@ -271,9 +349,9 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                 {isEs ? 'Contratista activo: ' : 'Active Contractor: '}
               </span>
               <span className="font-medium">
-                {isEs 
-                  ? 'Sus datos y logotipo se utilizan en órdenes de compra, RFQ y reportes.' 
-                  : 'Its data and logo are used in purchase orders, RFQs, and reports.'}
+                {isEs
+                  ? 'Sus datos y logotipo se guardan en MariaDB. Los formatos impresos (órdenes de compra, cotizaciones, entregas y reportes) todavía usan la identidad institucional fija de Grupo Gerez.'
+                  : 'Its data and logo are saved to MariaDB. Printed formats (purchase orders, quotes, deliveries and reports) still use the fixed Grupo Gerez institutional identity.'}
               </span>
             </div>
 
@@ -291,8 +369,10 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                     value={formData.companyName}
                     onChange={handleInputChange}
                     required
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
+                    maxLength={255}
+                    className={fieldCls('companyName')}
                   />
+                  {errP('companyName')}
                 </div>
 
                 <div className="md:col-span-3">
@@ -304,8 +384,10 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                     name="rfc"
                     value={formData.rfc}
                     onChange={handleInputChange}
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
+                    maxLength={64}
+                    className={fieldCls('rfc')}
                   />
+                  {errP('rfc')}
                 </div>
 
                 <div className="md:col-span-3">
@@ -317,8 +399,10 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                     name="phone"
                     value={formData.phone}
                     onChange={handleInputChange}
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
+                    maxLength={80}
+                    className={fieldCls('phone')}
                   />
+                  {errP('phone')}
                 </div>
               </div>
 
@@ -333,21 +417,26 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                     name="email"
                     value={formData.email}
                     onChange={handleInputChange}
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
+                    maxLength={254}
+                    className={fieldCls('email')}
                   />
+                  {errP('email')}
                 </div>
 
                 <div className="md:col-span-9">
                   <label className="block text-[11px] font-bold text-slate-700 mb-1">
                     {isEs ? 'Dirección' : 'Address'}
                   </label>
-                  <input
-                    type="text"
+                  {/* textarea de una línea: conserva los saltos de línea del domicilio registrado (un input los eliminaría) */}
+                  <textarea
                     name="address"
+                    rows={1}
                     value={formData.address}
                     onChange={handleInputChange}
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
+                    maxLength={4000}
+                    className={`${fieldCls('address')} resize-y min-h-[34px] leading-snug`}
                   />
+                  {errP('address')}
                 </div>
               </div>
 
@@ -360,22 +449,27 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                   name="status"
                   value={formData.status}
                   onChange={handleInputChange}
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-700 outline-none font-medium"
+                  disabled={!!editing}
+                  className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-700 outline-none font-medium disabled:bg-slate-50 disabled:text-slate-500"
                 >
                   <option value="Activo">{isEs ? 'Activo' : 'Active'}</option>
                   <option value="Inactivo">{isEs ? 'Inactivo' : 'Inactive'}</option>
                 </select>
+                {editing && <p className="text-[10px] text-slate-500 mt-1">{isEs ? 'El estatus de la empresa activa de la sesión no se cambia desde aquí.' : 'The status of the session company is not changed here.'}</p>}
               </div>
+
+              {msgBox}
 
               {/* Botonera de acciones */}
               <div className="flex flex-wrap items-center gap-2.5 pt-4">
                 {/* Botón Guardar contratista */}
                 <button
                   type="submit"
-                  className="px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer border border-transparent hover:opacity-90"
+                  disabled={saving}
+                  className="px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer border border-transparent hover:opacity-90 disabled:opacity-60 disabled:cursor-wait"
                   style={{ backgroundColor: '#a221b7' }}
                 >
-                  <span className="text-sm">💾</span>
+                  <span className="text-sm">{saving ? '⏳' : '💾'}</span>
                   <span>{isEs ? 'Guardar contratista' : 'Save Contractor'}</span>
                 </button>
 
@@ -453,7 +547,7 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                   {list.status === 'ready' && !items.length && <tr><td colSpan={10} className="py-12 text-center"><p className="font-semibold text-slate-600 text-xs">{tx('Sin contratistas con este filtro.', 'No contractors match this filter.')}</p><p className="text-[11px] text-slate-400 mt-1">{tx('Ajusta la búsqueda o el estatus.', 'Adjust the search or the status.')}</p></td></tr>}
                   {items.map(c => { const v = contractorRow(c, !isEs); return (
                     <tr key={c.id} data-testid="contractor-row" className="align-top hover:bg-slate-50/60">
-                      <td className="p-3"><div className="w-20 h-16 rounded-xl border border-slate-200 bg-white flex items-center justify-center p-1.5" title={v.logo.note}><img src={v.logo.src} alt={`${tx('Logotipo', 'Logo')} ${v.name}`} className="max-w-full max-h-full object-contain" /></div></td>
+                      <td className="p-3"><div className="w-20 h-16 rounded-xl border border-slate-200 bg-white flex items-center justify-center p-1.5" title={v.logo.note}><RowLogo key={`${c.id}:${c.version}`} c={c} fallback={v.logo.src} alt={`${tx('Logotipo', 'Logo')} ${v.name}`} /></div></td>
                       <td className="p-3 min-w-[170px]"><div className="font-black text-slate-900 text-xs leading-snug">{v.name}</div>{v.registered && <div data-testid="contractor-registered" className="text-[9.5px] text-amber-700 mt-1">{tx('Razón social registrada en MariaDB', 'Legal name recorded in MariaDB')}: {v.registered}</div>}<div className="text-[9.5px] text-slate-500 mt-1">{v.logo.note}</div></td>
                       <td className="p-3 font-medium text-slate-700 whitespace-nowrap">{v.taxId}</td>
                       <td className="p-3 text-slate-700 min-w-[150px]"><div>{v.phone || '—'}</div><div className="text-[10px] text-slate-500 break-all">{v.email || '—'}</div></td>
@@ -464,7 +558,7 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                       <td className="p-3 min-w-[150px]">{chip(v.usage)}{v.usage.sub && <div className="text-[9.5px] text-slate-500 mt-1">{v.usage.sub}</div>}</td>
                       <td className="p-3"><div className="flex flex-wrap gap-1.5 min-w-[220px] text-[11px] font-black uppercase">
                         <button type="button" onClick={() => setActMsg(activeText(c, !isEs))} title={v.isActive ? tx('Contratista activo de esta sesión', 'Active contractor of this session') : ''} className={`uppercase px-3 py-2 rounded-lg ${v.isActive ? 'bg-slate-100 text-slate-500' : 'bg-slate-100 hover:bg-slate-200 text-slate-800'}`}>{v.isActive ? `✓ ${tx('Activo', 'Active')}` : tx('Activo', 'Active')}</button>
-                        <button type="button" onClick={() => { setFormData({ ...initialFormState, ...editPrefill(c) }); setContacts(['']); setActMsg(null); handleTabChange('contractorData', tx('Datos del contratista', 'Contractor Details')); }} className="uppercase px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg">{tx('Editar', 'Edit')}</button>
+                        <button type="button" onClick={() => { openEdit(c); handleTabChange('contractorData', tx('Datos del contratista', 'Contractor Details')); }} className="uppercase px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg">{tx('Editar', 'Edit')}</button>
                         <button type="button" onClick={() => openStaff(c)} className="uppercase px-3 py-2 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-lg shadow-sm">{tx('Personal', 'Personnel')}</button>
                         <button type="button" onClick={() => setDelDlg(c)} className="uppercase px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-sm">{tx('Eliminar', 'Delete')}</button>
                       </div></td>
@@ -472,7 +566,7 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                 </tbody>
               </table>
             </div>
-            <p className="text-[10px] text-slate-400 flex items-start gap-1.5"><Lock className="w-3.5 h-3.5 shrink-0" />{tx('Fuente: MariaDB (organización de la sesión). Registrar, editar, activar o eliminar contratistas y su personal son escrituras bloqueadas hasta su autorización.', 'Source: MariaDB (session organization). Registering, editing, activating or deleting contractors and their personnel are writes blocked until authorized.')}</p>
+            <p className="text-[10px] text-slate-400 flex items-start gap-1.5"><Lock className="w-3.5 h-3.5 shrink-0" />{tx('Fuente: MariaDB (organización de la sesión). EDITAR guarda los datos y el logotipo de tu empresa; registrar, activar o eliminar contratistas y administrar su personal son escrituras bloqueadas hasta su autorización.', 'Source: MariaDB (session organization). EDIT saves your company data and logo; registering, activating or deleting contractors and managing personnel are writes blocked until authorized.')}</p>
 
             {delDlg && <div role="dialog" aria-modal="true" aria-label={tx('Eliminar contratista', 'Delete contractor')} className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setDelDlg(null)}>
               <div className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-3" onClick={e => e.stopPropagation()}>
@@ -542,11 +636,14 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                     <img
                       src={logoPreview}
                       alt="Vista previa del logotipo"
+                      data-testid="company-logo-preview"
                       className="w-full h-full object-contain"
                     />
                   ) : (
                     <span className="text-[11px] font-semibold text-slate-400">
-                      {isEs ? 'Sin logotipo' : 'No Logo'}
+                      {editing && editing.hasLogo && !editing.logoStored && !logoRemoved
+                        ? (isEs ? 'Logotipo importado (no se muestra aquí)' : 'Imported logo (not shown here)')
+                        : (isEs ? 'Sin logotipo' : 'No Logo')}
                     </span>
                   )}
                 </div>
@@ -565,17 +662,21 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                         ? 'Formatos permitidos: PNG, JPG o WEBP. Cada contratista puede tener un logotipo diferente.' 
                         : 'Allowed formats: PNG, JPG, or WEBP. Each contractor can have a different logo.'}
                     </p>
+                    {errP('logo')}
                   </div>
+
+                  {msgBox}
 
                   {/* Botonera de acciones */}
                   <div className="flex flex-wrap items-center gap-3 pt-1">
                     <button
                       type="button"
                       onClick={(e) => handleSaveContractor(e)}
-                      className="px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:opacity-90 border border-transparent"
+                      disabled={saving}
+                      className="px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:opacity-90 border border-transparent disabled:opacity-60 disabled:cursor-wait"
                       style={{ backgroundColor: '#a221b7' }}
                     >
-                      <span className="text-sm">💾</span>
+                      <span className="text-sm">{saving ? '⏳' : '💾'}</span>
                       <span>{isEs ? 'Guardar contratista y logotipo' : 'Save Contractor & Logo'}</span>
                     </button>
 
@@ -585,7 +686,7 @@ export function Contractors({ onNavigate = () => {}, onNotify, lang = 'es' }) {
                       className="px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer hover:opacity-90 border border-transparent"
                       style={{ backgroundColor: '#d91438' }}
                     >
-                      <span>{isEs ? 'Eliminar logotipo de la captura' : 'Remove Logo from Entry'}</span>
+                      <span>{editing && (editing.hasLogo || logoPreview) ? (isEs ? 'Quitar logotipo de la empresa' : 'Remove company logo') : (isEs ? 'Eliminar logotipo de la captura' : 'Remove Logo from Entry')}</span>
                     </button>
                   </div>
                 </div>

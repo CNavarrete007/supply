@@ -54,7 +54,8 @@ final class ContractorReadRepository
         }
         $items = $this->rows(<<<SQL
             SELECT o.public_id AS id,o.legal_name,o.tax_identifier,o.phone,o.email,o.postal_address,o.status_code AS status,o.business_timezone AS timezone,
-                   (o.logo_file_id IS NOT NULL) AS has_logo,o.updated_at,
+                   (o.logo_file_id IS NOT NULL) AS has_logo,o.updated_at,TIMESTAMPDIFF(MICROSECOND,'2000-01-01 00:00:00',o.updated_at) AS version,
+                   COALESCE((SELECT f.storage_backend='supplyflow_catalog_private_v1' FROM files f WHERE f.id=o.logo_file_id AND f.organization_id=o.id),0) AS logo_stored,
                    p.display_name AS responsible_name,p.position_title AS responsible_position,p.email AS responsible_email,p.phone AS responsible_phone,
                    (SELECT COUNT(*) FROM people x WHERE x.organization_id=o.id AND x.active=1) AS personnel,
                    (SELECT COUNT(*) FROM people x WHERE x.organization_id=o.id) AS personnel_total,
@@ -69,6 +70,8 @@ final class ContractorReadRepository
             SQL, $binds);
         foreach ($items as &$r) {
             $r['has_logo'] = (bool) $r['has_logo'];
+            $r['logo_stored'] = (bool) $r['logo_stored']; // logotipo subido desde SupplyFlow (GET /contractors/{id}/logo); uno importado no se sirve
+            $r['version'] = (int) $r['version'];          // If-Match de PUT /contractors/{id}
             $r['active'] = true; // the session organization is the contractor in use for documents and operations
             $r['responsible'] = $r['responsible_name'] === null ? null
                 : ['name' => $r['responsible_name'], 'position' => $r['responsible_position'], 'email' => $r['responsible_email'], 'phone' => $r['responsible_phone']];

@@ -87,13 +87,13 @@ opcional `compose.supply-catalogwrite.yml`. **Mientras no se active, el arranque
 lo incluían, así que ocurría aunque la cuenta se hubiera configurado antes. Hoy ambos lo incluyen **solo si existe**
 `secrets\catalogwrite-db-password.txt`; si no existe, todo arranca igual que antes y la pantalla lo avisa.
 
-**Cómo saberlo.** Al abrir la ficha de Clientes, Proveedores, Suministros o Categorías aparece un aviso amarillo cuando el
-guardado no está habilitado. Para el detalle (con sesión de Master Admin): `http://localhost:8080/api/v1/catalogs/write-status`.
+**Cómo saberlo.** Al abrir la ficha de Clientes, Proveedores, Suministros, Categorías o Contratista aparece un aviso amarillo
+cuando el guardado no está habilitado (cada pantalla avisa solo de los permisos de sus propias tablas). Para el detalle (con sesión de Master Admin): `http://localhost:8080/api/v1/catalogs/write-status`.
 Es de solo lectura y no muestra secretos.
 
 | `code` | Qué significa | Qué hacer |
 |---|---|---|
-| `OK` | La cuenta existe y tiene los 33 permisos | Nada |
+| `OK` | La cuenta existe y tiene los 35 permisos | Nada |
 | `CATALOG_WRITE_NOT_PROVISIONED` | La API se inició sin el overlay o sin su secreto | Crear el secreto y arrancar con el overlay (sección siguiente) |
 | `CATALOG_WRITE_ACCOUNT_REJECTED` | MariaDB rechazó la cuenta: no existe o su contraseña no coincide con el secreto | `provision` y `verify` (sección siguiente) |
 | `CATALOG_WRITE_GRANTS_INCOMPLETE` | Faltan permisos; `missing_grants` los lista | Volver a ejecutar `provision`: solo agrega los que faltan |
@@ -115,7 +115,7 @@ SF_API=http://127.0.0.1:8080 SF_USER=<correo admin> SF_QA_PASSWORD=<clave> pytho
 
 ## Activación en la PC (requiere autorización explícita)
 
-Crea la cuenta SQL `supplyflow_catalogwrite_local` con sus 33 permisos de tabla y recrea solo el contenedor `api`:
+Crea la cuenta SQL `supplyflow_catalogwrite_local` con sus 35 permisos de tabla y recrea solo el contenedor `api`:
 - No toca datos, esquema ni las cuentas del contrato 77/52.
 - En PowerShell, desde `C:\Dev\supply`, con la aplicación ya en marcha.
 - El aprovisionamiento muestra JSON sin contraseñas.
@@ -178,7 +178,7 @@ $compose += @('-f', (Join-Path $root 'compose.supply-catalogwrite.yml'))
 | `SQL_ACCOUNT_MISSING` | La cuenta todavía no existe (caso normal) | Continuar |
 | `SQL_CREDENTIAL_MISMATCH` | La cuenta ya existía con otra contraseña | **Detenerse** y consultar; no recrearla |
 | `"result": "PASS"` | Ya estaba aprovisionada | Pasar directo al paso 5 |
-| `PRIVILEGES_INCOMPLETE` | Le faltan los 4 permisos de Categorías | El paso 4 los agrega |
+| `PRIVILEGES_INCOMPLETE` | Le faltan permisos agregados después (4 de Categorías, 23 nov; 2 de Contratista, 24 nov) | El paso 4 los agrega |
 
 **Paso 4 · Crear la cuenta y sus permisos** (este es el cambio).
 
@@ -188,8 +188,11 @@ $compose += @('-f', (Join-Path $root 'compose.supply-catalogwrite.yml'))
 ```
 
 Resultado esperado:
-- `provision` → `"result": "PASS"`, `"grants": 33`, `"account_status": "CREATED"` (o `EXISTING_VERIFIED`).
-- `verify` → `"result": "PASS"`, `"grants": 33`.
+- `provision` → `"result": "PASS"`, `"grants": 35`, `"account_status": "CREATED"` (o `EXISTING_VERIFIED`).
+- `verify` → `"result": "PASS"`, `"grants": 35`.
+
+(Hasta el 24 nov el contrato era de 33; los 2 nuevos son `SELECT` y `UPDATE` sobre `organizations` para los datos de la
+empresa en Contratista: `docs/contratista/DATOS_EMPRESA.md`.)
 
 **Paso 5 · Recrear solo la API con la cuenta.**
 

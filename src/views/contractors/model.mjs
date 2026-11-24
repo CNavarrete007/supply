@@ -1,6 +1,8 @@
-// Contratista · tarjeta 2 "Matriz de contratistas" · lógica pura (sin red).
-// La empresa contratista es la organización de la sesión (GET /api/v1/contractors): la que se usa para documentos y
-// operaciones. Registrar, editar, activar o eliminar contratistas y su personal son escrituras sin endpoint.
+// Contratista · lógica pura (sin red).
+// La empresa contratista es la organización de la sesión (GET /api/v1/contractors). Sus datos (razón social, RFC, teléfono,
+// correo, domicilio y logotipo) se editan con PUT /api/v1/contractors/{id} (24 nov 2026). Registrar otras empresas, cambiar el
+// estatus o eliminar contratistas y administrar su personal siguen sin endpoint.
+import { writeConfigErrorText } from '../catalog/writeStatus.mjs';
 
 const clean = v => String(v ?? '').trim();
 const fold = v => clean(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.,]/g, '').replace(/\s+/g, ' ').toLowerCase();
@@ -34,7 +36,7 @@ export function contractorRow(c, en = false) {
   return {
     id: c?.id, name: displayName(c).toUpperCase() || '—', registered: registeredName(c), taxId: clean(c?.tax_identifier) || '—',
     phone: clean(c?.phone), email: clean(c?.email), address: clean(c?.postal_address) || '—',
-    logo: { src: CONTRACTOR_LOGO, note: c?.has_logo ? m('Logotipo propio en resguardo privado', 'Own logo in private storage') : m('Logotipo institucional Grupo Gerez', 'Grupo Gerez institutional logo') },
+    logo: { src: CONTRACTOR_LOGO, note: c?.logo_stored ? m('Logotipo propio guardado en SupplyFlow', 'Own logo saved in SupplyFlow') : c?.has_logo ? m('Logotipo propio en resguardo privado', 'Own logo in private storage') : m('Logotipo institucional Grupo Gerez', 'Grupo Gerez institutional logo') },
     responsible: c?.responsible ? { text: clean(c.responsible.name), sub: clean(c.responsible.position), tone: 'green' } : { text: m('Sin responsable', 'No manager'), sub: '', tone: 'amber' },
     personnel: { text: `${Number(c?.personnel) || 0} ${m('persona(s)', 'person(s)')}`, sub: Number(c?.with_access) ? m(`${c.with_access} con acceso`, `${c.with_access} with access`) : '', tone: 'blue' },
     status: active ? { text: m('Activo', 'Active'), tone: 'blue' } : { text: m('Inactivo', 'Inactive'), tone: 'gray' },
@@ -74,4 +76,46 @@ export function personRow(p, en = false) {
 }
 
 /** Card 1 prefill for "Editar" (the form keeps its own fields; nothing is saved). */
-export const editPrefill = c => ({ companyName: displayName(c), rfc: clean(c?.tax_identifier), phone: clean(c?.phone), email: clean(c?.email), address: clean(c?.postal_address), status: clean(c?.status) === 'active' ? 'Activo' : 'Inactivo' });
+// EDITAR precarga la razón social REGISTRADA en MariaDB (no el nombre de la identidad de documentos): guardar no debe
+// sobrescribirla sin que el usuario la cambie.
+export const editPrefill = c => ({ companyName: clean(c?.legal_name) || displayName(c), rfc: clean(c?.tax_identifier), phone: clean(c?.phone), email: clean(c?.email), address: clean(c?.postal_address), status: clean(c?.status) === 'active' ? 'Activo' : 'Inactivo' });
+
+// Reglas del servidor (ContractorInput.php), para avisar antes de enviar.
+const RFC = /^[\p{L}\p{N}&\-. ]{1,64}$/u;
+const PHONE = /^[0-9+()\-. extEXT/]{3,80}$/;
+const EMAIL = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]{2,}$/;
+/** Returns the first problem as [field, message] or null. */
+export function validateCompany(f, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const name = clean(f.companyName).replace(/\s+/g, ' ');
+  if (!name) return ['companyName', m('La razón social es obligatoria.', 'The company name is required.')];
+  if (name.length > 255) return ['companyName', m('La razón social admite hasta 255 caracteres.', 'The company name allows up to 255 characters.')];
+  if (clean(f.rfc) && !RFC.test(clean(f.rfc))) return ['rfc', m('RFC inválido: usa letras, números, &, guion, punto o espacio.', 'Invalid tax ID.')];
+  if (clean(f.phone) && (!PHONE.test(clean(f.phone)) || !/[0-9]/.test(f.phone))) return ['phone', m('Teléfono inválido: usa dígitos, espacios, +, (), guion, punto, diagonal o «ext».', 'Invalid phone.')];
+  if (clean(f.email) && (!EMAIL.test(clean(f.email)) || clean(f.email).length > 254 || /[^\x20-\x7E]/.test(f.email))) return ['email', m('Correo inválido.', 'Invalid email.')];
+  if (clean(f.address).length > 4000) return ['address', m('El domicilio admite hasta 4,000 caracteres.', 'The address allows up to 4,000 characters.')];
+  return null;
+}
+/** Body of PUT /api/v1/contractors/{id}. logo: {data,name} (nuevo) · {remove:true} · null (sin cambio). */
+export const companyPayload = (f, logo = null) => ({ legal_name: clean(f.companyName).replace(/\s+/g, ' '), tax_id: clean(f.rfc), phone: clean(f.phone), email: clean(f.email),
+  address: String(f.address ?? '').replace(/\t/g, ' ').trim(), ...(logo ? { logo } : {}) });
+
+const FIELD_LABEL = { legal_name: ['razón social', 'company name'], tax_id: ['RFC', 'tax ID'], phone: ['teléfono', 'phone'], email: ['correo', 'email'], address: ['domicilio', 'address'], logo: ['logotipo', 'logo'], logo_file: ['logotipo', 'logo'] };
+/** Message after a successful save. */
+export function companySavedText(res, en = false) {
+  const names = (res?.changed || []).map(k => (FIELD_LABEL[k] || [k, k])[en ? 1 : 0]);
+  return names.length ? (en ? `Company data saved to MariaDB (${names.join(', ')}).` : `Datos de la empresa guardados en MariaDB (${names.join(', ')}).`)
+    : (en ? 'No changes to save.' : 'No había cambios por guardar.');
+}
+/** Server error → [tone, message, retry with the same operation?]. */
+export function companySaveError(status, code, message, field, en = false) {
+  const m = (es, e) => (en ? e : es);
+  if (status === 401) return ['danger', m('Tu sesión expiró. Inicia sesión nuevamente; no se guardaron cambios.', 'Your session expired; nothing was saved.'), false];
+  if (status === 403) return ['danger', code === 'CSRF_INVALID' ? m('La sesión de seguridad cambió. Vuelve a intentarlo.', 'The security token changed. Try again.') : m('Solo un Master Admin puede editar los datos de la empresa.', 'Only a Master Admin can edit company data.'), false];
+  const cfg = writeConfigErrorText(code, { es: 'los datos de la empresa', en: 'company data', guide: 'docs/contratista/DATOS_EMPRESA.md' }, en);
+  if (cfg) return ['warn', cfg, false];
+  if (status === 412) return ['warn', m('Otra persona modificó los datos de la empresa. Vuelve a abrirlos con EDITAR desde la matriz y aplica tus cambios.', 'Someone else changed the company data. Reopen it with EDIT from the matrix.'), false];
+  if (status === 422) return ['danger', field && FIELD_LABEL[field] ? m(`Revisa el campo ${FIELD_LABEL[field][0]}: el servidor no lo aceptó.`, `Check the ${FIELD_LABEL[field][1]} field.`) : (message || m('Revisa los datos de la empresa.', 'Check the company data.')), false];
+  if (status === 404) return ['danger', m('La empresa ya no existe en MariaDB. Recarga la matriz.', 'The company no longer exists. Reload the matrix.'), false];
+  return ['danger', m(`No se confirmó el guardado (${message || 'sin respuesta del servidor'}). «Guardar contratista» repite exactamente la misma operación sin duplicarla.`, `The save was not confirmed. Saving again repeats the same operation without duplicating it.`), true];
+}

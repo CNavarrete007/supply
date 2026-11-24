@@ -63,11 +63,11 @@ Detalle en `docs/bd/MAPA_CLASES_BACKEND.md`, generado con `tests/class_connectio
 |---|---|---|
 | `supplyflow_api_local` (base) | Nada: `SELECT` sobre el esquema | Todas las consultas de lectura |
 | `supplyflow_auth_local` (`compose.supply-auth.yml`) | `auth_sessions`, `audit_events` (+2 columnas de revocación) | Inicio y cierre de sesión |
-| `supplyflow_catalogwrite_local` (`compose.supply-catalogwrite.yml`, 33 permisos) | `clients`, `suppliers`, `supplier_offerings`, `categories` (alta, edición y eliminación de las nunca usadas; lee `requisition_items` para verificar el uso), `business_entities`, `party_contacts`, `party_contact_channels`, `files`, `entity_files`, `audit_events`, `idempotency_keys` | Categorías, Clientes, Proveedores, Suministros |
+| `supplyflow_catalogwrite_local` (`compose.supply-catalogwrite.yml`, 35 permisos) | `clients`, `suppliers`, `supplier_offerings`, `categories` (alta, edición y eliminación de las nunca usadas; lee `requisition_items` para verificar el uso), `organizations` (solo los datos de la empresa de la sesión, 24 nov), `business_entities`, `party_contacts`, `party_contact_channels`, `files`, `entity_files`, `audit_events`, `idempotency_keys` | Categorías, Clientes, Proveedores, Suministros, Contratista (datos de la empresa) |
 | `supplyflow_reqwrite_local` (`compose.supply-reqwrite.yml`) | Borradores v0.7: `requisitions`, `requisition_items`, snapshots, `workflow_events`, `document_sequences` | `requisitions/drafts` |
 | `supplyflow_recovery_local` (`compose.supply-recovery.yml`, contrato 52) | Requisiciones RF1, R2, R3A/R3B/R3C1 y bitácoras R3C2/R3C3 | Requisición y Control de cambios |
 
-Rutas de escritura en `backend/app/Config/Routes.php` (22): login/logout; `catalogs/clients`, `catalogs/suppliers` y `catalogs/supplier-offerings` (POST/PUT); `catalogs/categories` (POST/PUT/DELETE); `requisitions/drafts` (POST/PUT); `recovery/requisitions` (POST/PUT) y `regularization` (POST); `recovery/.../changes` (crear, `decision`, `withdraw`, `commercial-reconciliation`, `commercial-executions` y su `review`).
+Rutas de escritura en `backend/app/Config/Routes.php` (23): login/logout; `catalogs/clients`, `catalogs/suppliers` y `catalogs/supplier-offerings` (POST/PUT); `catalogs/categories` (POST/PUT/DELETE); `contractors/{id}` (PUT, datos de la empresa); `requisitions/drafts` (POST/PUT); `recovery/requisitions` (POST/PUT) y `regularization` (POST); `recovery/.../changes` (crear, `decision`, `withdraw`, `commercial-reconciliation`, `commercial-executions` y su `review`).
 
 El servidor solo distingue el rol `master_admin`; **no evalúa permisos por sección** (`role_permissions`, `user_permissions` se leen pero no se aplican).
 
@@ -88,11 +88,12 @@ Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Dem
 | Clientes | Alta y edición | Sí | **Real** | `clients` y contactos | Eliminar e importar siguen bloqueados |
 | Proveedores | Alta y edición | Sí | **Real** | `suppliers` y contactos | Eliminar e importar siguen bloqueados |
 | Suministros | Alta y edición | Sí | **Real** | `supplier_offerings` | Eliminar sigue bloqueado |
-| Contratista | Matriz y personal | Sí | Bloqueada | `people`, `users`, `user_roles` | Depende de la escritura de Usuarios y roles |
+| Contratista | Datos de la empresa (EDITAR) | Sí (`contractors/{id}`) | **Habilitada (24 nov 2026)** | `organizations`, `files` | Hecho: `PUT` con la cuenta `catalogwrite` (35 permisos). En la PC falta volver a ejecutar `provision` (+2, requiere autorización). Registrar otras empresas, estatus y baja siguen bloqueados; los formatos impresos usan la identidad fija |
+| Contratista | Personal | Sí | Bloqueada | `people`, `users`, `user_roles` | Depende de la escritura de Usuarios y roles |
 | Requisición | Registro | Sí | **Real** (RF1) | `requisitions`, `requisition_items` | — |
 | Requisición | Sin requisición / Regularización | Sí | **Real** (R2) | `requisitions` y evidencias | — |
 | Requisición | Matriz | Sí | N/A (SOLICITAR MODIFICACIÓN es R3A real) | — | — |
-| Requisición | Catálogo de categorías | Sí (`catalogs/categories`) | **Habilitada (24 nov 2026)** | `categories` | Hecho: `POST`/`PUT`/`DELETE` con la cuenta `catalogwrite` (33 permisos). En la PC falta volver a ejecutar `provision` (requiere autorización) |
+| Requisición | Catálogo de categorías | Sí (`catalogs/categories`) | **Habilitada (24 nov 2026)** | `categories` | Hecho: `POST`/`PUT`/`DELETE` con la cuenta `catalogwrite` (hoy 35 permisos). En la PC: aprovisionada con 33 el 24 nov (PASS) |
 | Requisición | Crear desde historial | Sí (`requisition-history/catalog`) | Bloqueada | `requisitions` (`history_based`, `repeat_policy_snapshot`), `requisition_items` (`history_*`, `repeat_*`, `fixed_client_*`) | Endpoint propio con la cuenta `recovery` (sin grants nuevos) y confirmar las reglas del Apps Script |
 | Requisición | Control de cambios | Sí (`requisition-changes`) | **Real**: R3A, R3B y retiro; R3C2/R3C3 solo consulta | `requisition_change_*` | Escrituras R3C2/R3C3 bloqueadas; la revisión independiente requiere un segundo Master Admin activo |
 | Gestión del Contratista | Registro de validación | Sí | Bloqueada | `requisition_reviews`, `workflow_events` | Endpoint, regla revisor ≠ solicitante y grants |

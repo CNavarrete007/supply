@@ -9,6 +9,11 @@
 > - `CatalogWriteStatusController` y `CatalogWriteProbe`.
 >
 > Ahora hay 118 rutas y 83 clases PHP, verificadas con `tests/catalog_write_status_http_check.py` y `tests/frontend/catalog_write_status_ui_e2e.cjs`. El resto de este informe corresponde a la corrida descrita abajo.
+>
+> **Actualización del 24 nov, noche.** Se agregaron `GET /api/v1/catalogs/currencies` (`CurrencyCatalogController`) y la edición
+> de los datos de la empresa en Contratista: `PUT /api/v1/contractors/{id}` y `GET /api/v1/contractors/{id}/logo`
+> (`ContractorWriteController`, `ContractorInput`, `ContractorWriteRepository`; cuenta `catalogwrite`, ahora 35 permisos).
+> `python3 tests/class_connection_audit.py`: **121 rutas, 87 clases PHP, 138 archivos de interfaz, 0 problemas.**
 
 ## Conclusión
 

@@ -7,6 +7,7 @@ import { analyzeImport, TEMPLATE_HEADERS, initials, clientIndicators } from './m
 import { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage, SALES_POLICIES, SOURCING_POLICIES, STATUSES } from './form.mjs';
 import { useCatalogAutosave } from '../catalog/useCatalogAutosave';
 import { CatalogWriteStatus } from '../catalog/CatalogWriteStatus';
+import { WRITE_TABLES } from '../catalog/writeStatus.mjs';
 
 // Clientes · diseño Grupo Gerez (4 tarjetas) conectado a MariaDB.
 // Lectura real: /api/v1/catalogs/clients[/{id}] y /api/v1/matrix/clients. Sin datos de demostración.
@@ -207,7 +208,7 @@ export function ClientsCatalog({ onNavigate = () => {}, onNotify, lang = 'es', l
 
       {/* TARJETA 1: Registro y actualización (alta/edición real con CSRF, idempotencia, versión y auditoría) */}
       {tab === 'register' && <div className="space-y-6" data-testid="client-form">
-        <CatalogWriteStatus entity={{ es: 'clientes', en: 'clients' }} en={en} />
+        <CatalogWriteStatus entity={{ es: 'clientes', en: 'clients', tables: WRITE_TABLES.clients }} en={en} />
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-4">
           <div><h3 className="text-base font-black text-slate-800">{tx('Alta y actualización de clientes', 'Client Registration and Update')}</h3>
             <p className="text-[11px] text-slate-400 mt-0.5">{tx('El número de cliente es único por organización. Selecciona un cliente registrado para editarlo o captura uno nuevo.', 'The client number is unique per organization. Select a registered client to edit it or enter a new one.')}</p></div>

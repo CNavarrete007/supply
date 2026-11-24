@@ -21,7 +21,7 @@ grants = set()
 if block:
     for priv, tables in re.findall(r"'(SELECT|INSERT|UPDATE|DELETE)' => \[([^\]]*)\]", block.group(1)):
         grants |= {(t, priv) for t in re.findall(r"'([a-z_]+)'", tables)}
-check('provision.py concede 33 permisos', len(expected) == 33, str(len(expected)))
+check('provision.py concede 35 permisos', len(expected) == 35, str(len(expected)))
 check('GRANTS del PHP = permisos de provision.py', grants == expected,
       f'faltan en PHP: {sorted(expected - grants)} · sobran en PHP: {sorted(grants - expected)}')
 check('sin privilegios fuera de SELECT/INSERT/UPDATE/DELETE', set(prov) <= {'SELECT', 'INSERT', 'UPDATE', 'DELETE'}, str(set(prov)))

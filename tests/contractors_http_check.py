@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Contratista · contrato HTTP de /api/v1/contractors (SOLO LECTURA; apto para la base real).
 Verifica 401/403/422/404, que solo se lee la organización de la sesión, coherencia del personal y que no se expongan
-contraseñas, identificadores de inicio de sesión ni rutas de almacenamiento; y que no exista ninguna ruta de escritura.
+contraseñas, identificadores de inicio de sesión ni rutas de almacenamiento; y que sin CSRF ni versión ninguna escritura responda 2xx
+(la edición real de los datos de la empresa se prueba en contractors_write_http_check.py, solo con base sintética).
 Uso: SF_API=http://127.0.0.1:8080 SF_USER=<correo admin> SF_QA_PASSWORD=<clave> [SF_NONADMIN_USER=<correo>] python3 tests/contractors_http_check.py
 """
 import http.cookiejar, json, os, re, sys, urllib.error, urllib.parse, urllib.request
@@ -36,7 +37,7 @@ try:
     check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [R, f'{R}/{ZERO}', f'{R}/{ZERO}/personnel'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
     d = get(R); items = d['items']
     check('solo la organización de la sesión', d['total'] == len(items) <= 1 and (not items or items[0]['id'] == d['active_id']) and d['summary']['companies'] == 1)
-    check('estructura: contacto, responsable, personal, estatus y uso', all({'legal_name', 'tax_identifier', 'phone', 'email', 'postal_address', 'status', 'has_logo', 'responsible', 'personnel', 'with_access', 'active', 'usage'} <= set(c) for c in items))
+    check('estructura: contacto, responsable, personal, estatus y uso', all({'legal_name', 'tax_identifier', 'phone', 'email', 'postal_address', 'status', 'has_logo', 'responsible', 'personnel', 'with_access', 'active', 'usage', 'version', 'logo_stored'} <= set(c) for c in items))
     check('sin contraseñas, logins ni rutas de almacenamiento', not re.search(r'password|hash|login|storage_key|logo_file_id|"path"', json.dumps(d), re.I))
     if items:
         c = items[0]
