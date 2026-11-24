@@ -1,7 +1,7 @@
 // Requisición › Catálogo de categorías · pruebas de la lógica pura. Ejecutar: node --test tests/frontend/category_catalog.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CATEGORY_TABS, HELP, emptyCategory, fromCategory, usageCount, usageText, usageDetail, filterCategories, activeNames, changedCategoryFields, validateCategory, categoryWarnings, saveLockedText, deleteBlock, deleteError, deleteLockedText, fold, MODE_NOTE } from '../../src/views/recovery/categoryModel.mjs';
+import { CATEGORY_TABS, HELP, emptyCategory, fromCategory, usageCount, usageText, usageDetail, filterCategories, activeNames, changedCategoryFields, validateCategory, categoryWarnings, payloadOf, savedText, writeErrorText, deleteBlock, deleteError, deletedText, fold, MODE_NOTE } from '../../src/views/recovery/categoryModel.mjs';
 
 const cat = (o) => ({ code: o.code || 'cat_x', name: o.name || 'Consumibles', description: 'description' in o ? o.description : `Descripción de ${o.name || 'Consumibles'}.`, active: o.active ?? true, imported: false,
   usage: { items: 0, items_by_label: 0, requisitions: 0, suppliers: 0, offerings: 0, ...(o.usage || {}) } });
@@ -67,12 +67,26 @@ test('edit warnings: rename keeps historical labels; deactivate/reactivate conse
   assert.deepEqual(categoryWarnings({ ...fromCategory(LIST[3]), status: 'inactive' }, LIST[3]), ['Dejará de aparecer en la lista desplegable de nuevas partidas.']);
 });
 
-test('save stays locked with an explicit "not saved" message', () => {
-  assert.match(saveLockedText({ ...emptyCategory(), name: ' Equipos  de buceo ' }), /^Datos validados, pero no se guardó la categoría «Equipos de buceo»: .*INSERT\/UPDATE sobre categories/);
-  assert.match(saveLockedText({ ...fromCategory(LIST[0]), status: 'inactive' }, LIST[0]), /no se guardó los cambios de la categoría «Consumibles» \(Estatus\)/);
+test('save: payload like the server (CategoryInput) and success text from MariaDB', () => {
+  assert.deepEqual(payloadOf({ ...emptyCategory(), name: ' Equipos  de buceo ', description: '  Alcance  ' }), { name: 'Equipos de buceo', description: 'Alcance', status: 'active' });
+  assert.equal(savedText({ code: 'cat_equipos_de_buceo' }, { ...emptyCategory(), name: 'Equipos de buceo' }), 'Categoría «Equipos de buceo» registrada en MariaDB con el código cat_equipos_de_buceo. Ya aparece en la lista de categorías de las partidas.');
+  assert.equal(savedText({ code: 'cat_x' }, { ...emptyCategory(), name: 'Inactiva QA', status: 'inactive' }), 'Categoría «Inactiva QA» registrada en MariaDB con el código cat_x.');
+  assert.equal(savedText({ code: 'cat_con' }, { ...fromCategory(LIST[0]), status: 'inactive' }, LIST[0]), 'Cambios de «Consumibles» guardados en MariaDB (Estatus).');
 });
 
-test('delete: used categories must be deactivated; unused require typing the name; never deleted', () => {
+test('server errors: tone, text and whether the same operation may be retried', () => {
+  assert.deepEqual(writeErrorText({ status: 409, code: 'DUPLICATE_CATEGORY', message: 'Ya existe la categoría «X».' }), ['danger', 'Ya existe la categoría «X».', false]);
+  assert.equal(writeErrorText({ status: 412, code: 'STALE_VERSION', message: 'La categoría cambió desde que se abrió.' })[0], 'warn');
+  assert.match(writeErrorText({ status: 412, message: 'La categoría cambió.' }, 'eliminar')[1], /vuelve a eliminar/);
+  assert.match(writeErrorText({ status: 412, message: 'La categoría cambió.' }, 'guardar')[1], /versión vigente de MariaDB; vuelve a aplicar tus cambios/);
+  assert.equal(writeErrorText({ status: 503, code: 'CATALOG_WRITE_NOT_PROVISIONED', message: 'El guardado de categorías aún no está habilitado en este equipo.' })[2], false);
+  assert.deepEqual(writeErrorText({ status: 503, code: 'CATEGORY_WRITE_UNAVAILABLE', message: 'No se pudo guardar.' }).slice(0, 1).concat(writeErrorText({ status: 503 })[2]), ['danger', true]);
+  assert.equal(writeErrorText({ status: 0, message: 'Failed to fetch' })[2], true);
+  assert.match(writeErrorText({ status: 401 })[1], /sesión expiró/);
+  assert.match(writeErrorText({ status: 403, code: 'FORBIDDEN' })[1], /Master Admin/);
+});
+
+test('delete: used categories must be deactivated; unused ones require typing the name', () => {
   assert.match(deleteBlock(LIST[0]), /106 partida\(s\) de 70 requisición\(es\)\. Desactívala \(Inactiva\)/);
   assert.match(deleteBlock(LIST[1]), /3 partida\(s\)/);
   assert.match(deleteBlock(cat({ name: 'Solo proveedores', usage: { suppliers: 2 } })), /2 proveedor\(es\) y 0 suministro\(s\)/);
@@ -80,5 +94,5 @@ test('delete: used categories must be deactivated; unused require typing the nam
   assert.match(deleteError(LIST[3], 'transporte'), /Escribe exactamente «Transporte y logística»/);
   assert.equal(deleteError(LIST[3], ' Transporte y logística '), null);
   assert.match(deleteError(LIST[0], 'Consumibles'), /Desactívala/);
-  assert.match(deleteLockedText(LIST[3]), /^Datos validados, pero no se eliminó la categoría «Transporte y logística»/);
+  assert.equal(deletedText(LIST[3]), 'Categoría «Transporte y logística» eliminada de MariaDB (nunca se usó).');
 });

@@ -105,7 +105,7 @@ foreach ($f in $files) { $compose += @('-f', (Join-Path $root $f)) }
 & docker.exe @compose --profile dev up -d --no-deps --force-recreate api
 ```
 
-Comprobaciones: `verify` → `"result": "PASS"`, `"grants": 29`; `http://localhost:8080/api/v1/recovery/catalogs` sin
+Comprobaciones: `verify` → `"result": "PASS"`, `"grants": 33` (29 hasta el 23 nov; los 4 nuevos son de Categorías, ver `docs/categorias/ALTA_EDICION_CATEGORIAS.md`); `http://localhost:8080/api/v1/recovery/catalogs` sin
 sesión → 401; en Clientes, dar de alta un cliente de prueba identificable y revisarlo en la bitácora (Usuarios y roles →
 Bitácora, módulo `catalogs`). Desde entonces, incluir `compose.supply-catalogwrite.yml` en la lista de overlays.
 

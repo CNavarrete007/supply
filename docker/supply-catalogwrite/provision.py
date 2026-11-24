@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """SupplyFlow · Catálogos de clientes, proveedores y suministros: provision a least-privilege write account on the local MariaDB socket.
-Creates/verifies ONLY the SQL login supplyflow_catalogwrite_local and its table grants (29). It does not modify the schema,
+Creates/verifies ONLY the SQL login supplyflow_catalogwrite_local and its table grants (33; categorías since 23 nov 2026: INSERT/UPDATE/DELETE on categories and SELECT on requisition_items
+to check usage before deleting). It does not modify the schema,
 business records, historical data or any other account (api/auth/reqwrite/recovery keep their 77/52 contract).
 Usage (profile catalogwrite-tools): provision | verify
 """
@@ -22,17 +23,18 @@ LOCK_NAME = 'supplyflow_catalogwrite_provision_v1'
 TABLES_EXPECTED = 77
 SELECT_TABLES = {
     'clients', 'business_entities', 'party_contacts', 'party_contact_channels', 'idempotency_keys', 'files', 'entity_files',
-    'suppliers', 'categories', 'supplier_offerings',
+    'suppliers', 'categories', 'supplier_offerings', 'requisition_items',
 }
 INSERT_TABLES = {
     'business_entities', 'clients', 'party_contacts', 'party_contact_channels', 'audit_events', 'idempotency_keys',
-    'files', 'entity_files', 'suppliers', 'supplier_offerings',
+    'files', 'entity_files', 'suppliers', 'supplier_offerings', 'categories',
 }
 UPDATE_TABLES = {
     'business_entities', 'clients', 'party_contacts', 'party_contact_channels', 'idempotency_keys', 'entity_files',
-    'suppliers', 'supplier_offerings',
+    'suppliers', 'supplier_offerings', 'categories',
 }
-DELETE_TABLES = {'party_contact_channels'}
+# categories: solo se eliminan categorías nunca usadas (CategoryWriteRepository lo verifica; las FK lo impiden de todos modos).
+DELETE_TABLES = {'party_contact_channels', 'categories'}
 EXPECTED = {(table, privilege) for privilege, tables in
             [('SELECT', SELECT_TABLES), ('INSERT', INSERT_TABLES),
              ('UPDATE', UPDATE_TABLES), ('DELETE', DELETE_TABLES)] for table in tables}

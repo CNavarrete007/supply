@@ -1,6 +1,6 @@
 // Requisición › Catálogo de categorías · lógica pura (diseño del Apps Script original).
-// Fuente: GET /api/v1/catalogs/categories (solo lectura). Alta, edición, estatus y eliminación se validan aquí,
-// pero no se guardan: no existe endpoint ni permiso SQL de escritura sobre `categories` (requiere autorización).
+// Fuente: GET /api/v1/catalogs/categories. Alta, edición y estatus (POST/PUT) y eliminación de categorías nunca usadas (DELETE) se
+// guardan en MariaDB con la cuenta catalogwrite; aquí se validan antes de enviar y se traducen las respuestas del servidor.
 export const CATEGORY_TABS = [
   ['form', '＋', 'Nueva / editar categoría', 'Captura una categoría nueva o modifica una existente.'],
   ['matrix', '📋', 'Matriz de categorías', 'Consulta, busca, edita, activa o desactiva categorías.'],
@@ -85,9 +85,28 @@ export function categoryWarnings(form, original) {
   return out;
 }
 
-export function saveLockedText(form, original) {
-  const what = original ? `los cambios de la categoría «${original.name}» (${changedCategoryFields(form, original).join(', ')})` : `la categoría «${clean(form.name)}»`;
-  return `Datos validados, pero no se guardó ${what}: SupplyFlow aún no tiene endpoint de escritura del catálogo de categorías (alta, edición y estatus). Habilitarlo requiere tu autorización para permisos INSERT/UPDATE sobre categories.`;
+/** Cuerpo de POST/PUT (mismas reglas que CategoryInput en el servidor). */
+export const payloadOf = form => ({ name: clean(form.name), description: String(form.description ?? '').trim(), status: form.status });
+
+/** Mensaje de éxito tras guardar en MariaDB. */
+export function savedText(result, form, original) {
+  const name = clean(form.name);
+  if (!original) return `Categoría «${name}» registrada en MariaDB con el código ${result.code}.${form.status === 'active' ? ' Ya aparece en la lista de categorías de las partidas.' : ''}`;
+  const changed = changedCategoryFields(form, original);
+  return `Cambios de «${name}» guardados en MariaDB (${changed.join(', ')}).`;
+}
+
+/** Respuesta de error del servidor → [tono, texto, ¿reintentable con la misma operación?]. */
+export function writeErrorText(err, action = 'guardar') {
+  const code = err?.code || '', status = err?.status || 0;
+  if (status === 401) return ['danger', 'Tu sesión expiró. Inicia sesión nuevamente; no se guardaron cambios.', false];
+  if (status === 403) return ['danger', code === 'CSRF_INVALID' ? 'La sesión de seguridad cambió. Vuelve a intentarlo.' : 'Solo un Master Admin puede modificar el catálogo de categorías.', false];
+  if (code === 'CATALOG_WRITE_NOT_PROVISIONED') return ['warn', err.message || 'El guardado de categorías aún no está habilitado en este equipo.', false];
+  if (status === 412 || code === 'STALE_VERSION') return ['warn', action === 'guardar'
+    ? `${err.message || 'La categoría cambió.'} Se abrió la versión vigente de MariaDB; vuelve a aplicar tus cambios y guarda.`
+    : `${err.message || 'La categoría cambió.'} Se recargó la categoría; revisa los datos y vuelve a ${action}.`, false];
+  if (status === 409 || status === 404 || status === 422) return ['danger', err.message || 'Revisa los datos de la categoría.', false];
+  return ['danger', `No se confirmó la operación (${err?.message || 'sin respuesta del servidor'}). Reintentar repite exactamente la misma operación sin duplicarla.`, true];
 }
 
 /** Deleting is only possible for a category never used: otherwise it must be deactivated (history and foreign keys). */
@@ -101,7 +120,7 @@ export function deleteError(c, typed) {
   if (deleteBlock(c)) return deleteBlock(c);
   return clean(typed) === clean(c?.name) ? null : `Escribe exactamente «${c?.name}» para confirmar la eliminación.`;
 }
-export const deleteLockedText = c => `Datos validados, pero no se eliminó la categoría «${c.name}»: SupplyFlow aún no tiene endpoint de escritura del catálogo de categorías. Habilitarlo requiere tu autorización para permisos DELETE sobre categories.`;
+export const deletedText = c => `Categoría «${c.name}» eliminada de MariaDB (nunca se usó).`;
 
 export const MODE_NOTE = {
   locked: ['warn', 'Formulario bloqueado. Presiona Nueva categoría para capturar una o usa EDITAR desde la matriz.'],

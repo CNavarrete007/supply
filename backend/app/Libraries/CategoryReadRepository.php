@@ -13,6 +13,7 @@ use Config\Database;
  * e.g. imported lines whose category could not be resolved), distinct requisitions, suppliers and supplier offerings.
  * The usage is what decides whether a category can be deleted or should be deactivated instead (foreign keys from
  * requisition_items, suppliers and supplier_offerings). Internal numeric ids are never returned: `code` is the key.
+ * Alta, edición y eliminación: CategoryWriteController (cuenta catalogwrite); `version` es la huella que exige If-Match.
  */
 final class CategoryReadRepository
 {
@@ -31,6 +32,15 @@ final class CategoryReadRepository
             throw new \RuntimeException('Query failed');
         }
         return $q->getResultArray();
+    }
+
+    /**
+     * Versión de una categoría para If-Match: huella SHA-256 (16 hex) de código, nombre, descripción y estatus. La tabla no tiene
+     * columna de versión; cualquier cambio de esos campos cambia la huella (CategoryWriteRepository la exige al editar o eliminar).
+     */
+    public static function version(array $c): string
+    {
+        return substr(hash('sha256', json_encode([(string) $c['code'], (string) $c['name'], (string) ($c['description'] ?? ''), (bool) $c['active']], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)), 0, 16);
     }
 
     /** @return array<string,mixed> */
@@ -54,8 +64,10 @@ final class CategoryReadRepository
         foreach ($rows as $r) {
             $usage = ['items' => (int) $r['items'], 'items_by_label' => (int) $r['items_by_label'], 'requisitions' => (int) $r['requisitions'],
                 'suppliers' => (int) $r['suppliers'], 'offerings' => (int) $r['offerings']];
-            $items[] = ['code' => (string) $r['code'], 'name' => (string) $r['name'], 'description' => $r['description'] === null ? null : (string) $r['description'],
+            $item = ['code' => (string) $r['code'], 'name' => (string) $r['name'], 'description' => $r['description'] === null ? null : (string) $r['description'],
                 'active' => (bool) $r['active'], 'imported' => (bool) $r['imported'], 'usage' => $usage];
+            $item['version'] = self::version($item);
+            $items[] = $item;
         }
         $unlinked = $this->rows(<<<'SQL'
             SELECT COUNT(*) AS n FROM requisition_items i
@@ -68,7 +80,7 @@ final class CategoryReadRepository
             'totals' => ['categories' => count($items), 'active' => $active, 'inactive' => count($items) - $active,
                 'items' => array_sum(array_map(static fn (array $c): int => $c['usage']['items'] + $c['usage']['items_by_label'], $items)),
                 'unlinked_items' => (int) ($unlinked[0]['n'] ?? 0)],
-            'read_only' => true,
+            'read_only' => false,
         ];
     }
 }

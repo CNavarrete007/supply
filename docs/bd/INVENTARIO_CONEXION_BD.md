@@ -1,6 +1,6 @@
 # SupplyFlow — Inventario de conexión a MariaDB por módulo
 
-**Fecha:** 23 nov. 2026 · **Base del análisis:** commit `c280023` (código, DDL versionado de 77 tablas y contratos de cuentas SQL) y el respaldo `supplyflow_dev.sql` del 9 nov. 2026 (77 tablas; el archivo compartido el 23 nov. es idéntico byte a byte al del 20 nov.).
+**Fecha:** 23 nov. 2026 (actualizado el 24 nov. con Categorías) · **Base del análisis:** commit `c280023` (código, DDL versionado de 77 tablas y contratos de cuentas SQL) y el respaldo `supplyflow_dev.sql` del 9 nov. 2026 (77 tablas; el archivo compartido el 23 nov. es idéntico byte a byte al del 20 nov.).
 **Alcance:** análisis de código y del respaldo. No se ejecutaron migraciones, grants ni escrituras. Los recuentos de datos del respaldo se guardan fuera del repositorio.
 
 ## 1. Resumen
@@ -10,7 +10,7 @@
 | **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles, Configuración (pestañas 1 a 5, 23 nov 2026), Flujo del Proceso (7 pestañas, 23 nov 2026), campana de Notificaciones (lectura, 23 nov 2026), Portal del Cliente (vista previa interna, 23 nov 2026) |
 | **Inicio y Dashboard** | Conectado (23 nov 2026) salvo 3 cifras sin fuente o regla: estatus de pago / «Pagadas» (no hay registro de pagos), ahorro potencial y costo promedio (falta la regla del original) |
 | **Pendientes de autorización** | Acceso externo de clientes al portal (tokens y sesiones propias, §4.E). Campana: marcar como leída en MariaDB (permiso de escritura) |
-| **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
+| **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Catálogo de categorías (alta, edición, estatus y eliminación de las nunca usadas, 24 nov 2026); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
 | **Validan pero no guardan** | Todo lo demás: termina con «Datos validados, pero no se guardó…» |
 
 `App.jsx` ya no muestra el aviso genérico «Módulo pendiente de integración» en ningún módulo del menú: Configuración, Flujo del Proceso y la vista previa del Portal del Cliente tienen su propio aviso «solo lectura».
@@ -28,7 +28,7 @@
   - Las listas fijas son opciones de catálogo (estatus, tipos, monedas).
 - **Regresión completa**: 24 suites de interfaz, 17 HTTP, 385 pruebas unitarias e INT03-D1, todas en verde.
 - **Hallazgos**:
-  1. **Guardado de catálogos en la PC del usuario.** El arranque documentado en `CLAUDE.md` no incluye `compose.supply-catalogwrite.yml`, y la cuenta `supplyflow_catalogwrite_local` no está en el contrato 77/52. Sin aprovisionarla (requiere autorización), el alta y edición de Clientes, Proveedores y Suministros avisa que no está habilitada y no guarda.
+  1. **Guardado de catálogos en la PC del usuario.** El arranque documentado en `CLAUDE.md` no incluye `compose.supply-catalogwrite.yml`, y la cuenta `supplyflow_catalogwrite_local` no está en el contrato 77/52. Sin aprovisionarla (requiere autorización), el alta y edición de Clientes, Proveedores, Suministros y (desde el 24 nov) Categorías avisa que no está habilitada y no guarda. Si ya estaba aprovisionada con 29 permisos, basta volver a ejecutar `provision` para agregar los 4 de Categorías (`docs/categorias/ALTA_EDICION_CATEGORIAS.md`).
   2. **Código sin uso, sin efecto en la operación (eliminado el 23 nov, a petición del usuario):**
      - 8 vistas antiguas con datos de demostración (unas 15,800 líneas) y `src/views/clients/clientWriteApi.js`.
      - El estado `quotes` que `App.jsx` guarda en `localStorage` y que ningún módulo usa.
@@ -45,11 +45,11 @@
 |---|---|---|
 | `supplyflow_api_local` (base) | Nada: `SELECT` sobre el esquema | Todas las consultas de lectura |
 | `supplyflow_auth_local` (`compose.supply-auth.yml`) | `auth_sessions`, `audit_events` (+2 columnas de revocación) | Inicio y cierre de sesión |
-| `supplyflow_catalogwrite_local` (`compose.supply-catalogwrite.yml`) | `clients`, `suppliers`, `supplier_offerings`, `business_entities`, `party_contacts`, `party_contact_channels`, `files`, `entity_files`, `audit_events`, `idempotency_keys` | Clientes, Proveedores, Suministros |
+| `supplyflow_catalogwrite_local` (`compose.supply-catalogwrite.yml`, 33 permisos) | `clients`, `suppliers`, `supplier_offerings`, `categories` (alta, edición y eliminación de las nunca usadas; lee `requisition_items` para verificar el uso), `business_entities`, `party_contacts`, `party_contact_channels`, `files`, `entity_files`, `audit_events`, `idempotency_keys` | Categorías, Clientes, Proveedores, Suministros |
 | `supplyflow_reqwrite_local` (`compose.supply-reqwrite.yml`) | Borradores v0.7: `requisitions`, `requisition_items`, snapshots, `workflow_events`, `document_sequences` | `requisitions/drafts` |
 | `supplyflow_recovery_local` (`compose.supply-recovery.yml`, contrato 52) | Requisiciones RF1, R2, R3A/R3B/R3C1 y bitácoras R3C2/R3C3 | Requisición y Control de cambios |
 
-Rutas de escritura en `backend/app/Config/Routes.php` (19): login/logout; `catalogs/clients`, `catalogs/suppliers` y `catalogs/supplier-offerings` (POST/PUT); `requisitions/drafts` (POST/PUT); `recovery/requisitions` (POST/PUT) y `regularization` (POST); `recovery/.../changes` (crear, `decision`, `withdraw`, `commercial-reconciliation`, `commercial-executions` y su `review`).
+Rutas de escritura en `backend/app/Config/Routes.php` (22): login/logout; `catalogs/clients`, `catalogs/suppliers` y `catalogs/supplier-offerings` (POST/PUT); `catalogs/categories` (POST/PUT/DELETE); `requisitions/drafts` (POST/PUT); `recovery/requisitions` (POST/PUT) y `regularization` (POST); `recovery/.../changes` (crear, `decision`, `withdraw`, `commercial-reconciliation`, `commercial-executions` y su `review`).
 
 El servidor solo distingue el rol `master_admin`; **no evalúa permisos por sección** (`role_permissions`, `user_permissions` se leen pero no se aplican).
 
@@ -74,7 +74,7 @@ Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Dem
 | Requisición | Registro | Sí | **Real** (RF1) | `requisitions`, `requisition_items` | — |
 | Requisición | Sin requisición / Regularización | Sí | **Real** (R2) | `requisitions` y evidencias | — |
 | Requisición | Matriz | Sí | N/A (SOLICITAR MODIFICACIÓN es R3A real) | — | — |
-| Requisición | Catálogo de categorías | Sí (`catalogs/categories`) | Bloqueada | `categories` | Endpoint y grants `INSERT`/`UPDATE` (y `DELETE`) para `catalogwrite` |
+| Requisición | Catálogo de categorías | Sí (`catalogs/categories`) | **Habilitada (24 nov 2026)** | `categories` | Hecho: `POST`/`PUT`/`DELETE` con la cuenta `catalogwrite` (33 permisos). En la PC falta volver a ejecutar `provision` (requiere autorización) |
 | Requisición | Crear desde historial | Sí (`requisition-history/catalog`) | Bloqueada | `requisitions` (`history_based`, `repeat_policy_snapshot`), `requisition_items` (`history_*`, `repeat_*`, `fixed_client_*`) | Endpoint propio con la cuenta `recovery` (sin grants nuevos) y confirmar las reglas del Apps Script |
 | Requisición | Control de cambios | Sí (`requisition-changes`) | **Real**: R3A, R3B y retiro; R3C2/R3C3 solo consulta | `requisition_change_*` | Escrituras R3C2/R3C3 bloqueadas; la revisión independiente requiere un segundo Master Admin activo |
 | Gestión del Contratista | Registro de validación | Sí | Bloqueada | `requisition_reviews`, `workflow_events` | Endpoint, regla revisor ≠ solicitante y grants |
@@ -170,7 +170,7 @@ Mismo patrón que R2 y R3:
 | Fase | Trabajo | Grants nuevos | Riesgo |
 |---|---|---|---|
 | **0 · Solo lectura** (sin grants) | 1. ~~Inicio y Dashboard~~ (hecho el 23 nov). 2. ~~Configuración pestañas 1 a 5~~ (hecho el 23 nov, §4.C). 3. ~~Flujo del Proceso~~ (hecho el 23 nov, §4.B). 4. ~~Campana: lectura~~ (hecho el 23 nov, §4.D) | No | Bajo |
-| **1 · Operativo, no comercial** | 5. Categorías. 6. Crear desde historial. 7. Servicios: requisición maestra y expediente. 8. Gestión del Contratista: validación, estrategia y lotes. 9. Configuración: escritura versionada. 10. Usuarios y roles, con permisos por sección en el servidor. 11. Notificaciones: marcar como leídas | Sí, por módulo | Medio; Usuarios es alto |
+| **1 · Operativo, no comercial** | 5. ~~Categorías~~ (hecho el 24 nov). 6. Crear desde historial. 7. Servicios: requisición maestra y expediente. 8. Gestión del Contratista: validación, estrategia y lotes. 9. Configuración: escritura versionada. 10. Usuarios y roles, con permisos por sección en el servidor. 11. Notificaciones: marcar como leídas | Sí, por módulo | Medio; Usuarios es alto |
 | **2 · Comercial** (bloqueado hasta autorizar) | 12. Cotizaciones. 13. OC. 14. Recepción y Entrega. 15. Factura (y registro de pagos si se define). 16. Escrituras R3C2/R3C3 | Sí | Alto |
 | **3 · Seguridad externa** | 17. Portal del Cliente: acceso externo con tokens propios (la vista previa interna ya está hecha, 23 nov) | Sí | Alto |
 

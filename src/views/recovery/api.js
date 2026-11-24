@@ -47,7 +47,7 @@ async function readChanges(path,signal){
 }
 export const changeOverview=(query,signal)=>readChanges('?'+query,signal);
 export const changeCandidates=(query,signal)=>readChanges('/candidates?'+query,signal);
-// Catálogo de categorías (solo lectura, cuenta API de solo SELECT): estatus y uso por partida.
+// Catálogo de categorías: lectura (estatus, uso y versión) y escritura con la cuenta catalogwrite (CSRF + Idempotency-Key + If-Match).
 export async function categoryCatalog(signal){
  const response=await fetch('/api/v1/catalogs/categories',{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'},signal});
  const body=await response.json().catch(()=>({}));
@@ -61,3 +61,15 @@ export async function historyCatalog(clientId,signal){
  if(!response.ok){const error=new Error(body?.error?.message||'No se pudo consultar el historial del cliente.');error.status=response.status;error.code=body?.error?.code;throw error;}
  return body;
 }
+// Alta (sin code) o edición (code + version). La misma `key` se reutiliza al reintentar la misma operación: el servidor la repite sin duplicar.
+async function categoryWrite(method,path,{version,payload,key}={}){
+ const token=await getCsrf();
+ const response=await fetch('/api/v1/catalogs/categories'+path,{method,credentials:'same-origin',cache:'no-store',
+  headers:{Accept:'application/json','X-SF-CSRF':token,'Idempotency-Key':key,...(payload?{'Content-Type':'application/json'}:{}),...(version?{'If-Match':`"${version}"`}:{})},
+  body:payload?JSON.stringify(payload):undefined});
+ const body=await response.json().catch(()=>({}));
+ if(!response.ok){const error=new Error(body?.error?.message||'No se pudo guardar la categoría.');error.status=response.status;error.code=body?.error?.code;error.field=body?.error?.field;throw error;}
+ return body;
+}
+export const saveCategory=({code,version,payload,key})=>categoryWrite(code?'PUT':'POST',code?'/'+encodeURIComponent(code):'',{version:code?version:undefined,payload,key});
+export const deleteCategory=({code,version,key})=>categoryWrite('DELETE','/'+encodeURIComponent(code),{version,key});

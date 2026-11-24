@@ -18,8 +18,11 @@ $routes->get('api/v1/audit-events', 'UserDirectoryController::auditEvents');
 // Master Admin read-only catalogs; client portal credentials are NEVER exposed here.
 // Requisición › Crear desde historial: política de recompra y catálogo histórico del cliente (solo lectura).
 $routes->get('api/v1/requisition-history/catalog', 'RequisitionHistoryController::catalog');
-// Requisición › Catálogo de categorías: estatus y uso (solo lectura; sin rutas de escritura).
+// Requisición › Catálogo de categorías: estatus y uso (lectura) · alta, edición y eliminación de no usadas (cuenta catalogwrite).
 $routes->get('api/v1/catalogs/categories', 'CategoryCatalogController::index');
+$routes->post('api/v1/catalogs/categories', 'CategoryWriteController::create');
+$routes->put('api/v1/catalogs/categories/(:segment)', 'CategoryWriteController::update/$1');
+$routes->delete('api/v1/catalogs/categories/(:segment)', 'CategoryWriteController::delete/$1');
 $routes->get('api/v1/catalogs/clients', 'CatalogDirectoryController::clients');
 $routes->get('api/v1/catalogs/clients/(:segment)', 'CatalogDirectoryController::client/$1');
 $routes->post('api/v1/catalogs/clients', 'ClientWriteController::create');

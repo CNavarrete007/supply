@@ -4,7 +4,7 @@ Verifica 401/403/422, que no exista ninguna ruta de escritura, estructura y tota
 Registro de requisición (/recovery/catalogs), uso coherente con las partidas de la matriz y que no se expongan ids internos.
 Uso: SF_API=http://127.0.0.1:8080 SF_USER=<correo admin> SF_QA_PASSWORD=<clave> [SF_NONADMIN_USER=<correo>] python3 tests/categories_http_check.py
 """
-import http.cookiejar, json, os, re, sys, urllib.error, urllib.request
+import hashlib, http.cookiejar, json, os, re, sys, urllib.error, urllib.request
 API = os.environ.get('SF_API', 'http://127.0.0.1:8090').rstrip('/'); USER = os.environ.get('SF_USER', 'qa.admin.a@supplyflow.invalid')
 PASSWORD = os.environ.get('SF_QA_PASSWORD', ''); NONADMIN = os.environ.get('SF_NONADMIN_USER', '')
 if not re.match(r'^http://(127\.0\.0\.1|localhost)(:\d+)?$', API) or not PASSWORD: print('BLOCKED: solo API local y SF_QA_PASSWORD.'); sys.exit(2)
@@ -30,10 +30,14 @@ try:
     get = lambda p: json.loads(adm.open(API + p).read())
     check('Master Admin: 200', status(adm, C) == 200)
     check('422 con cualquier parámetro', all(status(adm, C + q) == 422 for q in ['?x=1', '?q=a', '?page=1', '?status=all']))
-    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [C, C + '/cat_x', C + '/00000000-0000-4000-8000-000000000000'] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
+    # Escrituras (alta, edición, eliminación) existen desde el 23 nov; aquí solo se comprueba, SIN escribir, que sin CSRF se rechazan.
+    check('escrituras sin CSRF rechazadas (403) y sin PATCH (≠ 2xx)', all(status(adm, p, m) == 403 for p, m in [(C, 'POST'), (C + '/cat_x', 'PUT'), (C + '/cat_x', 'DELETE')])
+          and not 200 <= status(adm, C + '/cat_x', 'PATCH') < 300)
     d = get(C); items = d['items']; t = d['totals']
-    check('solo lectura declarada', d.get('read_only') is True)
-    keys = {'code', 'name', 'description', 'active', 'imported', 'usage'}; ukeys = {'items', 'items_by_label', 'requisitions', 'suppliers', 'offerings'}
+    check('catálogo editable declarado (read_only = false)', d.get('read_only') is False)
+    keys = {'code', 'name', 'description', 'active', 'imported', 'usage', 'version'}
+    ver = lambda c: hashlib.sha256(json.dumps([c['code'], c['name'], c['description'] or '', c['active']], ensure_ascii=False, separators=(',', ':')).replace('/', '\\/').encode()).hexdigest()[:16]
+    check('versión de cada categoría = huella de código, nombre, descripción y estatus', all(c['version'] == ver(c) for c in d['items']), str([(c['code'], c['version'], ver(c)) for c in d['items'] if c['version'] != ver(c)][:2])); ukeys = {'items', 'items_by_label', 'requisitions', 'suppliers', 'offerings'}
     check('estructura de cada categoría', all(set(c) == keys and set(c['usage']) == ukeys and isinstance(c['active'], bool) and all(isinstance(v, int) and v >= 0 for v in c['usage'].values()) for c in items))
     check('totales coherentes', t['categories'] == len(items) and t['active'] == sum(c['active'] for c in items) and t['inactive'] == len(items) - t['active']
           and t['items'] == sum(c['usage']['items'] + c['usage']['items_by_label'] for c in items) and t['unlinked_items'] >= 0)
