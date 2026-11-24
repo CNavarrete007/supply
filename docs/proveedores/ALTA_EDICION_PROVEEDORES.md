@@ -40,6 +40,32 @@ El detalle `GET /api/v1/catalogs/suppliers/{id}` añade `version`, `imported` y 
 Usa la misma cuenta `supplyflow_catalogwrite_local` (con Suministros, **29** permisos: `suppliers` y `supplier_offerings`
 SELECT/INSERT/UPDATE y `categories` SELECT). Activación y reversión: `docs/clientes/ALTA_EDICION_CLIENTES.md` (requiere autorización).
 
+## Diagnóstico: «No se pudo guardar» al editar un proveedor (24 nov 2026)
+
+**Causa encontrada.** La moneda tiene llave foránea a `currencies`:
+- El formulario ofrecía siempre MXN, USD y EUR.
+- Tu base (respaldo del 9 nov) solo tiene **MXN y USD**; el sandbox sí tiene EUR, por eso las pruebas pasaban.
+- Al elegir EUR, MariaDB rechazaba el guardado (error 1452) y la pantalla solo decía «No se pudo guardar… intenta de nuevo».
+- Lo mismo afectaba a **Suministros**.
+- Registro de requisición ya validaba la moneda en el servidor; ahora además solo ofrece las dadas de alta.
+
+**Corrección.**
+- `GET /api/v1/catalogs/currencies` (solo lectura) entrega las monedas dadas de alta en la base.
+- Proveedores, Suministros y Registro de requisición ofrecen solo las monedas activas. Si el registro ya tiene guardada una moneda que no está activa, se sigue mostrando para no perderla.
+- Si aun así llega una moneda inexistente, el servidor responde 422 `INVALID_VALUE` en el campo «Moneda» con un mensaje claro. El campo queda marcado y no se guarda nada.
+
+**Confirmar la causa en la PC** (solo lectura; el registro guarda solo la clase del error y su código, sin datos):
+
+```powershell
+docker exec supply-api-1 sh -c 'grep -h catalog.write.failed /var/www/html/writable/logs/*.log | tail -n 5'
+```
+
+- `mysqli_sql_exception code 1452`: un valor no existe en su catálogo; en Proveedores, la moneda.
+- Otro código: compartir la línea para diagnosticarlo.
+
+**Si necesitas EUR.** Dar de alta una moneda modifica un catálogo de referencia de la base real: requiere respaldo y
+autorización explícita, y no forma parte de esta corrección.
+
 ## Pruebas (sandbox sintético)
 
 | Prueba | Resultado |

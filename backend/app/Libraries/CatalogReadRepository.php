@@ -70,6 +70,16 @@ final class CatalogReadRepository
     /**
      * @return array{items:list<array<string,mixed>>,total:int,page:int,page_size:int,summary:array<string,mixed>}
      */
+    /**
+     * Catálogo de monedas de ESTA base (las llaves foráneas de proveedores, suministros, requisiciones, etc. solo aceptan estas).
+     * @return list<array{code:string,name:string,minor_units:int,active:bool}>
+     */
+    public function currencies(): array
+    {
+        $rows = $this->db->query('SELECT code, name, minor_units, active FROM currencies ORDER BY active DESC, code')->getResultArray();
+        return array_map(static fn (array $r): array => ['code' => (string) $r['code'], 'name' => (string) $r['name'], 'minor_units' => (int) $r['minor_units'], 'active' => (bool) $r['active']], $rows);
+    }
+
     public function list(string $kind, int $organizationId, int $page, int $pageSize, string $search, string $status): array
     {
         $c = $this->context($kind); // all SQL table/field identifiers from server-side allowlists

@@ -131,6 +131,14 @@ abstract class CatalogWriteController extends BaseController
         if ($e instanceof CatalogWriteUnavailable && $e->getMessage() === 'CATALOG_WRITE_ACCOUNT_REJECTED') {
             return $this->fail(503, 'CATALOG_WRITE_ACCOUNT_REJECTED', 'MariaDB rechazó la cuenta de escritura del catálogo (no existe o su contraseña no coincide con el secreto). No se guardaron cambios.');
         }
+        // Llave foránea: un valor que no existe en su catálogo (p. ej. una moneda que esta base no tiene dada de alta). Es un dato a
+        // corregir, no una falla: 422 con el campo, para que la pantalla lo marque y no pida «intentar de nuevo».
+        if ($e instanceof \mysqli_sql_exception && (int) $e->getCode() === 1452) {
+            if (preg_match('/fk_\w*currency/i', $e->getMessage()) === 1) {
+                return $this->fail(422, 'INVALID_VALUE', 'La moneda elegida no está dada de alta en el catálogo de monedas de esta base. Elige una de la lista; no se guardaron cambios.', ['field' => 'currency']);
+            }
+            return $this->fail(422, 'INVALID_VALUE', 'Un valor elegido no existe en su catálogo de MariaDB. Revisa los campos de selección; no se guardaron cambios.');
+        }
         if ($e instanceof \mysqli_sql_exception && in_array((int) $e->getCode(), [1044, 1142, 1143], true)) {
             log_message('error', 'SupplyFlow catalog write: missing table privilege (errno ' . (string) $e->getCode() . ').');
             return $this->fail(503, 'CATALOG_WRITE_GRANTS_INCOMPLETE', 'A la cuenta de escritura del catálogo le faltan permisos en MariaDB. No se guardaron cambios.');

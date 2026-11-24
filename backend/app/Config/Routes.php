@@ -21,6 +21,8 @@ $routes->get('api/v1/requisition-history/catalog', 'RequisitionHistoryController
 // Requisición › Catálogo de categorías: estatus y uso (lectura) · alta, edición y eliminación de no usadas (cuenta catalogwrite).
 // Diagnóstico de solo lectura: ¿está habilitado el guardado de catálogos (cuenta catalogwrite) en este equipo?
 $routes->get('api/v1/catalogs/write-status', 'CatalogWriteStatusController::index');
+// Monedas dadas de alta en esta base (solo lectura): las pantallas que guardan una moneda ofrecen solo las activas.
+$routes->get('api/v1/catalogs/currencies', 'CurrencyCatalogController::index');
 $routes->get('api/v1/catalogs/categories', 'CategoryCatalogController::index');
 $routes->post('api/v1/catalogs/categories', 'CategoryWriteController::create');
 $routes->put('api/v1/catalogs/categories/(:segment)', 'CategoryWriteController::update/$1');

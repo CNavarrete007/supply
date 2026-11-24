@@ -7,6 +7,8 @@ import { analyzeSupplierImport, SUPPLIER_TEMPLATE_HEADERS, supplierIndicators, l
 import { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage, STATUSES as STATUS_OPTS, CURRENCIES as SUP_CURRENCIES, CREDIT_TYPES, LEAD_UNITS } from './form.mjs';
 import { useCatalogAutosave } from '../catalog/useCatalogAutosave';
 import { CatalogWriteStatus } from '../catalog/CatalogWriteStatus';
+import { useCurrencyCodes } from '../catalog/useCurrencies';
+import { currencyChoices } from '../catalog/currencies.mjs';
 
 // Proveedores · diseño Grupo Gerez (4 tarjetas) conectado a MariaDB.
 // Lectura real: /api/v1/catalogs/suppliers[/{id}]. Sin datos de demostración. Alta y edición reales con guardado
@@ -113,6 +115,7 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
   const byName = useMemo(() => [...all.items].sort((a, b) => String(a.name).localeCompare(String(b.name), 'es')), [all.items]);
 
   // ---------- Ficha editable con guardado automático (ver ../catalog/useCatalogAutosave.js) ----------
+  const currencyCodes = useCurrencyCodes(); // monedas dadas de alta en esta base
   const af = useCatalogAutosave({ kind: 'suppliers', ficha, setSelectedId, onSaved: () => setListRev(n => n + 1), notify, tx, en,
     model: { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage },
     text: {
@@ -240,7 +243,7 @@ export function SuppliersCatalog({ onNotify, lang = 'es', language, isEnglish })
           <Field label={tx('Estatus', 'Status')}><select aria-label={tx('Estatus', 'Status')} value={form.status} onChange={e => set('status', e.target.value)} className={inp('status')}>
             {form.legacy.status && <option value={form.legacy.status}>{tx('Valor histórico', 'Historical value')}: {form.legacy.status}</option>}{STATUS_OPTS.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}</select>{form.id && f?.id === form.id && f?.legacy_status && f.legacy_status.toLowerCase() !== translateStatus(f.status, en).toLowerCase() && <p data-testid="legacy-status" className="text-[10px] text-amber-700 mt-1">{tx('Estatus original importado', 'Original imported status')}: {f.legacy_status}</p>}</Field>
           <Field label={tx('Moneda habitual', 'Default currency')}><select aria-label={tx('Moneda habitual', 'Default currency')} value={form.currency} onChange={e => set('currency', e.target.value)} className={inp('currency')}>
-            {!form.currency && <option value="">{tx('Sin moneda registrada', 'No currency recorded')}</option>}{SUP_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}</select></Field>
+            {!form.currency && <option value="">{tx('Sin moneda registrada', 'No currency recorded')}</option>}{currencyChoices(currencyCodes, form.currency, SUP_CURRENCIES).map(c => <option key={c} value={c}>{c}</option>)}</select>{err('currency')}</Field>
           <Field label={tx('Tipo de crédito habitual', 'Default credit type')}><select aria-label={tx('Tipo de crédito habitual', 'Default credit type')} value={form.credit_type} onChange={e => set('credit_type', e.target.value)} className={inp('credit_type')}>
             {!form.credit_type && <option value="">{tx('Sin tipo registrado', 'No type recorded')}</option>}{form.legacy.credit_type && <option value={form.legacy.credit_type}>{tx('Valor histórico', 'Historical value')}: {form.legacy.credit_type}</option>}{CREDIT_TYPES.map(([v, es, e]) => <option key={v} value={v}>{en ? e : es}</option>)}</select></Field>
           <Field label={tx('Días de crédito', 'Credit days')}><input type="number" min="0" max="3650" step="1" aria-label={tx('Días de crédito', 'Credit days')} value={form.credit_days} onChange={e => set('credit_days', e.target.value)} className={inp('credit_days')} />{err('credit_days')}</Field>

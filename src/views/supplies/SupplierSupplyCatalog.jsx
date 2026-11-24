@@ -5,6 +5,8 @@ import { typeLabel, statusKey, statusLabel, STATUS_TONE, leadTime, credit, suppl
 import { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage, TYPES, OTHER_TYPE, CATEGORIES as OFF_CATEGORIES, LEAD_UNITS, CREDIT_TYPES, CURRENCIES as OFF_CURRENCIES, STATUSES as OFF_STATUSES } from './form.mjs';
 import { useCatalogAutosave } from '../catalog/useCatalogAutosave';
 import { CatalogWriteStatus } from '../catalog/CatalogWriteStatus';
+import { useCurrencyCodes } from '../catalog/useCurrencies';
+import { currencyChoices } from '../catalog/currencies.mjs';
 
 // Suministros de proveedores · diseño Grupo Gerez (3 tarjetas) conectado a MariaDB en modo consulta.
 // Fuente: GET /api/v1/catalogs/supplier-offerings (+ /catalogs/suppliers/{id} para condiciones habituales y calificación).
@@ -105,6 +107,7 @@ export function SupplierSupplyCatalog({ lang = 'es', language, isEnglish, onNoti
       .catch(e => { if (!c.signal.aborted) setFicha({ loading: false, error: e, item: null }); });
     return () => c.abort();
   }, [selectedId, revision]);
+  const currencyCodes = useCurrencyCodes(); // monedas dadas de alta en esta base
   const af = useCatalogAutosave({ kind: 'supplier-offerings', ficha, setSelectedId, onSaved: () => setListRev(n => n + 1), notify, tx, en,
     model: { emptyForm, formFromRecord, validateForm, toPayload, payloadSignature, missingRequired, serverField, saveErrorMessage },
     text: {
@@ -194,7 +197,7 @@ export function SupplierSupplyCatalog({ lang = 'es', language, isEnglish, onNoti
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <label className="block"><span className="block text-[11px] font-bold text-slate-700 mb-1">{tx('Moneda', 'Currency')}</span><select aria-label={tx('Moneda', 'Currency')} value={form.currency} onChange={e => set('currency', e.target.value)} className={inp('currency')}>
-            {!form.currency && <option value="">{tx('Sin moneda registrada', 'No currency recorded')}</option>}{OFF_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}</select></label>
+            {!form.currency && <option value="">{tx('Sin moneda registrada', 'No currency recorded')}</option>}{currencyChoices(currencyCodes, form.currency, OFF_CURRENCIES).map(c => <option key={c} value={c}>{c}</option>)}</select>{err('currency')}</label>
           <label className="block"><span className="block text-[11px] font-bold text-slate-700 mb-1">{tx('Pedido mínimo', 'Minimum order')}</span><input type="text" aria-label={tx('Pedido mínimo', 'Minimum order')} value={form.minimum_order} maxLength={255} onChange={e => set('minimum_order', e.target.value)} placeholder={tx('Ej. 10 piezas, 1 lote, $5,000', 'e.g. 10 pieces, 1 lot, $5,000')} className={inp('minimum_order')} /></label>
           <label className="block"><span className="block text-[11px] font-bold text-slate-700 mb-1">{tx('Vigencia de condiciones', 'Terms valid until')}</span><input type="date" aria-label={tx('Vigencia de condiciones', 'Terms valid until')} value={form.valid_until} onChange={e => set('valid_until', e.target.value)} className={inp('valid_until')} />{err('valid_until')}</label>
         </div>

@@ -4,6 +4,7 @@ import { saveDraft } from '../../requisitionApi';
 import { FORMAL, SOURCES, STAGES, TABS, emptyForm, hydrate, payload, draftPayload, fillClient, selectRows, groupRows, amount, priorityLabel, today } from './model.mjs';
 import { Regularization } from './Regularization';
 import { CategoryCatalog } from './CategoryCatalog';
+import { loadCurrencies, currencyChoices } from '../catalog/currencies.mjs';
 import { HistoryRequisition } from './HistoryRequisition';
 import { ChangeControl } from './ChangeControl.jsx'; // extensión explícita: changeControl.mjs existe y Windows no distingue mayúsculas
 import { ChangeRequestModal } from './ChangeRequestModal';
@@ -16,7 +17,7 @@ export class RequisitionRecovery extends React.Component {
  componentDidMount(){this.alive=true;this.load();}
  componentWillUnmount(){this.alive=false;this.requestSerial++;if(this.state.docUrl)URL.revokeObjectURL(this.state.docUrl);}
  notify(message){this.setState({notice:message,error:''});if(typeof this.props.onNotify==='function')this.props.onNotify(message);}
- async load(){try{const [catalog,matrix]=await Promise.all([request('/catalogs'),request('/matrix')]);if(this.alive)this.setState({clients:catalog.clients,categories:catalog.categories,rows:matrix.items,loaded:true,error:''});}catch(e){if(this.alive)this.setState({error:e.message,loaded:false});}}
+ async load(){loadCurrencies().then(c=>{if(this.alive)this.setState({currencies:c});});try{const [catalog,matrix]=await Promise.all([request('/catalogs'),request('/matrix')]);if(this.alive)this.setState({clients:catalog.clients,categories:catalog.categories,rows:matrix.items,loaded:true,error:''});}catch(e){if(this.alive)this.setState({error:e.message,loaded:false});}}
  async refreshRows(){const matrix=await request('/matrix');if(this.alive)this.setState({rows:matrix.items});}
  // Tras guardar o eliminar en Catálogo de categorías: la lista de categorías activas de las partidas se recarga de MariaDB.
  async refreshCategories(){try{const catalog=await request('/catalogs');if(this.alive)this.setState({categories:catalog.categories});}catch(e){if(this.alive)this.setState({error:'No se pudo actualizar la lista de categorías: '+e.message});}}
@@ -104,7 +105,7 @@ export class RequisitionRecovery extends React.Component {
      {this.input('need_date','Fecha requerida *',{type:'date',required:true})}{this.input('delivery_place','Lugar de entrega *',{required:true,span:'span2'})}{this.input('requester_name','Solicitante del cliente *',{required:true,placeholder:'Nombre de la persona solicitante'})}
      <div className="field span2"><label htmlFor="rf1-requester_email">Correo del solicitante *</label><input id="rf1-requester_email" type="email" required={!s.compat} autoComplete="email" placeholder="solicitante@cliente.com" value={f.requester_email} onChange={e=>this.field('requester_email',e.target.value)}/><span className="field-help">Este será el destinatario principal de las comunicaciones del proceso: registro, validación, cotización, compra, recepción, entrega y factura.</span></div>
      {this.input('budget','Presupuesto estimado',{type:'number',min:'0',step:'0.01'})}
-     <div className="field"><label htmlFor="rf1-currency">Moneda</label><select id="rf1-currency" value={f.currency} onChange={e=>this.field('currency',e.target.value)}>{['MXN','USD','EUR'].map(x=><option key={x}>{x}</option>)}</select></div>
+     <div className="field"><label htmlFor="rf1-currency">Moneda</label><select id="rf1-currency" value={f.currency} onChange={e=>this.field('currency',e.target.value)}>{currencyChoices(s.currencies,f.currency).map(x=><option key={x}>{x}</option>)}</select></div>
      <div className="field span2"><label htmlFor="rf1-description">Descripción general</label><textarea id="rf1-description" value={f.description} onChange={e=>this.field('description',e.target.value)}/></div>
     </div>
     <div className="item-builder"><div className="subsection-header" style={{marginBottom:10,paddingBottom:10}}><div><b>Partidas de la requisición</b><p style={{margin:'4px 0 0',fontSize:11,color:'var(--muted)'}}>Cada partida representa un producto, equipo, material o servicio solicitado. En esta etapa no se capturan precios; se registran al recibir la cotización de cada proveedor.</p></div><button type="button" className="btn ghost sm" onClick={()=>this.tab('categorias')}>🏷️ Administrar categorías</button></div>
