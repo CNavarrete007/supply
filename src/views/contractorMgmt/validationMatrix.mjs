@@ -61,7 +61,8 @@ export const deleteLockedText = (x, en = false) => (en
 
 /** "Editar": values for card 1 in edit mode. */
 export const editPreset = x => ({ id: x.id, folio: clean(x.folio), requisition: x.requisition_id, buyer: x.buyer_person_id || '', buyerName: clean(x.buyer), technical: clean(x.technical), contract: clean(x.contract),
-  budget: clean(x.budget), strategy: clean(x.strategy), minQuotes: String(x.min_quotes ?? ''), deadline: clean(x.deadline).slice(0, 10), criteria: clean(x.criteria), notes: clean(x.notes) });
+  budget: clean(x.budget), strategy: clean(x.strategy), minQuotes: String(x.min_quotes ?? ''), deadline: clean(x.deadline).slice(0, 10), criteria: clean(x.criteria), notes: clean(x.notes),
+  version: Number(x.version) || 1, imported: !!x.imported });
 
 /** "Registrar fuente de costo" (sole source): cost per line, currency and the documented source of the cost. */
 export const emptyCostSource = (lines = []) => ({ source: '', notes: '', lines: Object.fromEntries(lines.map(l => [l.line_number, { cost: '', currency: 'MXN' }])) });

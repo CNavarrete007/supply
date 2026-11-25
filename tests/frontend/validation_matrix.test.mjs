@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PAGE_SIZES, initials, matrixChip, buyerCards, matrixRow, deleteBlock, deleteError, deleteLockedText, editPreset, emptyCostSource, validateCostSource, costSourceLockedText, rangeText } from '../../src/views/contractorMgmt/validationMatrix.mjs';
-import { fromPreset, changedFields, editLockedText, validateValidation } from '../../src/views/contractorMgmt/validationForm.mjs';
+import { fromPreset, changedFields, validateValidation } from '../../src/views/contractorMgmt/validationForm.mjs';
 
 // Fila sintética con la forma de GET /api/v1/contractor-management/validations.
 const X = { id: 'v1', folio: 'SCI-2026-0006', requisition_id: 'r1', requisition: '19900001263', client_reference: 'CR-1', internal_reference: 'TRS-0141', client_name: 'Ejemplo 1', buyer: 'Karla Barbosa Castellanos',
@@ -39,9 +39,9 @@ test('eliminar: importada o vigente con documentos posteriores se conserva; si n
   assert.match(deleteLockedText(X), /^Datos validados, pero no se eliminó SCI-2026-0006/);
 });
 
-test('editar: precarga, cambios detectados y guardar no escribe', () => {
+test('editar: precarga (con versión e importada), cambios detectados', () => {
   const p = editPreset(X);
-  assert.deepEqual(p, { id: 'v1', folio: 'SCI-2026-0006', requisition: 'r1', buyer: 'p1', buyerName: 'Karla Barbosa Castellanos', technical: 'Conforme', contract: 'Conforme', budget: 'Parcial', strategy: 'Fuente única justificada', minQuotes: '1', deadline: '2026-11-10', criteria: 'Precio', notes: 'Distribuidor exclusivo' });
+  assert.deepEqual(p, { id: 'v1', folio: 'SCI-2026-0006', requisition: 'r1', buyer: 'p1', buyerName: 'Karla Barbosa Castellanos', technical: 'Conforme', contract: 'Conforme', budget: 'Parcial', strategy: 'Fuente única justificada', minQuotes: '1', deadline: '2026-11-10', criteria: 'Precio', notes: 'Distribuidor exclusivo', version: 1, imported: false });
   const f = fromPreset(p);
   const ctx = { today: '2026-11-19', buyers: [], edit: p };
   assert.match(validateValidation(f, ctx).errors.changes, /Sin cambios por guardar/);
@@ -50,7 +50,7 @@ test('editar: precarga, cambios detectados y guardar no escribe', () => {
   assert.deepEqual(changedFields(g, p), ['presupuesto', 'observaciones']);
   assert.equal(validateValidation(g, ctx).ok, true, validateValidation(g, ctx).first);
   assert.match(validateValidation({ ...g, deadline: '2026-11-11' }, ctx).errors.deadline, /anterior a hoy/, 'cambiarla a otra fecha pasada sí se rechaza');
-  assert.match(editLockedText(g, p), /^Datos validados, pero no se guardaron los cambios de SCI-2026-0006 \(presupuesto, observaciones\): editar validaciones internas es una escritura bloqueada/);
+  assert.equal(p.imported, false); assert.equal(p.version, 1); // la edición real usa la versión (If-Match) y bloquea las importadas
   assert.ok(!validateValidation(g, { ...ctx, reviews: [{}] }).warnings.some(w => /nuevo folio interno/.test(w)), 'al editar no se genera un folio nuevo');
 });
 

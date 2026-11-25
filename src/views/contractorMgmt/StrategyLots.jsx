@@ -1,13 +1,17 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Lock, Loader2, AlertCircle } from 'lucide-react';
-import { strategySetup, strategyRequisition } from './api';
+import { strategySetup, strategyRequisition, saveStrategy } from './api';
+import { MgmtWriteStatus } from './MgmtWriteStatus.jsx';
 import { ITEM_STRATEGIES, NO_RFQ, isAuthorized, isAssignable, statusLabel, routeOf, requisitionOptions, initialState, autoGroup, addLot, refreshSuggestions, setItem, setLot, toggleSupplier,
-  selectSuggested, addSupplier, removeLot, rfqsByLot, lotView, strategyStats, validateStrategy, strategyLockedText, nextRfq, nextRfqText } from './strategyModel.mjs';
+  selectSuggested, addSupplier, removeLot, rfqsByLot, lotView, strategyStats, validateStrategy, strategyPayload, strategySavedText, strategySaveError, nextRfq, nextRfqText } from './strategyModel.mjs';
 import { useLoad } from '../reception/useLoad.js';
 
 // Gestión del Contratista · tarjeta 2 "Estrategia y lotificación de abastecimiento" (diseño Grupo Gerez), conectada a
 // MariaDB en modo lectura: requisiciones con validación vigente, partidas, plan de lotificación registrado, RFQ por lote y
-// catálogo de proveedores (sugerencias por categoría y suministros). Guardar estrategia y abrir RFQ no escriben.
+// catálogo de proveedores (sugerencias por categoría y suministros). «Guardar estrategia» guarda el plan como versión nueva
+// (cuenta mgmtwrite; CSRF, Idempotency-Key e If-Match = versión vigente). «Abrir siguiente RFQ» sigue sin escribir.
+const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
+  : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 const DASH = '—';
 
 export function StrategyLots({ en = false, notify = () => {}, onGo, onNavigate, startRequisition = '' }) {
@@ -15,11 +19,14 @@ export function StrategyLots({ en = false, notify = () => {}, onGo, onNavigate, 
   const [reqId, setReqId] = useState(startRequisition || '');
   const [st, setSt] = useState(null);
   const [tried, setTried] = useState(false); const [msg, setMsg] = useState(null); const [pick, setPick] = useState({});
-  const setup = useLoad(s => strategySetup(s), []);
-  const detail = useLoad(s => strategyRequisition(reqId, s), [reqId], !!reqId);
+  const [rev, setRev] = useState(0); const [saving, setSaving] = useState(false);
+  const pending = useRef(null); // { sig, key }: retrying the SAME save reuses its Idempotency-Key (no second version)
+  const afterReload = useRef(null); // message to show once the saved plan is reloaded
+  const setup = useLoad(s => strategySetup(s), [rev]);
+  const detail = useLoad(s => strategyRequisition(reqId, s), [reqId, rev], !!reqId);
   const d = detail.status === 'ready' && detail.data?.item?.id === reqId ? detail.data : null;
   const suppliers = setup.data?.suppliers || [];
-  useEffect(() => { if (d && setup.data) { setSt(initialState(d, suppliers)); setTried(false); setMsg(null); setPick({}); } }, [d, setup.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (d && setup.data) { setSt(initialState(d, suppliers)); setTried(false); setMsg(afterReload.current); afterReload.current = null; setPick({}); } }, [d, setup.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const items = d?.items || [];
   const rfqs = useMemo(() => rfqsByLot(d), [d]);
   const ready = d && st;
@@ -28,17 +35,35 @@ export function StrategyLots({ en = false, notify = () => {}, onGo, onNavigate, 
   const up = next => { setSt(next); setMsg(null); };
   const supName = id => suppliers.find(s => s.id === id)?.name || id;
 
-  const save = andNext => {
+  const save = async andNext => {
+    if (saving) return;
     setTried(true);
     if (!ready) { setMsg({ kind: 'error', text: tx('Selecciona una requisición validada.', 'Select a validated requisition.') }); return; }
     if (!v.ok) { setMsg({ kind: 'error', text: v.first }); return; }
-    let text = strategyLockedText(st, d, en);
+    const data = strategyPayload(st, d);
+    const version = d.plan?.version ?? 0;
+    const sig = JSON.stringify([reqId, version, data]);
+    if (!pending.current || pending.current.sig !== sig) pending.current = { sig, key: newKey() };
+    let next = '';
     if (andNext) {
       const lot = st.lots.find(l => nextRfq(st, l.key, { detail: d, suppliers }, en).supplier);
-      if (lot) text += ` ${nextRfqText(nextRfq(st, lot.key, { detail: d, suppliers }, en), d.item.folio, en)}`;
-      else text += tx(' No hay RFQ pendientes por abrir.', ' There are no pending RFQs to open.');
+      next = lot ? ` ${nextRfqText(nextRfq(st, lot.key, { detail: d, suppliers }, en), d.item.folio, en)}` : tx(' No hay RFQ pendientes por abrir.', ' There are no pending RFQs to open.');
     }
-    setMsg({ kind: 'locked', text, rfq: andNext }); notify(tx('Estrategia no registrada', 'Strategy not recorded'), text, 'warning');
+    setSaving(true); setMsg({ kind: 'info', text: tx('Guardando en MariaDB…', 'Saving to MariaDB…') });
+    let r;
+    try { r = await saveStrategy({ requisition: reqId, version, data, key: pending.current.key }); } catch { r = { ok: false, status: 0, data: {} }; } finally { setSaving(false); }
+    if (r.ok) {
+      pending.current = null;
+      const text = strategySavedText(r.data, en) + next;
+      afterReload.current = { kind: 'ok', text, rfq: andNext };
+      notify(tx('Estrategia guardada', 'Strategy saved'), text, 'success');
+      setRev(x => x + 1);
+      return;
+    }
+    const e = strategySaveError(r.status, r.data, en);
+    if (!e.retry) pending.current = null;
+    if (e.reload) { afterReload.current = { kind: e.kind, text: e.text }; setRev(x => x + 1); } else setMsg({ kind: e.kind, text: e.text });
+    notify(tx('Estrategia no guardada', 'Strategy not saved'), e.text, 'warning');
   };
   const openNext = key => {
     const n = nextRfq(st, key, { detail: d, suppliers }, en);
@@ -56,6 +81,7 @@ export function StrategyLots({ en = false, notify = () => {}, onGo, onNavigate, 
       <span className="text-[10.5px] font-black text-purple-900 bg-purple-100/80 border border-purple-200 rounded-full px-3 py-1 shrink-0">{tx('Paso 3 · Abastecimiento por partida', 'Step 3 · Sourcing per line')}</span>
     </div>
     <div data-testid="strategy-stepper" className="grid grid-cols-1 sm:grid-cols-5 gap-2 items-stretch">{steps.map((s, n) => { const done = n < 2; const cur = n === 2; return <div key={s} className={`flex items-center gap-2.5 px-3 py-3 rounded-2xl border text-xs font-black ${done ? 'bg-emerald-50/70 border-emerald-200 text-slate-900' : cur ? 'bg-purple-50 border-purple-300 text-slate-900 ring-1 ring-purple-200' : 'bg-white border-slate-200 text-slate-800'}`}><span className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] shrink-0 ${done ? 'bg-emerald-600 text-white' : cur ? 'bg-purple-600 text-white' : 'bg-slate-200 text-slate-700'}`}>{n + 1}</span>{s}</div>; })}</div>
+    <MgmtWriteStatus en={en} />
     {setup.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p>}
     {setup.error && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{setup.error.message}</p>}
 
@@ -112,10 +138,10 @@ export function StrategyLots({ en = false, notify = () => {}, onGo, onNavigate, 
         {tried && v.ok && v.warnings.map(w => <p key={w} className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900">{w}</p>)}
       </>}
 
-    {msg && <div role={msg.kind === 'error' ? 'alert' : 'status'} data-testid="strategy-msg" className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${msg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span className="min-w-0">{msg.text}{msg.rfq && onNavigate && <span className="block mt-2 text-[11px] font-black"><button type="button" onClick={() => onNavigate('quotes')} className="px-3 py-1.5 bg-white border border-amber-300 hover:bg-amber-100 rounded-lg">{tx('Ir a Cotizaciones → Solicitud a proveedores (RFQ)', 'Go to Quotes → Supplier request (RFQ)')}</button></span>}</span></div>}
+    {msg && <div role={msg.kind === 'error' ? 'alert' : 'status'} data-testid="strategy-msg" data-kind={msg.kind} className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${{ ok: 'bg-emerald-50 border-emerald-200 text-emerald-900', info: 'bg-blue-50 border-blue-200 text-blue-900', warn: 'bg-amber-50 border-amber-200 text-amber-900', locked: 'bg-amber-50 border-amber-200 text-amber-900' }[msg.kind] || 'bg-rose-50 border-rose-200 text-rose-800'}`}>{msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}{msg.kind === 'info' && <Loader2 className="w-4 h-4 shrink-0 mt-0.5 animate-spin" />}<span className="min-w-0">{msg.text}{msg.rfq && onNavigate && <span className="block mt-2 text-[11px] font-black"><button type="button" onClick={() => onNavigate('quotes')} className="px-3 py-1.5 bg-white border border-amber-300 hover:bg-amber-100 rounded-lg">{tx('Ir a Cotizaciones → Solicitud a proveedores (RFQ)', 'Go to Quotes → Supplier request (RFQ)')}</button></span>}</span></div>}
     <div className="flex flex-wrap gap-3 pt-1 text-sm font-black">
-      <button type="button" onClick={() => save(false)} className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">💾</span>{tx('Guardar estrategia', 'Save strategy')}</button>
-      <button type="button" onClick={() => save(true)} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">💾</span>{tx('Guardar y abrir siguiente RFQ →', 'Save and open next RFQ →')}</button>
+      <button type="button" onClick={() => save(false)} disabled={saving} className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2 disabled:opacity-60"><span aria-hidden="true">{saving ? '⏳' : '💾'}</span>{tx('Guardar estrategia', 'Save strategy')}</button>
+      <button type="button" onClick={() => save(true)} disabled={saving} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2 disabled:opacity-60"><span aria-hidden="true">💾</span>{tx('Guardar y abrir siguiente RFQ →', 'Save and open next RFQ →')}</button>
       <button type="button" onClick={() => onGo?.('matrix', tx('Matriz de validaciones', 'Validation Matrix'))} className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl flex items-center gap-2"><span aria-hidden="true">📋</span>{tx('Ver validaciones', 'View validations')}</button>
     </div>
   </div>;

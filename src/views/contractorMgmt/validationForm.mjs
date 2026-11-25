@@ -1,8 +1,9 @@
 // Gestión del Contratista · tarjeta 1 "Registro de validación" · lógica pura (sin red).
 // Datos: GET /api/v1/contractor-management/validation-setup (requisiciones y responsables de compras = personal activo del
 // contratista) y GET /api/v1/contractor-management/requisitions/{id} (contexto y validaciones registradas en
-// requisition_reviews). Registrar la validación es una escritura sin endpoint: el formulario se valida por completo y
-// "Guardar validación" informa que no se guardó.
+// requisition_reviews). Desde el 25 nov 2026 «Guardar validación» registra la validación (POST /validations, folio SCI automático)
+// y «Guardar cambios» edita una registrada en SupplyFlow (PUT /validations/{id} con If-Match); las importadas no se editan.
+import { mgmtConfigErrorText } from './writeStatus.mjs';
 
 export const TECH_RESULTS = [['Pendiente', 'Pending'], ['Conforme', 'Compliant'], ['Con observaciones', 'With observations'], ['No conforme', 'Non-compliant']];
 export const CONTRACT_RESULTS = TECH_RESULTS;
@@ -68,10 +69,11 @@ const FIELDS = [['requisition', 'requisición', 'requisition'], ['buyer', 'respo
 /** Fields changed against the registered validation (labels). */
 export const changedFields = (f, p, en = false) => FIELDS.filter(([k]) => clean(f[k]) !== clean(fromPreset(p)[k])).map(([, es, e]) => (en ? e : es));
 
-/** Message after a valid edit: nothing is written. */
-export const editLockedText = (f, p, en = false) => (en
-  ? `Data validated, but the changes to ${clean(p.folio)} were not saved (${changedFields(f, p, en).join(', ')}): editing internal validations is a write blocked until authorized.`
-  : `Datos validados, pero no se guardaron los cambios de ${clean(p.folio)} (${changedFields(f, p, en).join(', ')}): editar validaciones internas es una escritura bloqueada hasta su autorización.`);
+/** Why an imported validation cannot be edited ('' when it can). */
+export const importedEditBlock = (p, en = false) => (p?.imported
+  ? (en ? `${clean(p.folio)} was imported from the original system and is kept as a record: register a new validation for the requisition instead.`
+    : `${clean(p.folio)} es una validación importada del sistema original y se conserva como expediente: registra una nueva validación para la requisición.`)
+  : '');
 
 /** { ok, errors, warnings, first, canQuote }. ctx: { req (detail item), reviews, today, buyers, edit (preset of the registered validation) }. */
 export function validateValidation(f, { req = null, reviews = [], today = '', buyers = [], edit = null } = {}, en = false) {
@@ -109,14 +111,40 @@ export function validateValidation(f, { req = null, reviews = [], today = '', bu
   return { ok: !keys.length, errors, warnings, first: keys.length ? errors[keys[0]] : '', canQuote: ok };
 }
 
-/** Message after a valid "Guardar validación": nothing is written. */
-export function validationLockedText(f, req, buyerName, en = false) {
+/** Body of POST /validations (and PUT /validations/{id}, where the requisition is fixed). */
+export const reviewPayload = f => ({ requisition_id: f.requisition, buyer_id: f.buyer, technical: f.technical, contract: f.contract, budget: f.budget, strategy: f.strategy,
+  min_quotes: clean(f.minQuotes), deadline: clean(f.deadline), criteria: clean(f.criteria), notes: clean(f.notes) });
+
+/** Message after a confirmed save. */
+export function reviewSavedText(out, req, f, buyerName, en = false) {
   const parts = en
-    ? [`technical ${tr(TECH_RESULTS, f.technical, en).toLowerCase()}`, `contractual ${tr(CONTRACT_RESULTS, f.contract, en).toLowerCase()}`, `budget ${tr(BUDGET_RESULTS, f.budget, en).toLowerCase()}`, tr(STRATEGIES, f.strategy, en).toLowerCase(), `${Number(f.minQuotes)} quote(s)`, `manager ${buyerName}`, canQuote(f) ? 'can quote' : 'blocked for quoting']
-    : [`técnica ${f.technical.toLowerCase()}`, `contractual ${f.contract.toLowerCase()}`, `presupuesto ${f.budget.toLowerCase()}`, f.strategy.toLowerCase(), `${Number(f.minQuotes)} cotización(es)`, `responsable ${buyerName}`, canQuote(f) ? 'puede cotizar' : 'bloqueada para cotizar'];
+    ? [`technical ${tr(TECH_RESULTS, f.technical, en).toLowerCase()}`, `contractual ${tr(CONTRACT_RESULTS, f.contract, en).toLowerCase()}`, `budget ${tr(BUDGET_RESULTS, f.budget, en).toLowerCase()}`, tr(STRATEGIES, f.strategy, en).toLowerCase(), `${Number(f.minQuotes)} quote(s)`, `manager ${buyerName}`, out.can_quote ? 'can quote' : 'blocked for quoting']
+    : [`técnica ${f.technical.toLowerCase()}`, `contractual ${f.contract.toLowerCase()}`, `presupuesto ${f.budget.toLowerCase()}`, f.strategy.toLowerCase(), `${Number(f.minQuotes)} cotización(es)`, `responsable ${buyerName}`, out.can_quote ? 'puede cotizar' : 'bloqueada para cotizar'];
+  if (Array.isArray(out.changed)) {
+    const labels = FIELDS.filter(([k]) => out.changed.includes(SERVER_FIELD[k] || k)).map(([, es, e]) => (en ? e : es));
+    return out.changed.length
+      ? (en ? `Changes to ${clean(out.folio)} saved to MariaDB (${labels.join(', ')}); version ${out.version}.` : `Cambios de ${clean(out.folio)} guardados en MariaDB (${labels.join(', ')}); versión ${out.version}.`)
+      : (en ? 'No changes to save.' : 'No había cambios por guardar.');
+  }
   return en
-    ? `Data validated, but the internal validation of ${clean(req?.folio)} was not saved (${parts.join(', ')}): recording internal validations is a write blocked until authorized.`
-    : `Datos validados, pero no se guardó la validación interna de ${clean(req?.folio)} (${parts.join(', ')}): registrar validaciones internas es una escritura bloqueada hasta su autorización.`;
+    ? `Internal validation ${clean(out.folio)} of ${clean(req?.folio || out.requisition)} saved to MariaDB (${parts.join(', ')}).`
+    : `Validación interna ${clean(out.folio)} de ${clean(req?.folio || out.requisition)} guardada en MariaDB (${parts.join(', ')}).`;
+}
+const SERVER_FIELD = { buyer: 'buyer', minQuotes: 'min_quotes' };
+const FORM_FIELD = { requisition_id: 'requisition', buyer_id: 'buyer', min_quotes: 'minQuotes', technical: 'technical', contract: 'contract', budget: 'budget', strategy: 'strategy', deadline: 'deadline', criteria: 'criteria', notes: 'notes' };
+
+/** Server error → { kind: error|warn, text, field (form key), retry }. */
+export function reviewSaveError(status, body, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const code = body?.error?.code; const message = body?.error?.message; const field = FORM_FIELD[body?.error?.field] || null;
+  if (!status) return { kind: 'error', text: m('No se confirmó el guardado (sin respuesta del servidor). Presiona Guardar otra vez: se repite la misma operación sin duplicarla.', 'The save was not confirmed. Press Save again: the same operation is repeated without duplicating it.'), retry: true };
+  if (status === 401) return { kind: 'error', text: m('Tu sesión expiró. Inicia sesión nuevamente; no se guardó nada.', 'Your session expired; nothing was saved.') };
+  if (status === 403) return { kind: 'error', text: code === 'CSRF_INVALID' ? m('La sesión de seguridad cambió. Vuelve a intentarlo.', 'The security token changed. Try again.') : m('Solo un Master Admin puede registrar validaciones.', 'Only a Master Admin can record validations.') };
+  const cfg = mgmtConfigErrorText(code, en); if (cfg) return { kind: 'warn', text: cfg };
+  if (status === 412) return { kind: 'warn', text: m('Otra persona modificó la validación. Ciérrala y vuelve a abrirla desde la matriz.', 'Someone else changed the validation. Reopen it from the matrix.') };
+  if (status === 422) return { kind: 'error', text: code === 'BUYER_UNAVAILABLE' ? message : m('Revisa el campo marcado: el servidor no lo aceptó.', 'Check the highlighted field.'), field };
+  if (status === 404 || status === 409) return { kind: 'error', text: message || m('No se pudo guardar.', 'Could not save.') };
+  return { kind: 'error', text: m(`No se confirmó el guardado (${message || 'error del servidor'}). Presiona Guardar otra vez: se repite la misma operación sin duplicarla.`, 'The save was not confirmed. Press Save again.'), retry: true };
 }
 
 /** "Siguiente paso": only when the captured validation lets the requisition move to quoting. '' = can continue. */

@@ -101,6 +101,10 @@ if (Test-Path -LiteralPath (Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets
 if (Test-Path -LiteralPath (Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets\useradmin-db-password.txt') -PathType Leaf) {
   $files += 'compose.supply-useradmin.yml'
 }
+# Gestión del Contratista (cuenta mgmtwrite: validación interna y estrategia/lotificación): igual, solo si existe su secreto.
+if (Test-Path -LiteralPath (Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets\mgmtwrite-db-password.txt') -PathType Leaf) {
+  $files += 'compose.supply-mgmtwrite.yml'
+}
 $compose = @('compose','-p','supply','--project-directory',$root)
 foreach ($file in $files) {
   $path = Join-Path $root $file

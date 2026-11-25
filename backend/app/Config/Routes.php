@@ -70,6 +70,11 @@ $routes->get('api/v1/contractor-management/strategy-setup', 'ContractorManagemen
 $routes->get('api/v1/contractor-management/strategy/(:segment)', 'ContractorManagementController::strategyRequisition/$1');
 $routes->get('api/v1/contractor-management/validations', 'ContractorManagementController::validations');
 $routes->get('api/v1/contractor-management/rules', 'ContractorManagementController::rules');
+// Gestión del Contratista · escrituras (cuenta supplyflow_mgmtwrite_local, overlay compose.supply-mgmtwrite.yml; 25 nov 2026).
+$routes->get('api/v1/contractor-management/write-status', 'ContractorMgmtWriteController::writeStatus');
+$routes->post('api/v1/contractor-management/validations', 'ContractorMgmtWriteController::createReview');
+$routes->put('api/v1/contractor-management/validations/(:segment)', 'ContractorMgmtWriteController::updateReview/$1');
+$routes->put('api/v1/contractor-management/strategy/(:segment)', 'ContractorMgmtWriteController::saveStrategy/$1');
 // Requisiciones › Control de cambios: historial y candidatos (solo lectura, cuenta API SELECT).
 $routes->get('api/v1/requisition-changes', 'RequisitionChangeReadController::overview');
 $routes->get('api/v1/requisition-changes/candidates', 'RequisitionChangeReadController::candidates');

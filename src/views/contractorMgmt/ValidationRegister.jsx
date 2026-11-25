@@ -1,12 +1,16 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Lock, Loader2, AlertCircle } from 'lucide-react';
-import { validationSetup, validationRequisition } from './api';
-import { TECH_RESULTS, CONTRACT_RESULTS, BUDGET_RESULTS, STRATEGIES, emptyValidation, clearKeepingRequisition, canQuote, blockReasons, requisitionOptions, buyerOptions, validateValidation, validationLockedText, nextStepBlock, fromPreset, editLockedText } from './validationForm.mjs';
+import { validationSetup, validationRequisition, createReview, updateReview } from './api';
+import { MgmtWriteStatus } from './MgmtWriteStatus.jsx';
+import { TECH_RESULTS, CONTRACT_RESULTS, BUDGET_RESULTS, STRATEGIES, emptyValidation, clearKeepingRequisition, canQuote, blockReasons, requisitionOptions, buyerOptions, validateValidation, reviewPayload, reviewSavedText, reviewSaveError, importedEditBlock, nextStepBlock, fromPreset } from './validationForm.mjs';
 import { useLoad } from '../reception/useLoad.js';
 
 // Gestión del Contratista · tarjeta 1 "Registro de validación" (diseño Grupo Gerez) conectada a MariaDB en modo lectura.
 // Requisiciones, responsables de compras (personal del contratista activo) y contexto con las validaciones registradas
-// (requisition_reviews). "Guardar validación" valida todo y no escribe: registrar validaciones sigue bloqueado.
+// (requisition_reviews). «Guardar validación» la registra en MariaDB (folio SCI automático) y «Guardar cambios» edita una
+// registrada en SupplyFlow (las importadas se conservan). Cuenta mgmtwrite; CSRF, Idempotency-Key e If-Match.
+const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
+  : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 const DASH = '—';
 const ymd = v => (v ? String(v).slice(0, 10) : DASH);
 const money = (v, cur) => (v === null || v === undefined ? DASH : `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur || ''}`.trim());
@@ -16,20 +20,47 @@ export function ValidationRegister({ en = false, notify = () => {}, onGo, edit =
   const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
   const [f, setF] = useState(() => (edit ? fromPreset(edit) : { ...emptyValidation(), requisition: startRequisition || '' }));
   const [tried, setTried] = useState(false); const [msg, setMsg] = useState(null);
-  const setup = useLoad(s => validationSetup(s), []);
-  const detail = useLoad(s => validationRequisition(f.requisition, s), [f.requisition], !!f.requisition);
+  const [rev, setRev] = useState(0); const [saving, setSaving] = useState(false); const [srvErr, setSrvErr] = useState({});
+  const [base, setBase] = useState(edit); // registered validation being edited (updated after each confirmed save)
+  const pending = useRef(null); // { sig, key }: retrying the SAME save reuses its Idempotency-Key
+  const setup = useLoad(s => validationSetup(s), [rev]);
+  const detail = useLoad(s => validationRequisition(f.requisition, s), [f.requisition, rev], !!f.requisition);
   const d = detail.status === 'ready' && detail.data?.item?.id === f.requisition ? detail.data : null;
   const buyers = setup.data?.buyers || [];
-  const v = useMemo(() => validateValidation(f, { req: d?.item || null, reviews: d?.reviews || [], today, buyers, edit }, en), [f, d, today, buyers, edit, en]);
-  const err = k => (tried ? v.errors[k] : '');
-  const set = (k, val) => { setF(x => ({ ...x, [k]: val })); setMsg(null); };
+  const v = useMemo(() => validateValidation(f, { req: d?.item || null, reviews: d?.reviews || [], today, buyers, edit: base }, en), [f, d, today, buyers, base, en]);
+  const err = k => (tried ? v.errors[k] : '') || srvErr[k] || '';
+  const set = (k, val) => { setF(x => ({ ...x, [k]: val })); setMsg(null); setSrvErr(x => (x[k] ? { ...x, [k]: '' } : x)); };
+  const locked = base ? importedEditBlock(base, en) : '';
 
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     setTried(true);
+    if (locked) { setMsg({ kind: 'error', text: locked }); return; }
     if (!v.ok) { setMsg({ kind: 'error', text: v.first }); return; }
     const b = buyers.find(x => x.id === f.buyer);
-    const text = edit ? editLockedText(f, edit, en) : validationLockedText(f, d?.item || setup.data?.requisitions?.find(r => r.id === f.requisition), b?.name || DASH, en);
-    setMsg({ kind: 'locked', text }); notify(edit ? tx('Cambios no registrados', 'Changes not recorded') : tx('Validación no registrada', 'Validation not recorded'), text, 'warning');
+    const req = d?.item || setup.data?.requisitions?.find(r => r.id === f.requisition);
+    const data = reviewPayload(f);
+    const sig = JSON.stringify([base?.id || '', base?.version || 0, data]);
+    if (!pending.current || pending.current.sig !== sig) pending.current = { sig, key: newKey() };
+    setSaving(true); setSrvErr({}); setMsg({ kind: 'info', text: tx('Guardando en MariaDB…', 'Saving to MariaDB…') });
+    let r;
+    try { r = base ? await updateReview({ id: base.id, version: base.version, data, key: pending.current.key }) : await createReview({ data, key: pending.current.key }); }
+    catch { r = { ok: false, status: 0, data: {} }; }
+    finally { setSaving(false); }
+    if (r.ok) {
+      pending.current = null;
+      const text = reviewSavedText(r.data, req, f, b?.name || base?.buyerName || DASH, en);
+      setMsg({ kind: 'ok', text }); notify(base ? tx('Cambios guardados', 'Changes saved') : tx('Validación registrada', 'Validation recorded'), text, 'success');
+      if (base) setBase({ ...base, ...f, buyerName: b?.name || base.buyerName, version: r.data.version });
+      else { setF(emptyValidation()); setTried(false); }
+      setRev(x => x + 1);
+      return;
+    }
+    const e = reviewSaveError(r.status, r.data, en);
+    if (!e.retry) pending.current = null;
+    if (e.field) setSrvErr({ [e.field]: e.text });
+    setMsg({ kind: e.kind, text: e.text });
+    notify(tx('Validación no guardada', 'Validation not saved'), e.text, 'warning');
   };
   const next = () => {
     const block = nextStepBlock(f, en);
@@ -51,6 +82,8 @@ export function ValidationRegister({ en = false, notify = () => {}, onGo, edit =
     </div>
     {edit ? <div data-testid="validation-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-purple-200 bg-purple-50/60 text-xs font-black text-purple-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-purple-300 to-purple-600 shadow-inner shrink-0" />{tx(`Modo edición activo: ${edit.folio}. Modifica la información y presiona Guardar; "+ Nueva validación" sale de la edición.`, `Edit mode active: ${edit.folio}. Change the information and press Save; "+ New validation" leaves edit mode.`)}{!edit.buyer && edit.buyerName && <span className="font-semibold text-purple-800"> {tx('Responsable registrado', 'Recorded manager')}: {edit.buyerName}.</span>}</div>
       : <div data-testid="validation-mode" className="flex items-center gap-3 p-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 text-xs font-black text-emerald-900"><span className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-300 to-emerald-600 shadow-inner shrink-0" />{tx('Modo nueva captura activo. Completa la información y presiona Guardar. Al terminar, el formulario se limpiará y bloqueará.', 'New capture mode active. Fill in the information and press Save. When finished, the form will be cleared and locked.')}</div>}
+    <MgmtWriteStatus en={en} />
+    {locked && <p role="alert" data-testid="validation-imported" className="p-3 rounded-xl border border-amber-300 bg-amber-50 text-xs text-amber-900">{locked}</p>}
     {setup.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p>}
     {setup.error && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{setup.error.message}</p>}
 
@@ -90,12 +123,12 @@ export function ValidationRegister({ en = false, notify = () => {}, onGo, edit =
 
     {f.requisition && <div data-testid="validation-verdict" className={`p-3 rounded-xl border text-xs font-semibold ${v.canQuote ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{tx('Con esta captura, ¿puede pasar a cotización?', 'With this capture, can it move to quoting?')} <strong>{v.canQuote ? tx('Sí', 'Yes') : `${tx('No', 'No')} (${blockReasons(f, en)})`}</strong></div>}
     {tried && v.ok && v.warnings.map(w => <p key={w} className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">⚠ {w}</p>)}
-    {msg && <p role={msg.kind === 'error' ? 'alert' : 'status'} data-testid="validation-save-msg" className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${msg.kind === 'locked' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>{msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}<span>{msg.text}</span></p>}
+    {msg && <p role={msg.kind === 'error' ? 'alert' : 'status'} data-testid="validation-save-msg" data-kind={msg.kind} className={`flex items-start gap-2 p-3 rounded-xl border text-xs ${{ ok: 'bg-emerald-50 border-emerald-200 text-emerald-900', info: 'bg-blue-50 border-blue-200 text-blue-900', warn: 'bg-amber-50 border-amber-200 text-amber-900', locked: 'bg-amber-50 border-amber-200 text-amber-900' }[msg.kind] || 'bg-rose-50 border-rose-200 text-rose-800'}`}>{msg.kind === 'locked' && <Lock className="w-4 h-4 shrink-0 mt-0.5" />}{msg.kind === 'info' && <Loader2 className="w-4 h-4 shrink-0 mt-0.5 animate-spin" />}<span>{msg.text}</span></p>}
     <div className="flex flex-wrap gap-3 pt-1 text-sm font-black">
       <button type="button" onClick={() => { if (edit) { onExitEdit?.(); return; } setF(emptyValidation()); setTried(false); setMsg(null); }} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2">+ {tx('Nueva validación', 'New validation')}</button>
-      <button type="button" onClick={save} className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">💾</span>{edit ? tx('Guardar cambios', 'Save changes') : tx('Guardar validación', 'Save validation')}</button>
+      <button type="button" onClick={save} disabled={saving || !!locked} className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2 disabled:opacity-60"><span aria-hidden="true">{saving ? '⏳' : '💾'}</span>{edit ? tx('Guardar cambios', 'Save changes') : tx('Guardar validación', 'Save validation')}</button>
       <button type="button" onClick={next} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">➡</span>{tx('Siguiente paso', 'Next step')}</button>
-      <button type="button" onClick={() => { setF(x => (edit ? fromPreset(edit) : clearKeepingRequisition(x))); setTried(false); setMsg(null); }} className="px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm flex items-center gap-2"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
+      <button type="button" onClick={() => { setF(x => (base ? fromPreset(base) : clearKeepingRequisition(x))); setTried(false); setMsg(null); setSrvErr({}); pending.current = null; }} className="px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm flex items-center gap-2"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
       <button type="button" onClick={() => onGo?.('matrix', tx('Matriz de validaciones', 'Validation Matrix'))} className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 rounded-xl flex items-center gap-2"><span aria-hidden="true">📋</span>{tx('Ver matriz', 'View matrix')}</button>
     </div>
   </div>;

@@ -18,6 +18,10 @@
 > **Actualización del 25 nov.** `POST /api/v1/recovery/requisitions/from-history` (`RequisitionRecoveryController::createFromHistory`,
 > `RequisitionHistoryInput`; cuenta `recovery`, sin permisos nuevos). Mapa: **122 rutas, 88 clases PHP, 0 problemas.**
 >
+> **Actualización del 25 nov, tarde.** Gestión del Contratista guarda: `GET write-status`, `POST`/`PUT validations` y `PUT strategy/{id}`
+> (`ContractorMgmtWriteController`, `ContractorMgmtInput`, `ContractorMgmtWriteRepository`; cuenta `mgmtwrite`). El mapa ahora también
+> verifica los permisos SQL de las cuentas `useradmin` y `mgmtwrite`: **129 rutas, 94 clases PHP, 142 archivos de interfaz, 0 problemas.**
+>
 > **Actualización del 25 nov, tarde.** Gestión de acceso: `GET /api/v1/users/access-status`, `POST /api/v1/users/{id}/access`
 > (`UserAccessController`, `UserAccessRepository`, `UserAccessInput`; cuenta nueva `useradmin`) y `POST /api/v1/auth/password/change`
 > (`AuthController::changePassword`). Mapa: **125 rutas, 91 clases PHP, 0 problemas.**

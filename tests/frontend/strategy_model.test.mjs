@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ITEM_STRATEGIES, NO_RFQ, isAuthorized, isAssignable, statusLabel, routeOf, requisitionOptions, suggestedFor, defaultStrategy, initialState, autoGroup, addLot, refreshSuggestions,
-  setItem, setLot, toggleSupplier, selectSuggested, addSupplier, removeLot, rfqsByLot, lotView, strategyStats, validateStrategy, strategyLockedText, nextRfq, nextRfqText } from '../../src/views/contractorMgmt/strategyModel.mjs';
+  setItem, setLot, toggleSupplier, selectSuggested, addSupplier, removeLot, rfqsByLot, lotView, strategyStats, validateStrategy, strategyPayload, strategySavedText, strategySaveError, nextRfq, nextRfqText } from '../../src/views/contractorMgmt/strategyModel.mjs';
 
 // Catálogo y detalle sintéticos con la forma de GET /strategy-setup y /strategy/{id}.
 const SUP = [
@@ -110,14 +110,25 @@ test('validación: requisición, mínimos, lotes, proveedores y advertencias del
   assert.ok(validateStrategy(addLot(initialState(D, SUP)), ctx).warnings.some(w2 => /Lote 3: sin partidas asignadas/.test(w2)));
 });
 
-test('guardar y siguiente RFQ: no escriben', () => {
+test('guardar estrategia (cuerpo, mensajes) y siguiente RFQ que no se abre', () => {
   const st = initialState(D, SUP);
-  assert.match(strategyLockedText(st, D), /^Datos validados, pero no se guardó la estrategia de REQ-2 \(2 lote\(s\), 3 proveedor\(es\) seleccionado\(s\), 3 partida\(s\) por RFQ y 0 por precio histórico\): registrar estrategias, lotes y proveedores es una escritura bloqueada/);
+  const body = strategyPayload(st, D);
+  assert.deepEqual(Object.keys(body).sort(), ['items', 'lots', 'min_quotes']);
+  assert.equal(body.items.length, D.items.length);
+  assert.ok(body.items.every(i => i.lot === '' ? i.strategy === NO_RFQ : st.lots.some(l => l.key === i.lot)));
+  assert.ok(body.lots.every(l => l.suppliers.every(s => s.selected || s.suggested)));
+  assert.match(strategySavedText({ requisition: 'REQ-2', plan_version: 2, lots: 2, suppliers: 3, rfq_lines: 3, no_rfq_lines: 0 }), /^Estrategia de REQ-2 guardada en MariaDB como versión 2 \(2 lote\(s\), 3 proveedor\(es\) seleccionado\(s\), 3 partida\(s\) por RFQ y 0 por precio histórico\)\. Las versiones anteriores y sus RFQ se conservan\.$/);
+  assert.equal(strategySaveError(412, {}).reload, true);
+  assert.equal(strategySaveError(409, { error: { code: 'LINES_CHANGED' } }).reload, true);
+  assert.equal(strategySaveError(0, {}).retry, true);
+  assert.match(strategySaveError(409, { error: { code: 'REVIEW_BLOCKS_QUOTING', message: 'La validación vigente SCI-1 no permite pasar a cotización.' } }).text, /no permite pasar a cotización/);
+  const withNoRfq = initialState({ ...PLAN, plan: { ...PLAN.plan, no_rfq_items: [PLAN.items[PLAN.items.length - 1].id] } }, SUP);
+  assert.equal(withNoRfq.items[PLAN.items[PLAN.items.length - 1].id].strategy, NO_RFQ);
   const n = nextRfq(st, 'N1', ctx);
   assert.equal(n.supplier.name, 'Centurion FR');
   assert.match(nextRfqText(n, 'REQ-2'), /^Siguiente RFQ del lote «EPP y seguridad» de REQ-2: Centurion FR con 2 partida\(s\) \(#1, #3\)\. No se abrió/);
   const p = initialState(PLAN, SUP);
   assert.match(nextRfq(p, 'L1', { detail: PLAN, suppliers: SUP }).error, /todas las RFQ de los proveedores seleccionados ya están creadas/);
   assert.match(nextRfq(addLot(st), 'N3', ctx).error, /no tiene partidas que requieran RFQ/);
-  assert.match(strategyLockedText(st, D, true), /^Data validated, but the strategy of REQ-2 was not saved/);
+  assert.match(strategySavedText({ requisition: 'REQ-2', plan_version: 1, lots: 1, suppliers: 1, rfq_lines: 1, no_rfq_lines: 0 }, true), /^Strategy of REQ-2 saved to MariaDB as version 1/);
 });

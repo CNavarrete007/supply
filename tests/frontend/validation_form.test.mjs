@@ -1,7 +1,7 @@
 // Gestión del Contratista · tarjeta 1 "Registro de validación": lógica pura (node --test).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TECH_RESULTS, BUDGET_RESULTS, STRATEGIES, DEFAULT_CRITERIA, emptyValidation, clearKeepingRequisition, canQuote, blockReasons, requisitionOptions, buyerOptions, validateValidation, validationLockedText, nextStepBlock } from '../../src/views/contractorMgmt/validationForm.mjs';
+import { TECH_RESULTS, BUDGET_RESULTS, STRATEGIES, DEFAULT_CRITERIA, emptyValidation, clearKeepingRequisition, canQuote, blockReasons, requisitionOptions, buyerOptions, validateValidation, reviewPayload, reviewSavedText, reviewSaveError, importedEditBlock, nextStepBlock } from '../../src/views/contractorMgmt/validationForm.mjs';
 
 const TODAY = '2026-11-19';
 const BUYERS = [{ id: 'b1', name: 'QA Comprador', position: null, roles: 'Comprador', has_user: true, with_access: true }, { id: 'b2', name: 'Sin Usuario', position: 'Almacén', has_user: false, with_access: false },
@@ -71,11 +71,21 @@ test('advertencias: bloqueo para cotizar, fecha posterior a la requerida, histor
   assert.match(w(good({ deadline: '' })), /Sin fecha límite/);
 });
 
-test('Guardar no escribe y Siguiente paso solo si puede cotizar', () => {
-  const t = validationLockedText(good(), REQ, 'QA Comprador');
-  assert.match(t, /^Datos validados, pero no se guardó la validación interna de QA-REQ-1 \(técnica conforme, contractual conforme, presupuesto disponible, competencia abierta, 3 cotización\(es\), responsable QA Comprador, puede cotizar\)/);
-  assert.match(validationLockedText(good({ budget: 'Pendiente' }), REQ, 'X'), /bloqueada para cotizar/);
-  assert.match(validationLockedText(good(), REQ, 'X', true), /^Data validated, but the internal validation of QA-REQ-1 was not saved/);
+test('Guardar registra (cuerpo, mensaje y errores) y Siguiente paso solo si puede cotizar', () => {
+  const body = reviewPayload(good({ minQuotes: ' 3 ', notes: ' nota ' }));
+  assert.deepEqual(Object.keys(body).sort(), ['budget', 'buyer_id', 'contract', 'criteria', 'deadline', 'min_quotes', 'notes', 'requisition_id', 'strategy', 'technical']);
+  assert.equal(body.min_quotes, '3'); assert.equal(body.notes, 'nota');
+  const t = reviewSavedText({ folio: 'SCI-2026-0035', requisition: 'QA-REQ-1', can_quote: true }, REQ, good(), 'QA Comprador');
+  assert.match(t, /^Validación interna SCI-2026-0035 de QA-REQ-1 guardada en MariaDB \(técnica conforme, contractual conforme, presupuesto disponible, competencia abierta, 3 cotización\(es\), responsable QA Comprador, puede cotizar\)/);
+  assert.match(reviewSavedText({ folio: 'SCI-1', can_quote: false }, REQ, good({ budget: 'Pendiente' }), 'X'), /bloqueada para cotizar/);
+  assert.match(reviewSavedText({ folio: 'SCI-1', version: 3, changed: ['budget', 'min_quotes'] }, REQ, good(), 'X'), /^Cambios de SCI-1 guardados en MariaDB \(presupuesto, mínimo de cotizaciones\); versión 3\.$/);
+  assert.equal(reviewSavedText({ folio: 'SCI-1', changed: [] }, REQ, good(), 'X'), 'No había cambios por guardar.');
+  assert.equal(reviewSaveError(0, {}).retry, true);
+  assert.equal(reviewSaveError(422, { error: { code: 'INVALID_VALIDATION', field: 'min_quotes' } }).field, 'minQuotes');
+  assert.match(reviewSaveError(503, { error: { code: 'MGMT_WRITE_NOT_PROVISIONED' } }).text, /no está habilitado en este equipo\. No se guardó nada/);
+  assert.match(reviewSaveError(412, {}).text, /Otra persona modificó/);
+  assert.match(importedEditBlock({ folio: 'SCI-2026-0006', imported: true }), /importada del sistema original/);
+  assert.equal(importedEditBlock({ folio: 'SCI-2026-0050', imported: false }), '');
   assert.match(nextStepBlock(emptyValidation()), /Selecciona una requisición/);
   assert.match(nextStepBlock(good({ technical: 'Pendiente' })), /No puede avanzar a Estrategia y lotificación: técnica pendiente/);
   assert.equal(nextStepBlock(good()), '');

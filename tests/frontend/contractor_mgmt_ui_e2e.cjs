@@ -1,5 +1,6 @@
 // Gestión del Contratista · tarjeta 1 "Registro de validación" · E2E de interfaz (Chromium) contra Vite + API + MariaDB
-// SINTÉTICAS. Solo lectura: toda petición /api que no sea GET (salvo login/logout) se aborta. Valores esperados desde la API.
+// SINTÉTICAS. Solo lectura: toda petición /api que no sea GET (salvo login/logout) se aborta; los guardados (que ya escriben) se
+// intentan y, sin respuesta, NO deben darse por guardados. El guardado real: contractor_mgmt_write_ui_e2e.cjs. Valores desde la API.
 // Uso: SF_UI=http://127.0.0.1:5173 SF_QA_PASSWORD=... [SF_SHOTS=<dir>] node tests/frontend/contractor_mgmt_ui_e2e.cjs
 const { chromium } = require('playwright');
 
@@ -92,8 +93,9 @@ const flat = s => String(s).replace(/\s+/g, ' ');
     await fld('Observaciones internas / justificación').fill('Validación sintética de prueba E2E');
     check('veredicto en vivo: sí puede pasar a cotización', (await page.getByTestId('validation-verdict').innerText()).includes('Sí'));
     await fm.getByRole('button', { name: /Guardar validación/ }).click();
+    await page.getByTestId('validation-save-msg').filter({ hasText: /No se confirmó/ }).waitFor({ timeout: 15000 });
     const sm = flat(await page.getByTestId('validation-save-msg').innerText());
-    check('guardar: validado pero NO guardado (resumen)', sm.startsWith(`Datos validados, pero no se guardó la validación interna de ${reviewed.folio} (técnica conforme, contractual con observaciones, presupuesto parcial, competencia abierta, 3 cotización(es), responsable ${buyer.name}, puede cotizar)`), sm);
+    check('guardar: intenta el POST y, sin respuesta, NO lo da por guardado', writes.at(-1) === 'POST /api/v1/contractor-management/validations' && sm.startsWith('No se confirmó el guardado') && !/guardada en MariaDB/.test(sm), `${writes.join(',')} · ${sm}`);
     const warn = flat(await fm.innerText());
     check('advertencias: historial y documentos posteriores', warn.includes(`ya tiene ${det.reviews.length} validación(es) registrada(s)`) && warn.includes('La requisición ya avanzó'), warn.slice(-800));
     await shot(page, 'cm_1_saved');
@@ -117,7 +119,9 @@ const flat = s => String(s).replace(/\s+/g, ' ');
     // 2 · Estrategia y lotificación
     const tset = await api('/api/v1/contractor-management/strategy-setup');
     const okReq = tset.requisitions.filter(r => ['Conforme', 'Con observaciones'].includes(r.technical) && ['Conforme', 'Con observaciones'].includes(r.contract_result) && ['Disponible', 'Parcial'].includes(r.budget));
-    const withPlan = okReq.find(r => r.plan_count > 0); const noPlan = okReq.find(r => r.plan_count === 0);
+    // Las pruebas de escritura agregan requisiciones con plan propio: se eligen explícitamente el fixture con plan y RFQ y el sin plan con OC.
+    const withPlan = okReq.find(r => r.plan_count > 0 && r.rfq_count > 0) || okReq.find(r => r.plan_count > 0);
+    const noPlan = okReq.find(r => r.plan_count === 0 && r.has_po) || okReq.find(r => r.plan_count === 0);
     const blocked = tset.requisitions.find(r => !okReq.includes(r));
     const ss = await api(`/api/v1/contractor-management/strategy/${withPlan.id}`);
     const sn = await api(`/api/v1/contractor-management/strategy/${noPlan.id}`);
@@ -172,10 +176,11 @@ const flat = s => String(s).replace(/\s+/g, ' ');
     for (let i = 0; selected >= 20 && i < await boxes.count(); i++) if (await boxes.nth(i).isChecked()) { await boxes.nth(i).uncheck(); selected--; }
     await sg.getByLabel('Mínimo de cotizaciones del lote 1').fill('20');
     await sg.getByRole('button', { name: 'Guardar estrategia', exact: true }).click();
+    await page.getByTestId('strategy-msg').filter({ hasText: /No se confirmó/ }).waitFor({ timeout: 15000 });
     const sv = flat(await page.getByTestId('strategy-msg').innerText());
-    check('guardar estrategia: validado pero NO guardado, con advertencia de mínimo', sv.startsWith(`Datos validados, pero no se guardó la estrategia de ${noPlan.folio}`) && flat(await sg.innerText()).includes('el mínimo configurado es 20. Puedes guardar, pero documenta la excepción si continúas así.'), sv);
-    await sg.getByRole('button', { name: /Guardar y abrir siguiente RFQ/ }).click();
-    check('guardar y abrir siguiente RFQ: no escribe e indica la siguiente RFQ', flat(await page.getByTestId('strategy-msg').innerText()).includes('Siguiente RFQ del lote'));
+    check('guardar estrategia: intenta el PUT, sin respuesta NO lo da por guardado; advertencia de mínimo', writes.at(-1) === `PUT /api/v1/contractor-management/strategy/${noPlan.id}` && sv.startsWith('No se confirmó el guardado') && flat(await sg.innerText()).includes('el mínimo configurado es 20. Puedes guardar, pero documenta la excepción si continúas así.'), `${writes.at(-1)} · ${sv}`);
+    await sg.getByTestId('strategy-lot').first().getByRole('button', { name: 'Abrir siguiente RFQ' }).click();
+    check('abrir siguiente RFQ: no escribe e indica la siguiente RFQ', flat(await page.getByTestId('strategy-msg').innerText()).includes('Siguiente RFQ del lote') && flat(await page.getByTestId('strategy-msg').innerText()).includes('No se abrió'));
     await shot(page, 'cm_2_strategy');
     await sg.getByRole('button', { name: /Ver validaciones/ }).click();
     await page.getByText('Matriz de validaciones internas').first().waitFor();
@@ -229,7 +234,8 @@ const flat = s => String(s).replace(/\s+/g, ' ');
     check('editar: sin cambios no se guarda', (await page.getByTestId('validation-save-msg').innerText()).includes('Sin cambios por guardar.'));
     await fe.getByLabel('Observaciones internas / justificación', { exact: true }).fill('Cambio de prueba E2E en la validación');
     await fe.getByRole('button', { name: /Guardar cambios/ }).click();
-    check('editar: validado pero NO guardado (campos cambiados)', flat(await page.getByTestId('validation-save-msg').innerText()).startsWith(`Datos validados, pero no se guardaron los cambios de ${r0.folio} (observaciones)`), flat(await page.getByTestId('validation-save-msg').innerText()));
+    await page.getByTestId('validation-save-msg').filter({ hasText: /No se confirmó/ }).waitFor({ timeout: 15000 });
+    check('editar: intenta el PUT con la validación y, sin respuesta, NO lo da por guardado', writes.at(-1) === `PUT /api/v1/contractor-management/validations/${r0.id}` && flat(await page.getByTestId('validation-save-msg').innerText()).startsWith('No se confirmó el guardado'), `${writes.at(-1)} · ${flat(await page.getByTestId('validation-save-msg').innerText())}`);
     await fe.getByRole('button', { name: /Nueva validación/ }).click();
     await page.getByTestId('validation-mode').filter({ hasText: 'Modo nueva captura activo' }).waitFor();
     check('"+ Nueva validación" sale del modo edición', await fe.getByLabel('Folio interno', { exact: true }).inputValue() === 'Automático' && await fe.getByLabel('Requisición', { exact: true }).inputValue() === '');
@@ -294,9 +300,9 @@ const flat = s => String(s).replace(/\s+/g, ' ');
     await page.setViewportSize({ width: 390, height: 900 });
     check('sin desbordamiento horizontal en móvil', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   } catch (e) {
-    check('flujo E2E sin excepciones', false, String(e).slice(0, 400));
+    check('flujo E2E sin excepciones', false, String(e.stack || e).slice(0, 600));
   }
-  check('sin escrituras /api intentadas', writes.length === 0, writes.join(', '));
+  check('solo se intentaron los guardados esperados (validación, estrategia y edición); ninguna RFQ', writes.length === 3 && writes.every(w => /^(POST \/api\/v1\/contractor-management\/validations|PUT \/api\/v1\/contractor-management\/(strategy|validations)\/[0-9a-f-]{36})$/.test(w)), writes.join(', '));
   check('sin errores JS', jsErrors.length === 0, jsErrors.join(' | ').slice(0, 400));
   await browser.close();
   const w = Math.max(...results.map(r => r[0].length));

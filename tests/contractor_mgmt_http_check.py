@@ -2,7 +2,8 @@
 """Gestión del Contratista · contrato HTTP de /api/v1/contractor-management/* (SOLO LECTURA; apto para la base real).
 Verifica 401/403/422/404, que los responsables sean personal activo de la organización, coherencia de requisiciones,
 validaciones (requisition_reviews) y documentos posteriores, que no se expongan contraseñas ni identificadores internos y
-que no exista ninguna ruta de escritura.
+que sin CSRF ninguna escritura responda 2xx (las escrituras reales se prueban en contractor_mgmt_write_http_check.py, solo
+con base sintética).
 Uso: SF_API=http://127.0.0.1:8080 SF_USER=<correo admin> SF_QA_PASSWORD=<clave> [SF_NONADMIN_USER=<correo>] python3 tests/contractor_mgmt_http_check.py
 """
 import http.cookiejar, json, os, re, sys, urllib.error, urllib.request
@@ -34,7 +35,7 @@ try:
     check('Master Admin: 200', status(adm, S) == 200)
     check('422 con parámetros', status(adm, S + '?x=1') == 422 and status(adm, f'{R}/requisitions/{ZERO}?a=1') == 422)
     check('requisición inexistente o id inválido → 404', status(adm, f'{R}/requisitions/{ZERO}') == 404 and status(adm, f'{R}/requisitions/abc') == 404)
-    check('sin rutas de escritura (POST/PUT/PATCH/DELETE ≠ 2xx)', all(status(adm, p, m) >= 400 for p in [S, f'{R}/requisitions/{ZERO}', f'{R}/validations', f'{R}/requisitions/{ZERO}/validations', T, f'{R}/strategy/{ZERO}', f'{R}/strategy/{ZERO}/lots', M, f'{M}/{ZERO}', RU] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
+    check('sin CSRF ninguna escritura responde 2xx (POST/PUT/PATCH/DELETE)', all(status(adm, p, m) >= 400 for p in [S, f'{R}/requisitions/{ZERO}', f'{R}/validations', f'{R}/requisitions/{ZERO}/validations', T, f'{R}/strategy/{ZERO}', f'{R}/strategy/{ZERO}/lots', M, f'{M}/{ZERO}', RU] for m in ['POST', 'PUT', 'PATCH', 'DELETE']))
     d = get(S); reqs = d['requisitions']; buyers = d['buyers']
     check('estructura de requisiciones', all({'id', 'folio', 'project', 'client_name', 'internal_reference', 'item_count', 'review_count', 'last_review', 'rfq_count', 'quote_count', 'po_count'} <= set(r) for r in reqs) and d['summary']['requisitions'] == len(reqs))
     check('validación más reciente presente solo si hay validaciones', all((r['last_review'] is None) == (r['review_count'] == 0) for r in reqs) and d['summary']['with_review'] == sum(1 for r in reqs if r['review_count']))

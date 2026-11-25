@@ -1,9 +1,11 @@
 // Gestión del Contratista · tarjeta 2 "Estrategia y lotificación" · lógica pura (sin red).
 // Datos: GET /api/v1/contractor-management/strategy-setup (requisiciones con validación vigente y catálogo de proveedores
 // con su categoría y las categorías de sus suministros) y GET /strategy/{id} (partidas, plan de lotificación vigente
-// —sourcing_plans / sourcing_lots / sourcing_lot_items / sourcing_lot_suppliers— y RFQ por lote). Guardar la estrategia,
-// los lotes o abrir una RFQ desde aquí son escrituras sin endpoint: se valida todo y se informa que no se guardó.
+// —sourcing_plans / sourcing_lots / sourcing_lot_items / sourcing_lot_suppliers— y RFQ por lote). Desde el 25 nov 2026
+// «Guardar estrategia» guarda el plan como versión nueva (PUT /strategy/{id}, If-Match = versión vigente). Abrir una RFQ desde
+// aquí sigue bloqueado: las RFQ se emiten en Cotizaciones → Solicitud a proveedores (RFQ).
 import { canQuote, blockReasons } from './validationForm.mjs';
+import { mgmtConfigErrorText } from './writeStatus.mjs';
 
 export const ITEM_STRATEGIES = [['Competencia abierta', 'Open competition'], ['Proveedor preferente', 'Preferred supplier'], ['Fuente única justificada', 'Justified sole source'],
   ['Precio histórico auto', 'Automatic historical price'], ['Compra urgente', 'Urgent purchase']];
@@ -79,6 +81,7 @@ export function initialState(detail, suppliers = []) {
   if (plan) {
     st.lots = plan.lots.map(l => ({ key: l.key, name: l.name, minQuotes: String(l.min_quotes), persisted: true, suppliers: l.suppliers.map(s => ({ id: s.id, selected: !!s.selected, suggested: !!s.suggested })) }));
     for (const l of plan.lots) for (const it of l.items) if (st.items[it.id]) st.items[it.id] = { strategy: ITEM_STRATEGIES.some(s => s[0] === it.strategy) ? it.strategy : st.items[it.id].strategy, lot: l.key };
+    for (const id of plan.no_rfq_items || []) if (st.items[id]) st.items[id] = { strategy: NO_RFQ, lot: '' }; // saved without lot
     return st;
   }
   return autoGroup(st, items, suppliers);
@@ -181,13 +184,32 @@ export function validateStrategy(state, { detail = null, suppliers = [] } = {}, 
   return { ok: !keys.length, errors, warnings, lotErrors, lineErrors, first: keys.length ? errors[keys[0]] : '' };
 }
 
-/** Message after a valid "Guardar estrategia": nothing is written. */
-export function strategyLockedText(state, detail, en = false) {
-  const items = detail?.items || []; const s = strategyStats(state, items, rfqsByLot(detail));
-  const rfqLines = items.length - s.noRfq;
+/** Body of PUT /strategy/{requisition}: every line with its strategy and lot; lots with their suppliers (empty lots are ignored by the server). */
+export function strategyPayload(state, detail) {
+  const items = detail?.items || [];
+  return { min_quotes: clean(state.minQuotes),
+    items: items.map(i => { const s = state.items[i.id] || {}; return { id: i.id, strategy: s.strategy, lot: s.strategy === NO_RFQ ? '' : (s.lot || '') }; }),
+    lots: state.lots.map(l => ({ key: l.key, name: clean(l.name), min_quotes: clean(l.minQuotes), suppliers: l.suppliers.filter(s => s.selected || s.suggested).map(s => ({ id: s.id, selected: !!s.selected, suggested: !!s.suggested })) })) };
+}
+
+/** Message after a confirmed save. */
+export function strategySavedText(out, en = false) {
   return en
-    ? `Data validated, but the strategy of ${clean(detail?.item?.folio)} was not saved (${s.lots} lot(s), ${s.suppliers} selected supplier(s), ${rfqLines} line(s) by RFQ and ${s.noRfq} by historical price): recording strategies, lots and suppliers is a write blocked until authorized.`
-    : `Datos validados, pero no se guardó la estrategia de ${clean(detail?.item?.folio)} (${s.lots} lote(s), ${s.suppliers} proveedor(es) seleccionado(s), ${rfqLines} partida(s) por RFQ y ${s.noRfq} por precio histórico): registrar estrategias, lotes y proveedores es una escritura bloqueada hasta su autorización.`;
+    ? `Strategy of ${clean(out.requisition)} saved to MariaDB as version ${out.plan_version} (${out.lots} lot(s), ${out.suppliers} selected supplier(s), ${out.rfq_lines} line(s) by RFQ and ${out.no_rfq_lines} by historical price). Previous versions and their RFQs are kept.`
+    : `Estrategia de ${clean(out.requisition)} guardada en MariaDB como versión ${out.plan_version} (${out.lots} lote(s), ${out.suppliers} proveedor(es) seleccionado(s), ${out.rfq_lines} partida(s) por RFQ y ${out.no_rfq_lines} por precio histórico). Las versiones anteriores y sus RFQ se conservan.`;
+}
+
+/** Server error → { kind, text, retry, reload }. */
+export function strategySaveError(status, body, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const code = body?.error?.code; const message = body?.error?.message;
+  if (!status) return { kind: 'error', text: m('No se confirmó el guardado (sin respuesta del servidor). Presiona Guardar estrategia otra vez: se repite la misma operación sin crear otra versión.', 'The save was not confirmed. Press Save strategy again: the same operation is repeated without creating another version.'), retry: true };
+  if (status === 401) return { kind: 'error', text: m('Tu sesión expiró. Inicia sesión nuevamente; no se guardó nada.', 'Your session expired; nothing was saved.') };
+  if (status === 403) return { kind: 'error', text: code === 'CSRF_INVALID' ? m('La sesión de seguridad cambió. Vuelve a intentarlo.', 'The security token changed. Try again.') : m('Solo un Master Admin puede guardar estrategias.', 'Only a Master Admin can save strategies.') };
+  const cfg = mgmtConfigErrorText(code, en); if (cfg) return { kind: 'warn', text: cfg };
+  if (status === 412 || code === 'LINES_CHANGED') return { kind: 'warn', text: m('La estrategia o las partidas cambiaron desde que se abrió (otra sesión guardó). Se recargó la versión vigente; revisa y vuelve a guardar.', 'The strategy or the lines changed; the current version was reloaded.'), reload: true };
+  if (status === 409 || status === 422 || status === 404) return { kind: 'error', text: code === 'INVALID_STRATEGY' ? m('Revisa los lotes y las partidas: el servidor no aceptó la estrategia.', 'Check the lots and lines.') : (message || m('No se pudo guardar.', 'Could not save.')) };
+  return { kind: 'error', text: m(`No se confirmó el guardado (${message || 'error del servidor'}). Presiona Guardar estrategia otra vez: no se duplicará.`, 'The save was not confirmed. Press Save strategy again.'), retry: true };
 }
 
 /** Next RFQ of a lot: first selected supplier without an RFQ in that lot. → { lot, supplier, lines } | { error } */
@@ -207,6 +229,6 @@ export function nextRfq(state, key, { detail = null, suppliers = [] } = {}, en =
 export function nextRfqText(n, folio, en = false) {
   const parts = n.lines.map(i => `#${i.line_number}`).join(', ');
   return en
-    ? `Next RFQ of lot "${clean(n.lot.name)}" for ${clean(folio)}: ${clean(n.supplier.name)} with ${n.lines.length} line(s) (${parts}). It was not opened: the strategy is not saved and creating RFQs from here is a write blocked until authorized; RFQs are issued in Quotes → Supplier request (RFQ).`
-    : `Siguiente RFQ del lote «${clean(n.lot.name)}» de ${clean(folio)}: ${clean(n.supplier.name)} con ${n.lines.length} partida(s) (${parts}). No se abrió: la estrategia no está guardada y crear RFQ desde aquí es una escritura bloqueada hasta su autorización; las RFQ se emiten en Cotizaciones → Solicitud a proveedores (RFQ).`;
+    ? `Next RFQ of lot "${clean(n.lot.name)}" for ${clean(folio)}: ${clean(n.supplier.name)} with ${n.lines.length} line(s) (${parts}). It was not opened: creating RFQs from here is a write blocked until authorized; RFQs are issued in Quotes → Supplier request (RFQ).`
+    : `Siguiente RFQ del lote «${clean(n.lot.name)}» de ${clean(folio)}: ${clean(n.supplier.name)} con ${n.lines.length} partida(s) (${parts}). No se abrió: crear RFQ desde aquí es una escritura bloqueada hasta su autorización; las RFQ se emiten en Cotizaciones → Solicitud a proveedores (RFQ).`;
 }

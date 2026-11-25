@@ -43,6 +43,9 @@ if ($CatalogWrite) { $Files += 'compose.supply-catalogwrite.yml' }
 # Usuarios y roles (segundo Master Admin y cambio de contrasena): cuenta useradmin, igual que la de catalogos (docs/usuarios/SEGUNDO_MASTER_ADMIN.md).
 $UserAdmin = Test-Path -LiteralPath (Join-Path $PrivateDir 'secrets\useradmin-db-password.txt') -PathType Leaf
 if ($UserAdmin) { $Files += 'compose.supply-useradmin.yml' }
+# Gestion del Contratista (validacion interna y estrategia): cuenta mgmtwrite (docs/gestion-contratista/GUARDADO_VALIDACION_ESTRATEGIA.md).
+$MgmtWrite = Test-Path -LiteralPath (Join-Path $PrivateDir 'secrets\mgmtwrite-db-password.txt') -PathType Leaf
+if ($MgmtWrite) { $Files += 'compose.supply-mgmtwrite.yml' }
 $script:Problems = New-Object System.Collections.Generic.List[string]
 
 function Say([string]$Status, [string]$Text) { Write-Host ('[{0,-7}] {1}' -f $Status, $Text) }
@@ -214,6 +217,8 @@ switch ($Phase) {
     else { Say 'INFO' 'Guardado de catalogos NO habilitado: falta secrets\catalogwrite-db-password.txt. Clientes, Proveedores, Suministros y Categorias solo consultan (ver docs/clientes/ALTA_EDICION_CLIENTES.md).' }
     if ($UserAdmin) { Say 'OK' 'Gestion de acceso: overlay compose.supply-useradmin.yml incluido (Usuarios y roles indica si falta aprovisionar la cuenta).' }
     else { Say 'INFO' 'Gestion de acceso NO habilitada: falta secrets\useradmin-db-password.txt (segundo Master Admin y cambio de contrasena; ver docs/usuarios/SEGUNDO_MASTER_ADMIN.md).' }
+    if ($MgmtWrite) { Say 'OK' 'Gestion del Contratista: overlay compose.supply-mgmtwrite.yml incluido (las tarjetas avisan si falta aprovisionar la cuenta).' }
+    else { Say 'INFO' 'Guardado de Gestion del Contratista NO habilitado: falta secrets\mgmtwrite-db-password.txt (ver docs/gestion-contratista/GUARDADO_VALIDACION_ESTRATEGIA.md).' }
     if ($ok) { Say 'PASS' 'SupplyFlow en http://localhost:8080 (inicia sesion con tu usuario de la PC anterior).'; exit 0 }
     exit 1
   }

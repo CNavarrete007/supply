@@ -1,0 +1,46 @@
+# Gestión del Contratista (validación interna y estrategia/lotificación): overlay aditivo. No modifica db, sus volúmenes ni las cuentas existentes.
+# Requiere ${SUPPLYFLOW_LOCAL_PRIVATE_DIR}/secrets/mgmtwrite-db-password.txt (64 hex) y aprovisionar una vez con:
+#   docker compose ... -f compose.supply-mgmtwrite.yml --profile mgmtwrite-tools run --rm mgmtwrite-db-tools provision
+services:
+  api:
+    environment:
+      MGMTWRITE_DB_USERNAME: supplyflow_mgmtwrite_local
+      MGMTWRITE_DB_PASSWORD_FILE: /run/secrets/mgmtwrite_db_password
+    secrets:
+      - mgmtwrite_db_password
+
+  mgmtwrite-db-tools:
+    profiles: ["mgmtwrite-tools"]
+    build:
+      context: ./docker/supply-dev/db-provision
+      dockerfile: Dockerfile
+    entrypoint: ["python", "/mgmtwrite/provision.py"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      TZ: UTC
+    volumes:
+      - type: volume
+        source: supplyflow_db_socket
+        target: /run/mysqld
+        read_only: true
+      - type: bind
+        source: ./docker/supply-mgmtwrite
+        target: /mgmtwrite
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Requires private local directory}/secrets
+        target: /run/supply-secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+
+secrets:
+  mgmtwrite_db_password:
+    file: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Requires private local directory}/secrets/mgmtwrite-db-password.txt

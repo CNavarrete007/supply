@@ -11,7 +11,7 @@ use Config\Database;
  * Gestión del Contratista · read-only (SELECT). Card 1 "Registro de validación": the internal validation of a requisition
  * before quoting (`requisition_reviews`: internal folio, purchasing manager, technical / contractual / budget result,
  * strategy, minimum quotes, quotation deadline, criteria and notes). Every query is scoped to the session organization;
- * archived requisitions are excluded. Registering a validation is NOT exposed (no write routes).
+ * archived requisitions are excluded. Writes (validation and strategy) live in ContractorMgmtWriteRepository (mgmtwrite account).
  */
 final class ContractorManagementReadRepository
 {
@@ -288,20 +288,40 @@ final class ContractorManagementReadRepository
             }
         }
         $loose = [];
+        $byName = [];
+        foreach ($lots as $lid => $l) {
+            $byName[mb_strtolower(trim($l['name']))] = $lid;
+        }
+        $oldNames = [];
+        foreach ($this->rows('SELECT l.id,l.name FROM sourcing_lots l JOIN rfqs f ON f.sourcing_lot_id=l.id AND f.organization_id=l.organization_id WHERE l.organization_id=? AND l.requisition_id=?', [$org, $rid]) as $x) {
+            $oldNames[(int) $x['id']] = mb_strtolower(trim((string) $x['name']));
+        }
         foreach ($this->rows(<<<'SQL'
             SELECT f.sourcing_lot_id AS lot,f.folio,se.public_id AS supplier_id,s.legal_name AS supplier_name,f.status_code AS status,f.legacy_status
             FROM rfqs f JOIN suppliers s ON s.id=f.supplier_id AND s.organization_id=f.organization_id JOIN business_entities se ON se.id=s.id AND se.organization_id=s.organization_id
             WHERE f.organization_id=? AND f.requisition_id=? ORDER BY f.folio
             SQL, [$org, $rid]) as $f) {
             $row = ['folio' => $f['folio'], 'supplier_id' => $f['supplier_id'], 'supplier_name' => $f['supplier_name'], 'status' => $f['status'], 'legacy_status' => $f['legacy_status']];
+            $target = $f['lot'] !== null && ! isset($lots[(int) $f['lot']]) ? ($byName[$oldNames[(int) $f['lot']] ?? ''] ?? null) : null;
             if ($f['lot'] !== null && isset($lots[(int) $f['lot']])) {
                 $lots[(int) $f['lot']]['rfqs'][] = $row;
+            } elseif ($target !== null) {
+                $lots[$target]['rfqs'][] = $row; // RFQ of the same lot in an earlier plan version
             } else {
                 $loose[] = $row + ['lot' => $f['lot'] !== null ? ($lotKey[(int) $f['lot']] ?? 'other_plan') : null];
             }
         }
+        // Lines saved as "Precio histórico auto" (without lot) are recorded in the workflow event of that plan version.
+        $noRfq = [];
+        if ($plan) {
+            $ev = $this->rows("SELECT payload_json FROM workflow_events WHERE organization_id=? AND entity_id=? AND workflow_code='sourcing_strategy' AND action_code='strategy.saved' ORDER BY id DESC LIMIT 1", [$org, $rid])[0] ?? null;
+            $payload = $ev ? json_decode((string) $ev['payload_json'], true) : null;
+            if (is_array($payload) && (int) ($payload['plan_version'] ?? 0) === (int) $plan['version_number'] && is_array($payload['no_rfq_items'] ?? null)) {
+                $noRfq = array_values(array_filter($payload['no_rfq_items'], static fn ($x) => is_string($x) && in_array($x, $byDb, true)));
+            }
+        }
         return ['item' => $r, 'items' => $items,
-            'plan' => $plan ? ['version' => (int) $plan['version_number'], 'min_quotes' => (int) $plan['min_quotes'], 'updated_at' => $plan['updated_at'], 'lots' => array_values($lots)] : null,
+            'plan' => $plan ? ['version' => (int) $plan['version_number'], 'min_quotes' => (int) $plan['min_quotes'], 'updated_at' => $plan['updated_at'], 'lots' => array_values($lots), 'no_rfq_items' => $noRfq] : null,
             'rfqs_without_lot' => $loose];
     }
     /** "Can move to quoting" rule of Reglas inteligentes (Spanish or English values; collation is case/accent-insensitive). */
@@ -324,7 +344,7 @@ final class ContractorManagementReadRepository
                    CASE WHEN rv.buyer_user_id IS NOT NULL THEN CONVERT((SELECT u.public_id FROM users u WHERE u.id=rv.buyer_user_id AND u.organization_id=rv.organization_id) USING utf8mb4)
                         WHEN {$snap} IS NOT NULL AND TRIM({$snap})<>'' THEN CONCAT('legacy-',LEFT(SHA2(TRIM({$snap}),256),16)) ELSE 'unassigned' END AS buyer_key,
                    rv.technical_result AS technical,rv.contract_result AS contract,rv.budget_result AS budget,rv.strategy,rv.min_quotes,rv.deadline,rv.criteria,rv.notes,
-                   e.created_at,(e.imported_at IS NOT NULL OR e.legacy_id IS NOT NULL) AS imported,{$can} AS can_quote,
+                   e.created_at,e.row_version AS version,(e.imported_at IS NOT NULL OR e.legacy_id IS NOT NULL) AS imported,{$can} AS can_quote,
                    NOT EXISTS (SELECT 1 FROM requisition_reviews n WHERE n.organization_id=rv.organization_id AND n.requisition_id=rv.requisition_id AND n.id>rv.id) AS latest,
                    (SELECT COUNT(*) FROM rfqs fq WHERE fq.organization_id=r.organization_id AND fq.requisition_id=r.id) AS rfq_count,
                    (SELECT COUNT(*) FROM supplier_quotes q WHERE q.organization_id=r.organization_id AND q.requisition_id=r.id) AS quote_count,
@@ -360,7 +380,7 @@ final class ContractorManagementReadRepository
         $items = $this->rows("SELECT V.* FROM ({$base}) V WHERE 1=1{$where} ORDER BY V.rv_id LIMIT {$size} OFFSET {$off}", $binds);
         foreach ($items as &$x) {
             unset($x['rv_id']);
-            foreach (['min_quotes', 'rfq_count', 'quote_count', 'po_count'] as $k) {
+            foreach (['min_quotes', 'rfq_count', 'quote_count', 'po_count', 'version'] as $k) {
                 $x[$k] = (int) $x[$k];
             }
             foreach (['imported', 'can_quote', 'latest'] as $k) {

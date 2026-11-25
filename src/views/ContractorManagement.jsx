@@ -366,30 +366,30 @@ export const ContractorManagement = ({ quotes = [], onNavigate = () => {}, onNot
       <div data-testid="contractor-mgmt-notice" className={`rounded-xl border px-4 py-3 flex items-start gap-2 text-[11px] ${['register', 'strategy', 'matrix', 'compliance'].includes(activeTab) ? 'border-amber-200 bg-amber-50/70 text-amber-900' : 'border-amber-300 bg-amber-50 text-amber-900 font-semibold'}`}>
         <Lock className="w-4 h-4 shrink-0 mt-0.5" />
         <span>{activeTab === 'register'
-          ? (lang === 'en' ? 'Validation register connected to MariaDB (read-only): requisitions, purchasing managers and recorded validations are real data. Saving validates the capture but does not store it: recording internal validations is a write blocked until authorized.' : 'Registro de validación conectado a MariaDB (solo lectura): requisiciones, responsables de compras y validaciones registradas son datos reales. Guardar valida la captura pero no la almacena: registrar validaciones internas es una escritura bloqueada hasta su autorización.')
+          ? (lang === 'en' ? 'Validation register connected to MariaDB: "Save validation" records the internal validation (automatic SCI folio) and "Save changes" edits one recorded in SupplyFlow; validations imported from the original system are kept as records.' : 'Registro de validación conectado a MariaDB: «Guardar validación» registra la validación interna (folio SCI automático) y «Guardar cambios» edita una registrada en SupplyFlow; las importadas del sistema original se conservan como expediente.')
           : activeTab === 'compliance'
           ? (lang === 'en' ? 'Smart rules connected to MariaDB (read-only): requisitions without validation, current validations with a block and requisitions ready to quote are computed from the real validations.' : 'Reglas inteligentes conectadas a MariaDB (solo lectura): requisiciones sin validación, validaciones vigentes con bloqueo y requisiciones listas para cotizar se calculan con las validaciones reales.')
           : activeTab === 'matrix'
-          ? (lang === 'en' ? 'Validation matrix connected to MariaDB (read-only): every internal validation with its requisition, manager, results and the "can quote" verdict. Editing, deleting and recording the cost source validate the capture but do not store it: they are writes blocked until authorized.' : 'Matriz de validaciones conectada a MariaDB (solo lectura): cada validación interna con su requisición, responsable, resultados y "¿puede cotizar?". Editar, eliminar y registrar la fuente de costo validan la captura pero no la almacenan: son escrituras bloqueadas hasta su autorización.')
+          ? (lang === 'en' ? 'Validation matrix connected to MariaDB: every internal validation with its requisition, manager, results and the "can quote" verdict. EDIT opens it in the register and saves the changes; deleting and recording the cost source remain writes blocked until authorized.' : 'Matriz de validaciones conectada a MariaDB: cada validación interna con su requisición, responsable, resultados y "¿puede cotizar?". EDITAR la abre en el registro y guarda los cambios; eliminar y registrar la fuente de costo siguen siendo escrituras bloqueadas hasta su autorización.')
           : activeTab === 'strategy'
-          ? (lang === 'en' ? 'Strategy and lotting connected to MariaDB (read-only): validated requisitions, lines, recorded lot plan, RFQs per lot and the supplier catalog are real data. Saving the strategy or opening an RFQ validates the capture but does not store it: they are writes blocked until authorized.' : 'Estrategia y lotificación conectada a MariaDB (solo lectura): requisiciones validadas, partidas, plan de lotes registrado, RFQ por lote y catálogo de proveedores son datos reales. Guardar la estrategia o abrir una RFQ valida la captura pero no la almacena: son escrituras bloqueadas hasta su autorización.')
+          ? (lang === 'en' ? 'Strategy and lotting connected to MariaDB: "Save strategy" stores the lots, lines and suppliers as a new plan version (previous versions and their RFQs are kept). Opening an RFQ from here remains blocked: RFQs are issued in Quotes.' : 'Estrategia y lotificación conectada a MariaDB: «Guardar estrategia» guarda lotes, partidas y proveedores como una versión nueva del plan (las versiones anteriores y sus RFQ se conservan). Abrir una RFQ desde aquí sigue bloqueado: las RFQ se emiten en Cotizaciones.')
           : (lang === 'en' ? 'Card pending integration: it may show demo data and its forms do not save operations in MariaDB.' : 'Tarjeta pendiente de integración: puede mostrar datos de demostración y sus formularios no guardan operaciones en MariaDB.')}</span>
       </div>
 
       {/* Contenedor Principal de Vistas */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-2xs">
 
-        {/* TARJETA 1: Registro de validación (MariaDB, solo lectura; guardar valida y no escribe) */}
+        {/* TARJETA 1: Registro de validación (MariaDB; guarda con la cuenta mgmtwrite) */}
         {activeTab === 'register' && (
           <ValidationRegister key={valEdit ? valEdit.id : `new:${startReq?.tab === 'register' ? startReq.id : ''}`} edit={valEdit} startRequisition={startReq?.tab === 'register' ? startReq.id : ''} onExitEdit={() => setValEdit(null)} en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} />
         )}
 
-        {/* TARJETA 2: Estrategia y lotificación (MariaDB, solo lectura; guardar valida y no escribe) */}
+        {/* TARJETA 2: Estrategia y lotificación (MariaDB; plan versionado con la cuenta mgmtwrite; abrir RFQ no escribe) */}
         {activeTab === 'strategy' && (
           <StrategyLots key={`s:${startReq?.tab === 'strategy' ? startReq.id : ''}`} startRequisition={startReq?.tab === 'strategy' ? startReq.id : ''} en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)} onGo={handleTabChange} onNavigate={onNavigate} />
         )}
 
-        {/* TARJETA 3: Matriz de validaciones internas (MariaDB, solo lectura; editar/eliminar validan y no escriben) */}
+        {/* TARJETA 3: Matriz de validaciones internas (MariaDB; EDITAR guarda en la tarjeta 1; eliminar no escribe) */}
         {activeTab === 'matrix' && (
           <ValidationMatrix en={lang === 'en'} notify={(title, message, kind) => onNotify && onNotify(title, message, kind)}
             onEdit={preset => { setStartReq(null); setValEdit(preset); handleTabChange('register', t.tabs.register.title); }}
