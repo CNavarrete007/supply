@@ -177,13 +177,17 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     const kpis = (await page.getByTestId('access-kpi').allInnerTexts()).map(x => x.replace(/\s+/g, ' ').trim());
     const withAccess = users.filter(u => u.access_enabled && u.credential_state === 'local_validated' && u.status === 'active').length;
     const inactive = users.filter(u => u.status !== 'active').length;
-    check('resumen: 6 indicadores del diseño con conteos reales', JSON.stringify(kpis) === JSON.stringify([`${users.length} Personas Usuarios y perfiles operativos`, `${withAccess} Con acceso Pueden iniciar sesión`, '1 Compradores Listas de compras y RFQ', '1 Preparó / Revisó Órdenes y cotizaciones', '1 Autorizadores Aprobación de documentos', `${inactive} Inactivos / bloqueados No aparecen en listas activas`]), kpis.join(' | '));
+    // Compradores = usuarios con documentos de comprador (OC, validaciones internas o contacto de RFQ). Las pruebas de escritura de
+    // Gestión del Contratista registran validaciones con un responsable sintético: el conteo se toma de la API, no fijo.
+    const fns = ((await (await page.request.get(UI + '/api/v1/users/functions')).json()).items || []);
+    const buyersN = fns.filter(f => (f.po_buyer || 0) + (f.review_buyer || 0) + (f.rfq_contact || 0) > 0).length;
+    check('resumen: 6 indicadores del diseño con conteos reales', JSON.stringify(kpis) === JSON.stringify([`${users.length} Personas Usuarios y perfiles operativos`, `${withAccess} Con acceso Pueden iniciar sesión`, `${buyersN} Compradores Listas de compras y RFQ`, '1 Preparó / Revisó Órdenes y cotizaciones', '1 Autorizadores Aprobación de documentos', `${inactive} Inactivos / bloqueados No aparecen en listas activas`]), kpis.join(' | '));
     check('recomendación de administradores con el conteo real', await page.getByText(/Hay 2 cuenta\(s\) Master Admin activa\(s\)/).isVisible() && (await page.getByTestId('rec-admin').getAttribute('data-level')) === 'ok');
     check('recomendación de contraseñas con credenciales pendientes y cuentas sin uso', /credencial pendiente de activación · \d+ cuenta\(s\) con acceso no han iniciado sesión en 90 días/.test(await page.getByTestId('rec-passwords').innerText()));
     await shot(page, 'usuarios_4_resumen');
     await page.getByRole('button', { name: /^Compradores: / }).click();
     await page.getByTestId('kpi-filter').waitFor();
-    check('indicador "Compradores" abre la matriz filtrada (mismo conteo)', await page.getByText('1 mostrados').isVisible() && await row(buyer.name).count() === 1 && (await page.getByTestId('kpi-filter').innerText()).includes('Compradores'));
+    check('indicador "Compradores" abre la matriz filtrada (mismo conteo)', await page.getByText(`${buyersN} mostrados`).isVisible() && await row(buyer.name).count() === 1 && (await page.getByTestId('kpi-filter').innerText()).includes('Compradores'));
     await page.getByRole('button', { name: 'Quitar filtro Compradores' }).click();
     check('quitar el filtro vuelve a mostrar a todos', await page.getByText(`${users.length} mostrados`).isVisible() && await page.getByTestId('kpi-filter').count() === 0);
 
