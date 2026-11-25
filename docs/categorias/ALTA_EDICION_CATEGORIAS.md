@@ -121,7 +121,7 @@ copiaron datos al repositorio.
   - Proveedores y suministros: solo por vínculo. Los 415 proveedores con categoría en texto heredado usan etiquetas que no
     coinciden con ninguna de las 12 categorías, así que ninguna se vería «sin uso» por error.
 - **Cuenta `catalogwrite` en la PC:** quedó aprovisionada con 33 permisos, incluidos los 4 de Categorías (`verify` → PASS).
-  Desde el 24 nov el contrato es de 35 (Contratista); falta volver a ejecutar `provision` con tu autorización.
+  Desde el 24 nov el contrato es de 35 (Contratista); en la PC se volvió a ejecutar `provision` el 25 nov (PASS, 35).
 - **Pruebas después de los cambios del 24 nov** en el manejo de errores de catálogos: lectura 14/14, escritura 28/28, interfaz
   35/35 y 49/49.
 

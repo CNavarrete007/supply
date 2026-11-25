@@ -52,6 +52,9 @@ Ahí se guardan en MariaDB (tabla `organizations`):
 
 ## Activación en la PC (requiere tu autorización)
 
+> **Estado en la PC (25 nov 2026): activado.** Respaldo previo, `provision` y `verify` → `"result": "PASS"`, `"grants": 35`,
+> `"source_rows_changed": false`, `EXISTING_VERIFIED`. El usuario comprobó el guardado desde EDITAR.
+
 Tu cuenta `catalogwrite` ya existe con 33 permisos. Solo hay que agregarle los 2 nuevos. Mientras no se haga, la pantalla
 muestra el aviso «A la cuenta de escritura del catálogo le faltan permisos · Faltan 2 de 35 (SELECT organizations, UPDATE
 organizations)» **solo en Contratista**; Clientes, Proveedores, Suministros y Categorías siguen guardando normalmente.

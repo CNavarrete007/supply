@@ -10,7 +10,7 @@
 | **Conectados (lectura con datos reales)** | Inicio y Dashboard, Clientes, Proveedores, Suministros, Contratista, Solicitud / Requisición (6 tarjetas), Gestión del Contratista (4), Cotizaciones y Comparativo (10), Órdenes de Compra (6), Recepción y Entrega (3), Factura (3), Servicios Operativos (Dashboard, Nueva solicitud y Nuevo servicio, Matriz, Reportes), Matriz General, Reportes, Usuarios y roles, Configuración (pestañas 1 a 5, 23 nov 2026), Flujo del Proceso (7 pestañas, 23 nov 2026), campana de Notificaciones (lectura, 23 nov 2026), Portal del Cliente (vista previa interna, 23 nov 2026) |
 | **Inicio y Dashboard** | Conectado (23 nov 2026) salvo 3 cifras sin fuente o regla: estatus de pago / «Pagadas» (no hay registro de pagos), ahorro potencial y costo promedio (falta la regla del original) |
 | **Pendientes de autorización** | Acceso externo de clientes al portal (tokens y sesiones propias, §4.E). Campana: marcar como leída en MariaDB (permiso de escritura) |
-| **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Catálogo de categorías (alta, edición, estatus y eliminación de las nunca usadas, 24 nov 2026); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
+| **Guardan en MariaDB** | Clientes, Proveedores y Suministros (alta y edición); Contratista (datos de la empresa, 24 nov 2026); Catálogo de categorías (alta, edición, estatus y eliminación de las nunca usadas, 24 nov 2026); Requisición RF1 (alta y edición), R2 (regularización), R3A (solicitud de modificación) y R3B (revisión independiente y retiro) |
 | **Validan pero no guardan** | Todo lo demás: termina con «Datos validados, pero no se guardó…» |
 
 `App.jsx` ya no muestra el aviso genérico «Módulo pendiente de integración» en ningún módulo del menú: Configuración, Flujo del Proceso y la vista previa del Portal del Cliente tienen su propio aviso «solo lectura».
@@ -88,12 +88,12 @@ Leyenda: **Real** guarda en MariaDB · **Bloqueada** valida y no guarda · **Dem
 | Clientes | Alta y edición | Sí | **Real** | `clients` y contactos | Eliminar e importar siguen bloqueados |
 | Proveedores | Alta y edición | Sí | **Real** | `suppliers` y contactos | Eliminar e importar siguen bloqueados |
 | Suministros | Alta y edición | Sí | **Real** | `supplier_offerings` | Eliminar sigue bloqueado |
-| Contratista | Datos de la empresa (EDITAR) | Sí (`contractors/{id}`) | **Habilitada (24 nov 2026)** | `organizations`, `files` | Hecho: `PUT` con la cuenta `catalogwrite` (35 permisos). En la PC falta volver a ejecutar `provision` (+2, requiere autorización). Registrar otras empresas, estatus y baja siguen bloqueados; los formatos impresos usan la identidad fija |
+| Contratista | Datos de la empresa (EDITAR) | Sí (`contractors/{id}`) | **Habilitada (24 nov 2026)** | `organizations`, `files` | Hecho: `PUT` con la cuenta `catalogwrite` (35 permisos). En la PC: aprovisionada con 35 el 25 nov (PASS) y guardado comprobado. Registrar otras empresas, estatus y baja siguen bloqueados; los formatos impresos usan la identidad fija |
 | Contratista | Personal | Sí | Bloqueada | `people`, `users`, `user_roles` | Depende de la escritura de Usuarios y roles |
 | Requisición | Registro | Sí | **Real** (RF1) | `requisitions`, `requisition_items` | — |
 | Requisición | Sin requisición / Regularización | Sí | **Real** (R2) | `requisitions` y evidencias | — |
 | Requisición | Matriz | Sí | N/A (SOLICITAR MODIFICACIÓN es R3A real) | — | — |
-| Requisición | Catálogo de categorías | Sí (`catalogs/categories`) | **Habilitada (24 nov 2026)** | `categories` | Hecho: `POST`/`PUT`/`DELETE` con la cuenta `catalogwrite` (hoy 35 permisos). En la PC: aprovisionada con 33 el 24 nov (PASS) |
+| Requisición | Catálogo de categorías | Sí (`catalogs/categories`) | **Habilitada (24 nov 2026)** | `categories` | Hecho: `POST`/`PUT`/`DELETE` con la cuenta `catalogwrite` (hoy 35 permisos). En la PC: 35 permisos desde el 25 nov (PASS) |
 | Requisición | Crear desde historial | Sí (`requisition-history/catalog`) | Bloqueada | `requisitions` (`history_based`, `repeat_policy_snapshot`), `requisition_items` (`history_*`, `repeat_*`, `fixed_client_*`) | Endpoint propio con la cuenta `recovery` (sin grants nuevos) y confirmar las reglas del Apps Script |
 | Requisición | Control de cambios | Sí (`requisition-changes`) | **Real**: R3A, R3B y retiro; R3C2/R3C3 solo consulta | `requisition_change_*` | Escrituras R3C2/R3C3 bloqueadas; la revisión independiente requiere un segundo Master Admin activo |
 | Gestión del Contratista | Registro de validación | Sí | Bloqueada | `requisition_reviews`, `workflow_events` | Endpoint, regla revisor ≠ solicitante y grants |
