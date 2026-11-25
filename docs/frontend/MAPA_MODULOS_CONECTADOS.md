@@ -303,6 +303,7 @@ Diseño del Apps Script original (`src/views/recovery/HistoryRequisition.jsx`, l
 - **＋ Agregar partida nueva** (descripción, cantidad, unidad, categoría activa) y botones 💾 Crear requisición nueva, 🧹 Limpiar y 📋 Ver matriz.
 - Interpretación propia (sin fuente del Apps Script; ningún expediente de recompra existe en la base): códigos de ruta `fixed/requote/validate` y `reuse/validate/requote`, valores por defecto desde `clients.repeat_*` y bloqueo por vigencia vencida.
 - Pruebas: `tests/frontend/history_requisition.test.mjs` (8), `tests/frontend/history_ui_e2e.cjs` (32, solo GET; apta para datos reales) y `tests/history_http_check.py` (11).
+- **Alta real (25 nov 2026):** «💾 Crear requisición nueva» crea la requisición con `POST /api/v1/recovery/requisitions/from-history` (cuenta `recovery`, CSRF + `Idempotency-Key`, mismo bloqueo y transacción que RF1). El servidor resuelve cada partida contra el historial aprobado y guarda el origen y la ruta por partida (`history_*`, `repeat_*`, `fixed_client_*`), la política evaluada, snapshot RF1 y bitácora. Matriz con la marca «🕘 Desde historial» y etapa normal; Registro conserva cliente y origen. Detalle: `docs/requisicion/CREAR_DESDE_HISTORIAL.md` (HTTP escritura 28, UI escritura 10, unidades 9).
 
 ## Solicitud / Requisición · tarjeta 6 Control de cambios (diseño 23 nov 2026)
 

@@ -14,6 +14,9 @@
 > de los datos de la empresa en Contratista: `PUT /api/v1/contractors/{id}` y `GET /api/v1/contractors/{id}/logo`
 > (`ContractorWriteController`, `ContractorInput`, `ContractorWriteRepository`; cuenta `catalogwrite`, ahora 35 permisos).
 > `python3 tests/class_connection_audit.py`: **121 rutas, 87 clases PHP, 138 archivos de interfaz, 0 problemas.**
+>
+> **Actualización del 25 nov.** `POST /api/v1/recovery/requisitions/from-history` (`RequisitionRecoveryController::createFromHistory`,
+> `RequisitionHistoryInput`; cuenta `recovery`, sin permisos nuevos). Mapa: **122 rutas, 88 clases PHP, 0 problemas.**
 
 ## Conclusión
 
