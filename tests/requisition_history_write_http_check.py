@@ -5,7 +5,8 @@ historial aprobado; las requisiciones no se pueden eliminar). Exige SF_SYNTHETIC
 Verifica 401/403/CSRF/415/422, idempotencia (reintento y conflicto de clave), historial cambiado (409), ruta no permitida (409),
 categoría inactiva (409), folio asignado por el servidor, origen y ruta por partida (precio fijo con el precio aprobado, no el del
 navegador), etapa normal en la Matriz, que la requisición y la cotización de origen no cambian, que Registro no cambia el cliente
-ni el origen de una requisición desde historial, bitácora y que no se exponen identificadores internos.
+ni el origen de una requisición desde historial, Control de cambios (R3A del solicitante, sin autoaprobación, R3B de otro
+Master Admin → Rev. 1 con la ruta conservada; SF_REVIEWER_USER, por omisión qa.admin.b), bitácora y que no se exponen identificadores internos.
 Uso: SF_API=http://127.0.0.1:8090 SF_QA_PASSWORD=... SF_SYNTHETIC_WRITES=1 [SF_NONADMIN_USER=<correo>] python3 tests/requisition_history_write_http_check.py
 """
 import http.cookiejar, json, os, re, sys, urllib.error, urllib.request, uuid
@@ -121,6 +122,8 @@ try:
     hist2 = adm.get(f"/api/v1/requisition-history/catalog?client={client['id']}")
     check('el catálogo histórico no cambia (la nueva requisición no tiene cotización aprobada)', hist2['totals'] == hist['totals'])
 
+    cand = adm.get(f"/api/v1/requisition-changes/candidates?scope=eligible&q={out['folio']}")
+    check('elegible para Control de cambios (SOLICITAR MODIFICACIÓN)', any(x.get('folio') == out['folio'] for x in cand.get('items', [])), json.dumps(cand)[:300])
     # Registro (RF1) sobre una requisición desde historial: el cliente y el origen documental se conservan.
     other = next((c for c in cat['clients'] if c['status'] == 'active' and c['id'] != client['id']), None)
     rf1 = {'folio': det['folio'], 'client_id': client['id'], 'request_date': det['request_date'], 'need_date': '2026-12-15', 'project': det['project'], 'contract': det['contract'],
@@ -136,8 +139,35 @@ try:
     check('Registro: edita datos generales y conserva origen, no provisional y rutas por partida', s == 200 and det2['need_date'] == '2026-12-15' and det2['request_source_type'] == 'Historial del cliente (recompra)'
           and det2['is_provisional'] in (0, False) and det2['history_based'] == 1 and (det2.get('history') or {}).get('lines', [{}])[0].get('price_mode') == 'fixed', f'{s} {r} {det2.get("request_source_type")}')
 
-    cand = adm.get(f"/api/v1/requisition-changes/candidates?scope=eligible&q={out['folio']}")
-    check('elegible para Control de cambios (SOLICITAR MODIFICACIÓN)', any(x.get('folio') == out['folio'] for x in cand.get('items', [])), json.dumps(cand)[:300])
+    # Control de cambios sobre la requisición desde historial: R3A (solicitante) → R3B (otro Master Admin) → Rev. 1 con la ruta conservada.
+    REVIEWER = os.environ.get('SF_REVIEWER_USER', 'qa.admin.b@supplyflow.invalid')
+    s0, out2 = adm.call('POST', P, body([hline(fixable, 'fixed', 'requote')], client_reference=f'REF-HIST-CC-{RUN}'))
+    cur = adm.get(f"/api/v1/recovery/requisitions/{out2.get('id')}")
+    s, cr = adm.call('POST', f"/api/v1/recovery/requisitions/{out2.get('id')}/changes", {'date': '2026-11-25', 'requested_by': 'Cliente QA', 'source': 'Correo del cliente', 'change_type': 'Cambio de cantidad',
+        'reference': f'CC-HIST-{RUN}', 'reason': 'El cliente pide más piezas (sintético).', 'header': {},
+        'items': [{'action': 'modify', 'id': cur['items'][0]['id'], 'description': cur['items'][0]['description'], 'quantity': '7', 'unit': cur['items'][0]['unit'], 'category': cur['items'][0]['category']}]}, ifm=cur['version'])
+    check('Control de cambios: solicitud R3A sobre la requisición desde historial (201)', s == 201 and cr.get('id'), f'{s} {cr}')
+    if s == 201:
+        rev = S(REVIEWER)
+        imp = rev.get(f"/api/v1/recovery/changes/{cr['id']}/impact")  # vista del revisor (el solicitante recibe 404)
+        dec = {'decision': 'approve', 'reason': 'Revisión independiente (sintético).', 'requisition_version': imp['requisition_version'], 'acknowledge_scope': True}
+        s, r = adm.call('POST', f"/api/v1/recovery/changes/{cr['id']}/decision", dec, ifm=imp['change_version'])
+        check('el solicitante no puede autoaprobar (409)', s == 409, f'{s} {r}')
+        s, r = rev.call('POST', f"/api/v1/recovery/changes/{cr['id']}/decision", dec, ifm=imp['change_version']); rev.logout()
+        fin = adm.get(f"/api/v1/recovery/requisitions/{out2['id']}")
+        h0f = ((fin.get('history') or {}).get('lines') or [{}])[0]
+        check('otro Master Admin aprueba: Rev. 1 con la cantidad nueva y la ruta de historial conservada', s == 200 and int(fin['current_revision_number']) == 1 and float(fin['items'][0]['quantity']) == 7
+              and h0f.get('price_mode') == 'fixed' and h0f.get('fixed_client_price') is True, f'{s} {r} rev={fin.get("current_revision_number")}')
+    # Limitación vigente del contrato R3B (aprobado en INT02): si la requisición se editó en Registro, su snapshot RF1 ocupa el
+    # número Rev. 1 y R3B responde SNAPSHOT_NUMBER_OCCUPIED (conciliación R2/R3 pendiente). Se documenta para detectar si cambia.
+    cur = adm.get(f"/api/v1/recovery/requisitions/{out['id']}")
+    s, cr3 = adm.call('POST', f"/api/v1/recovery/requisitions/{out['id']}/changes", {'date': '2026-11-25', 'requested_by': 'Cliente QA', 'source': 'Correo del cliente', 'change_type': 'Cambio de cantidad',
+        'reference': f'CC-HIST-ED-{RUN}', 'reason': 'Cambio tras edición en Registro (sintético).', 'header': {},
+        'items': [{'action': 'modify', 'id': cur['items'][0]['id'], 'description': cur['items'][0]['description'], 'quantity': '9', 'unit': cur['items'][0]['unit'], 'category': cur['items'][0]['category']}]}, ifm=cur['version'])
+    if s == 201:
+        rev = S(REVIEWER); imp = rev.get(f"/api/v1/recovery/changes/{cr3['id']}/impact")
+        s, r = rev.call('POST', f"/api/v1/recovery/changes/{cr3['id']}/decision", {'decision': 'approve', 'reason': 'Revisión (sintético).', 'requisition_version': imp['requisition_version'], 'acknowledge_scope': True}, ifm=imp['change_version']); rev.logout()
+        check('limitación vigente: editada en Registro → R3B 409 SNAPSHOT_NUMBER_OCCUPIED y el revisor lo ve antes de decidir', s == 409 and r.get('error', {}).get('code') == 'SNAPSHOT_NUMBER_OCCUPIED' and imp.get('snapshot_number_occupied') is True, f'{s} {r} {imp.get("snapshot_number_occupied")}')
     log = adm.get('/api/v1/audit-events?module=requisitions&page_size=50')['items']
     check('bitácora: requisition.history.create', any(x['action'] == 'requisition.history.create' and out['folio'] in json.dumps(x, ensure_ascii=False) for x in log))
     check('sin rutas de baja (DELETE ≠ 2xx)', not 200 <= adm.call('DELETE', f"/api/v1/recovery/requisitions/{out['id']}")[0] < 300)

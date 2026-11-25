@@ -102,7 +102,7 @@ requisiciones no está migrada. Úsala con una necesidad real del cliente, o asu
 
 | Prueba | Tipo | Resultado (sandbox sintético) |
 |---|---|---|
-| `tests/requisition_history_write_http_check.py` | HTTP, **escribe** (`SF_SYNTHETIC_WRITES=1`) | 28/28 |
+| `tests/requisition_history_write_http_check.py` | HTTP, **escribe** (`SF_SYNTHETIC_WRITES=1`); incluye Control de cambios (R3A → sin autoaprobación → R3B de otro Master Admin → Rev. 1) | 32/32 |
 | `tests/frontend/history_write_ui_e2e.cjs` | Navegador, **escribe**: fallo de red, reintento con la misma clave, matriz y Registro | 10/10 |
 | `tests/frontend/history_ui_e2e.cjs` | Navegador, solo lectura (el POST se aborta y no se da por creado) | 32/32 |
 | `tests/history_http_check.py` | HTTP, solo lectura | 11/11 |
