@@ -73,17 +73,24 @@ const today = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '
     await matrix.waitFor();
     const qa1Rows = all.filter(r => r.client_id === qa1.id);
     check('matriz del cliente con sus requisiciones', await matrix.getByText(`${qa1Rows.length} requisiciones visibles`).isVisible());
+    // La base sintética acumula requisiciones de QA01 (pruebas de escritura; no se eliminan) y la matriz pagina de 50 en 50:
+    // cada fila se busca por su folio antes de leerla.
+    const scope = async q => { await matrix.getByLabel('Buscar en la matriz').fill(q); await page.waitForTimeout(250); };
     const row1 = matrix.getByRole('row').filter({ hasText: r1.folio });
+    await scope(r1.folio);
     const t1 = (await row1.textContent()).replace(/\s+/g, ' ');
     check('fila con OC, proveedor ganador, recepción, factura, monto, etapa y riesgo reales',
       ['OC-QA-0001', 'Aceros Sintéticos del Norte', 'REC-QA-0001', 'FAC-QA-0001', '$15,000.00 USD', 'Factura', 'Facturado', 'PRY-QA01 · Contrato: CTO-QA01'].every(x => t1.includes(x)), t1);
     check('OC cancelada no aparece como vigente', !t1.includes('OC-QA-0009'));
     const row2 = matrix.getByRole('row').filter({ hasText: r2.folio });
+    await scope(r2.folio);
     const t2 = (await row2.textContent()).replace(/\s+/g, ' ');
     const risk2 = r2.need_date < today ? 'Vencido' : 'A tiempo';
     check('proveedor ganador por adjudicación, cotizaciones, etapa y riesgo', ['Instrumentos Europa Sintética', 'por adjudicación', 'Comparativo y autorización', risk2].every(x => t2.includes(x)) && (await row2.locator('td').nth(3).textContent()).trim().startsWith('2'), t2);
+    await scope(r1.folio);
     check('fila de solo consulta: sin acción de emitir OC', await row1.getByRole('button', { name: /Emitir OC/ }).count() === 0 && (await row1.locator('td').last().textContent()).trim() === 'Facturado');
     await shot(page, 'matriz_2_cliente');
+    await scope('');
     await matrix.getByLabel('Etapa').selectOption({ label: 'Factura (1)' });
     check('filtro de etapa', await matrix.getByText('1 requisiciones visibles').isVisible() && await row1.count() === 1);
     await matrix.getByLabel('Etapa').selectOption('all');
@@ -96,6 +103,7 @@ const today = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '
     await matrix.getByLabel('Buscar en la matriz').fill('');
 
     // Detalle existente (con proveedor de la OC)
+    await scope(r1.folio);
     const detResp = page.waitForResponse(r => /\/api\/v1\/matrix\/requisitions\/[0-9a-f-]{36}$/.test(r.url()));
     await row1.getByRole('button', { name: `Ver detalle de ${r1.folio}` }).click();
     check('detalle "Ver" (200)', (await detResp).status() === 200);
@@ -106,7 +114,8 @@ const today = (d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '
     await dialog.getByRole('button', { name: 'Cerrar detalle' }).click();
     check('cerrar el detalle no cierra la matriz', await matrix.isVisible());
 
-    // CSV
+    // CSV (sin búsqueda: todas las requisiciones del cliente)
+    await scope('');
     const [dl] = await Promise.all([page.waitForEvent('download'), matrix.getByRole('button', { name: /Exportar CSV/ }).click()]);
     const csv = fs.readFileSync(await dl.path(), 'utf8');
     const lines = csv.replace(/^﻿/, '').split('\r\n');
