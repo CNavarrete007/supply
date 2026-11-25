@@ -13,8 +13,28 @@ export async function loginWithPassword(email, password) {
     body: JSON.stringify({ email, password }),
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body?.error?.message || 'No se pudo iniciar sesión.');
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || 'No se pudo iniciar sesión.');
+    error.status = response.status; error.code = body?.error?.code;
+    throw error;
+  }
   return body.user;
+}
+/** Replaces a temporary password (first sign-in) or changes the current one. No session is issued: sign in afterwards. */
+export async function changePassword(email, currentPassword, newPassword) {
+  const csrf = await getCsrf();
+  const response = await fetch('/api/v1/auth/password/change', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', 'X-SF-CSRF': csrf },
+    body: JSON.stringify({ email, current_password: currentPassword, new_password: newPassword }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || 'No se pudo cambiar la contraseña.');
+    error.status = response.status; error.code = body?.error?.code;
+    throw error;
+  }
+  return body;
 }
 export async function getSession() {
   const response = await fetch('/api/v1/auth/me', { credentials: 'same-origin', cache: 'no-store' });

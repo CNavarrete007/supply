@@ -1,0 +1,46 @@
+# Usuarios y roles (gestión de acceso: credencial temporal y rol Master Admin): overlay aditivo. No modifica db, sus volúmenes ni las cuentas existentes.
+# Requiere ${SUPPLYFLOW_LOCAL_PRIVATE_DIR}/secrets/useradmin-db-password.txt (64 hex) y aprovisionar una vez con:
+#   docker compose ... -f compose.supply-useradmin.yml --profile useradmin-tools run --rm useradmin-db-tools provision
+services:
+  api:
+    environment:
+      USERADMIN_DB_USERNAME: supplyflow_useradmin_local
+      USERADMIN_DB_PASSWORD_FILE: /run/secrets/useradmin_db_password
+    secrets:
+      - useradmin_db_password
+
+  useradmin-db-tools:
+    profiles: ["useradmin-tools"]
+    build:
+      context: ./docker/supply-dev/db-provision
+      dockerfile: Dockerfile
+    entrypoint: ["python", "/useradmin/provision.py"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      TZ: UTC
+    volumes:
+      - type: volume
+        source: supplyflow_db_socket
+        target: /run/mysqld
+        read_only: true
+      - type: bind
+        source: ./docker/supply-useradmin
+        target: /useradmin
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Requires private local directory}/secrets
+        target: /run/supply-secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+
+secrets:
+  useradmin_db_password:
+    file: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Requires private local directory}/secrets/useradmin-db-password.txt

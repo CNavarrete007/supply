@@ -113,7 +113,16 @@ final class AuthController extends BaseController
                 return $this->fail(429, 'TOO_MANY_ATTEMPTS', 'Demasiados intentos. Prueba más tarde.');
             }
             $repo = new SupplyAuthRepository();
-            $account = $repo->authenticate($email, $password);
+            $check = $repo->verifyPassword($email, $password);
+            if ($check['state'] === 'change_required') {
+                // Correct TEMPORARY password: no session until the user chooses a definitive one (POST auth/password/change).
+                $this->attempt($email, false);
+                return $this->fail(409, 'PASSWORD_CHANGE_REQUIRED', 'Tu contraseña es temporal: elige una nueva para continuar.');
+            }
+            if ($check['state'] === 'expired') {
+                return $this->fail(409, 'TEMPORARY_PASSWORD_EXPIRED', 'La contraseña temporal venció (72 horas). Pide a un Master Admin que la restablezca.');
+            }
+            $account = $check['state'] === 'ok' ? $check['account'] : null;
             if ($account === null) {
                 $this->attempt($email, true);
                 return $this->fail(401, 'INVALID_CREDENTIALS', 'Credenciales incorrectas o cuenta sin activar.');
@@ -141,6 +150,57 @@ final class AuthController extends BaseController
             ]]);
         } catch (Throwable) {
             return $this->fail(503, 'AUTH_UNAVAILABLE', 'Autenticación temporalmente no disponible.');
+        }
+    }
+
+    /**
+     * POST api/v1/auth/password/change {email,current_password,new_password} (25 nov 2026). Replaces a TEMPORARY password at
+     * first login (or changes a validated one). Same CSRF and rate limit as the login; the current password is verified with the
+     * auth account and the new one is written with the dedicated useradmin account. All sessions of the user are revoked.
+     */
+    public function changePassword(): ResponseInterface
+    {
+        if (! $this->requireCsrf()) {
+            return $this->fail(403, 'CSRF_INVALID', 'Solicitud no autorizada.');
+        }
+        if (! str_starts_with(strtolower($this->request->getHeaderLine('Content-Type')), 'application/json')) {
+            return $this->fail(415, 'JSON_REQUIRED', 'Se requiere JSON.');
+        }
+        try {
+            $body = $this->request->getJSON(true);
+            if (! is_array($body) || array_diff(array_keys($body), ['email', 'current_password', 'new_password']) !== []) {
+                return $this->fail(422, 'INVALID_INPUT', 'Datos no válidos.');
+            }
+            $email = mb_strtolower(trim((string) ($body['email'] ?? '')), 'UTF-8');
+            $current = $body['current_password'] ?? null;
+            $new = $body['new_password'] ?? null;
+            if (! filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 254 || ! is_string($current) || $current === '' || strlen($current) > 1024 || ! is_string($new)) {
+                return $this->fail(422, 'INVALID_INPUT', 'Datos no válidos.');
+            }
+            if (! $this->attempt($email, false)) {
+                return $this->fail(429, 'TOO_MANY_ATTEMPTS', 'Demasiados intentos. Prueba más tarde.');
+            }
+            $check = (new SupplyAuthRepository())->verifyPassword($email, $current);
+            if ($check['state'] === 'expired') {
+                return $this->fail(409, 'TEMPORARY_PASSWORD_EXPIRED', 'La contraseña temporal venció (72 horas). Pide a un Master Admin que la restablezca.');
+            }
+            if (! in_array($check['state'], ['ok', 'change_required'], true)) {
+                $this->attempt($email, true);
+                return $this->fail(401, 'INVALID_CREDENTIALS', 'La contraseña actual no es correcta.');
+            }
+            if ($problem = \App\Libraries\UserAccessInput::passwordProblem($new, $email, $current)) {
+                return $this->response->setStatusCode(422)->setJSON(['error' => ['code' => 'WEAK_PASSWORD', 'message' => $problem, 'field' => 'new_password']]);
+            }
+            $account = $check['account'];
+            (new \App\Libraries\UserAccessRepository())->changePassword((int) $account['organization_id'], (int) $account['id'], $new, $check['state'] === 'change_required');
+            setcookie(self::SESSION_COOKIE, '', $this->cookieOptions(time() - 3600, true));
+            return $this->response->setJSON(['status' => 'password_changed']);
+        } catch (Throwable $e) {
+            if ($e instanceof RuntimeException && $e->getMessage() === 'USERADMIN_NOT_PROVISIONED') {
+                return $this->fail(503, 'USERADMIN_NOT_PROVISIONED', 'El cambio de contraseña aún no está habilitado en este equipo (falta la cuenta de administración de usuarios). Pide al administrador que la active.');
+            }
+            log_message('error', 'SupplyFlow password change failed: {code}', ['code' => get_class($e)]);
+            return $this->fail(503, 'AUTH_UNAVAILABLE', 'No se pudo cambiar la contraseña. No se aplicaron cambios.');
         }
     }
 

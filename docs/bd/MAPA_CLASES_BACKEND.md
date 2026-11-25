@@ -17,6 +17,10 @@
 >
 > **Actualización del 25 nov.** `POST /api/v1/recovery/requisitions/from-history` (`RequisitionRecoveryController::createFromHistory`,
 > `RequisitionHistoryInput`; cuenta `recovery`, sin permisos nuevos). Mapa: **122 rutas, 88 clases PHP, 0 problemas.**
+>
+> **Actualización del 25 nov, tarde.** Gestión de acceso: `GET /api/v1/users/access-status`, `POST /api/v1/users/{id}/access`
+> (`UserAccessController`, `UserAccessRepository`, `UserAccessInput`; cuenta nueva `useradmin`) y `POST /api/v1/auth/password/change`
+> (`AuthController::changePassword`). Mapa: **125 rutas, 91 clases PHP, 0 problemas.**
 
 ## Conclusión
 

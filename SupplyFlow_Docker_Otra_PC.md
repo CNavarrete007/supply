@@ -30,6 +30,8 @@ $files=@('docker-compose.yml','compose.supply-db.yml','compose.supply-dev.yml',
   'compose.supply-recovery.yml','compose.supply-dbadmin.yml')
 # Guardado de catálogos (Clientes, Proveedores, Suministros, Categorías): solo si existe su secreto.
 if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\catalogwrite-db-password.txt"){ $files+='compose.supply-catalogwrite.yml' }
+# Gestión de acceso (segundo Master Admin y cambio de contraseña): solo si existe su secreto.
+if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\useradmin-db-password.txt"){ $files+='compose.supply-useradmin.yml' }
 $compose=@('compose','-p','supply','--project-directory',$root)
 foreach($f in $files) {
   $p=Join-Path $root $f

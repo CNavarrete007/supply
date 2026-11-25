@@ -97,6 +97,10 @@ $files = @(
 if (Test-Path -LiteralPath (Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets\catalogwrite-db-password.txt') -PathType Leaf) {
   $files += 'compose.supply-catalogwrite.yml'
 }
+# Gestión de acceso de Usuarios y roles (cuenta useradmin: segundo Master Admin y cambio de contraseña): igual, solo si existe su secreto.
+if (Test-Path -LiteralPath (Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets\useradmin-db-password.txt') -PathType Leaf) {
+  $files += 'compose.supply-useradmin.yml'
+}
 $compose = @('compose','-p','supply','--project-directory',$root)
 foreach ($file in $files) {
   $path = Join-Path $root $file

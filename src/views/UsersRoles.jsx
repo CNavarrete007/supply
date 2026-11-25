@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Lock, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react';
 import { allUsers, listRoles, userFunctions, auditEvents, authMe } from './usersRoles/api';
+import { AccessPanel } from './usersRoles/AccessPanel';
 import { FUNCTIONS, STATUSES, PHOTO_TYPES, emptyUser, fromUser, validateUser, passwordRequired, credentialActive, changedFields } from './usersRoles/userForm.mjs';
 import { emptyRole, fromRole, roleCodeOf, sectionCount, validateRole, changedRoleFields, roleCardInfo, roleDeleteBlock } from './usersRoles/roleForm.mjs';
 import { lastAccessText, matrixBadge, companyLine, accessPill, toggleAction, toggleBlock, reasonError, deleteBlock as userDeleteBlock, emailConfirmed } from './usersRoles/userMatrix.mjs';
@@ -12,6 +13,8 @@ import {
 // Usuarios y roles · diseño Grupo Gerez (5 tarjetas) conectado a MariaDB en modo consulta.
 // Fuentes (GET, solo Master Admin): /users (todas las páginas), /roles, /users/functions y /audit-events.
 // Alta, edición, bloqueo y eliminación de usuarios o roles NO existen en el backend: se muestran bloqueados.
+// Excepción (25 nov 2026): «Acceso y rol Master Admin» en la ficha (AccessPanel) habilita, restablece o retira el rol Master Admin
+// de OTRA persona con la cuenta dedicada useradmin (reautenticación, motivo, If-Match, Idempotency-Key y bitácora).
 const DASH = '—';
 const inputCls = 'w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all disabled:bg-slate-50 disabled:text-slate-600';
 const filterCls = 'w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-slate-800 font-medium';
@@ -21,7 +24,7 @@ export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
   const en = Boolean(isEnglish || lang === 'en' || language === 'en');
   const tx = (es, e) => (en ? e : es);
   const notify = (title, message, type = 'info') => { if (typeof onNotify === 'function') onNotify(title, message, type); };
-  const LOCK = tx('Modo consulta MariaDB: el alta, la edición, el bloqueo y la eliminación de usuarios y roles se habilitarán cuando existan endpoints de escritura con autorización, CSRF, idempotencia y auditoría.', 'MariaDB read mode: creating, editing, blocking and deleting users and roles will be enabled once write endpoints with authorization, CSRF, idempotency and audit exist.');
+  const LOCK = tx('Modo consulta MariaDB: el alta, la edición, el bloqueo y la eliminación de usuarios y roles se habilitarán cuando existan endpoints de escritura con autorización, CSRF, idempotencia y auditoría. Ya disponible: «Acceso y rol Master Admin» en la ficha de cada usuario (habilitar, restablecer contraseña temporal o retirar el rol).', 'MariaDB read mode: creating, editing, blocking and deleting users and roles will be enabled once write endpoints with authorization, CSRF, idempotency and audit exist.');
   const tabs = [
     { id: 1, emoji: '👥', title: tx('Usuarios', 'Users'), desc: tx('Alta y actualización: ficha, funciones operativas, acceso y rol.', 'Create and update: record, operational functions, access and role.') },
     { id: 2, emoji: '📋', title: tx('Matriz de usuarios', 'Users Matrix'), desc: tx('Consulta y busca las cuentas registradas y su último acceso.', 'View and search registered accounts and their last access.') },
@@ -234,6 +237,8 @@ export function UsersRoles({ onNotify, lang = 'es', language, isEnglish }) {
             placeholder={!form.access ? tx('Sin acceso al sistema: no requiere contraseña', 'No system access: no password required') : sel && credentialActive(sel) ? tx('Déjala vacía para conservar la contraseña actual', 'Leave empty to keep the current password') : tx('Mínimo 8 caracteres', 'Minimum 8 characters')} onChange={e => setF('password', e.target.value)} className={ctl('password')} />,
             sel ? `${tx('Último acceso', 'Last access')}: ${localDateTime(sel.last_login_at) || tx('sin accesos registrados', 'no access recorded')}` : null)}
         </div>; })()}
+
+      {sel && <AccessPanel user={sel} meId={me?.public_id} en={en} notify={notify} onChanged={() => setRevision(r => r + 1)} />}
 
       <div className="p-4 sm:p-5 border border-dashed border-blue-200 rounded-2xl bg-blue-50/20 space-y-4">
         <div className="space-y-2.5"><h4 className="text-xs font-black text-slate-900">{tx('Funciones operativas', 'Operational functions')}</h4>

@@ -40,6 +40,9 @@ $Files = @('docker-compose.yml', 'compose.supply-db.yml', 'compose.supply-dev.ym
 # habilitarla (secreto + provision) se hace aparte, con respaldo y autorizacion (docs/clientes/ALTA_EDICION_CLIENTES.md).
 $CatalogWrite = Test-Path -LiteralPath (Join-Path $PrivateDir 'secrets\catalogwrite-db-password.txt') -PathType Leaf
 if ($CatalogWrite) { $Files += 'compose.supply-catalogwrite.yml' }
+# Usuarios y roles (segundo Master Admin y cambio de contrasena): cuenta useradmin, igual que la de catalogos (docs/usuarios/SEGUNDO_MASTER_ADMIN.md).
+$UserAdmin = Test-Path -LiteralPath (Join-Path $PrivateDir 'secrets\useradmin-db-password.txt') -PathType Leaf
+if ($UserAdmin) { $Files += 'compose.supply-useradmin.yml' }
 $script:Problems = New-Object System.Collections.Generic.List[string]
 
 function Say([string]$Status, [string]$Text) { Write-Host ('[{0,-7}] {1}' -f $Status, $Text) }
@@ -209,6 +212,8 @@ switch ($Phase) {
     & docker @Compose ps -a | Out-Host
     if ($CatalogWrite) { Say 'OK' 'Guardado de catalogos: overlay compose.supply-catalogwrite.yml incluido (si la cuenta no esta aprovisionada, Clientes lo indica al abrir la ficha).' }
     else { Say 'INFO' 'Guardado de catalogos NO habilitado: falta secrets\catalogwrite-db-password.txt. Clientes, Proveedores, Suministros y Categorias solo consultan (ver docs/clientes/ALTA_EDICION_CLIENTES.md).' }
+    if ($UserAdmin) { Say 'OK' 'Gestion de acceso: overlay compose.supply-useradmin.yml incluido (Usuarios y roles indica si falta aprovisionar la cuenta).' }
+    else { Say 'INFO' 'Gestion de acceso NO habilitada: falta secrets\useradmin-db-password.txt (segundo Master Admin y cambio de contrasena; ver docs/usuarios/SEGUNDO_MASTER_ADMIN.md).' }
     if ($ok) { Say 'PASS' 'SupplyFlow en http://localhost:8080 (inicia sesion con tu usuario de la PC anterior).'; exit 0 }
     exit 1
   }

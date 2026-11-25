@@ -98,19 +98,36 @@ final class SupplyAuthRepository
     /** @return array<string,mixed>|null */
     public function authenticate(string $email, string $password): ?array
     {
+        $r = $this->verifyPassword($email, $password);
+        return $r['state'] === 'ok' ? $r['account'] : null;
+    }
+
+    /**
+     * Password check with the credential state (25 nov 2026): ok (validated), change_required (correct TEMPORARY password,
+     * must be replaced before a session is issued), expired (temporary password older than 72 h) or invalid. The temporary
+     * states are only revealed to whoever typed the correct temporary password.
+     * @return array{state:string,account:?array}
+     */
+    public function verifyPassword(string $email, string $password): array
+    {
         $matches = $this->one('SELECT COUNT(*) AS total FROM users WHERE normalized_login_email=?', 's', [$email]);
-        $account = (int) ($matches['total'] ?? 0) === 1 ? $this->one('SELECT u.id,u.organization_id,u.public_id,u.login_email,u.password_hash,u.credential_state,u.access_enabled,u.status_code,p.active AS person_active,p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.normalized_login_email=? LIMIT 1', 's', [$email]) : null;
+        $account = (int) ($matches['total'] ?? 0) === 1 ? $this->one('SELECT u.id,u.organization_id,u.public_id,u.login_email,u.password_hash,u.credential_state,u.access_enabled,u.status_code,p.active AS person_active,p.display_name,(u.updated_at < DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 72 HOUR)) AS temp_expired FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.normalized_login_email=? LIMIT 1', 's', [$email]) : null;
         // This constant hash is verified for nonexistent/disabled accounts to reduce timing discrepancy.
         $dummy = '$argon2id$v=19$m=65536,t=3,p=1$V0pJUnUzVC9YU2FkV25ycw$p4gVL0K5Yq+9zI/BdXQuO+CtJhyAS2SmF9lhS/Xgsgk';
         $hash = is_string($account['password_hash'] ?? null) && str_starts_with($account['password_hash'], '$argon2id$')
             ? $account['password_hash'] : $dummy;
         $valid = password_verify($password, $hash);
-        if (! $valid || ! $account || ($account['credential_state'] ?? '') !== 'local_validated'
-            || (int) $account['access_enabled'] !== 1 || ($account['status_code'] ?? '') !== 'active'
-            || (int) $account['person_active'] !== 1) {
-            return null;
+        if (! $valid || ! $account || (int) $account['access_enabled'] !== 1 || ($account['status_code'] ?? '') !== 'active'
+            || (int) $account['person_active'] !== 1 || $hash === $dummy) {
+            return ['state' => 'invalid', 'account' => null];
         }
-        return $account;
+        if (($account['credential_state'] ?? '') === 'local_validated') {
+            return ['state' => 'ok', 'account' => $account];
+        }
+        if (($account['credential_state'] ?? '') === 'reset_required') {
+            return ['state' => (int) $account['temp_expired'] === 1 ? 'expired' : 'change_required', 'account' => $account];
+        }
+        return ['state' => 'invalid', 'account' => null];
     }
 
     /** @return array<string,mixed> */
@@ -196,7 +213,7 @@ final class SupplyAuthRepository
     public function users(int $orgId, int $limit, int $offset): array
     {
         $count = $this->one('SELECT COUNT(*) AS count FROM users WHERE organization_id=?', 'i', [$orgId]);
-        $stmt = $this->db->prepare('SELECT u.public_id,u.login_email,u.status_code,u.access_enabled,u.credential_state,COALESCE(u.last_login_at,(SELECT MAX(a.created_at) FROM auth_sessions a WHERE a.user_id=u.id AND a.organization_id=u.organization_id)) AS last_login_at,p.display_name,p.position_title,p.phone, GROUP_CONCAT(r.name ORDER BY r.name SEPARATOR \' | \') AS roles,GROUP_CONCAT(r.code ORDER BY r.name SEPARATOR \' | \') AS role_codes FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id LEFT JOIN user_roles ur ON ur.user_id=u.id AND ur.organization_id=u.organization_id LEFT JOIN roles r ON r.id=ur.role_id AND r.organization_id=ur.organization_id WHERE u.organization_id=? GROUP BY u.id ORDER BY p.display_name,u.id LIMIT ? OFFSET ?');
+        $stmt = $this->db->prepare('SELECT u.public_id,u.row_version,u.login_email,u.status_code,u.access_enabled,u.credential_state,COALESCE(u.last_login_at,(SELECT MAX(a.created_at) FROM auth_sessions a WHERE a.user_id=u.id AND a.organization_id=u.organization_id)) AS last_login_at,p.display_name,p.position_title,p.phone, GROUP_CONCAT(r.name ORDER BY r.name SEPARATOR \' | \') AS roles,GROUP_CONCAT(r.code ORDER BY r.name SEPARATOR \' | \') AS role_codes FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id LEFT JOIN user_roles ur ON ur.user_id=u.id AND ur.organization_id=u.organization_id LEFT JOIN roles r ON r.id=ur.role_id AND r.organization_id=ur.organization_id WHERE u.organization_id=? GROUP BY u.id ORDER BY p.display_name,u.id LIMIT ? OFFSET ?');
         try {
             $stmt->bind_param('iii', $orgId, $limit, $offset);
             $stmt->execute();
@@ -210,7 +227,7 @@ final class SupplyAuthRepository
             $overrides[(string) $o['public_id']][] = ['code' => (string) $o['code'], 'effect' => (string) $o['effect']];
         }
         return ['total' => (int) ($count['count'] ?? 0), 'items' => array_map(static fn ($r) => [
-            'id' => $r['public_id'], 'name' => $r['display_name'], 'email' => $r['login_email'], 'position' => $r['position_title'], 'phone' => $r['phone'], 'status' => $r['status_code'], 'access_enabled' => (bool) $r['access_enabled'], 'credential_state' => $r['credential_state'], 'roles' => $r['roles'] ? explode(' | ', $r['roles']) : [], 'last_login_at' => $r['last_login_at'],
+            'id' => $r['public_id'], 'name' => $r['display_name'], 'email' => $r['login_email'], 'position' => $r['position_title'], 'phone' => $r['phone'], 'status' => $r['status_code'], 'access_enabled' => (bool) $r['access_enabled'], 'credential_state' => $r['credential_state'], 'version' => (int) $r['row_version'], 'roles' => $r['roles'] ? explode(' | ', $r['roles']) : [], 'last_login_at' => $r['last_login_at'],
             'role_codes' => $r['role_codes'] ? explode(' | ', $r['role_codes']) : [], 'permission_overrides' => $overrides[(string) $r['public_id']] ?? [],
         ], $records)];
     }

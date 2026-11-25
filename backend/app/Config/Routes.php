@@ -10,7 +10,11 @@ $routes->get('api/v1/auth/csrf', 'AuthController::csrf');
 $routes->post('api/v1/auth/login', 'AuthController::login');
 $routes->get('api/v1/auth/me', 'AuthController::me');
 $routes->post('api/v1/auth/logout', 'AuthController::logout');
+$routes->post('api/v1/auth/password/change', 'AuthController::changePassword');
 $routes->get('api/v1/users', 'UserDirectoryController::users');
+// Usuarios y roles · gestión de acceso (25 nov 2026): credencial temporal y rol Master Admin con la cuenta useradmin.
+$routes->get('api/v1/users/access-status', 'UserAccessController::status');
+$routes->post('api/v1/users/(:segment)/access', 'UserAccessController::access/$1');
 $routes->get('api/v1/roles', 'UserDirectoryController::roles');
 // Usuarios y roles: functions observed in documents and audit log, Master Admin only, read-only.
 $routes->get('api/v1/users/functions', 'UserDirectoryController::functions');

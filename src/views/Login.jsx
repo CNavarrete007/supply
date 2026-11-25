@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { loginWithPassword } from '../apiAuth';
+import { loginWithPassword, changePassword } from '../apiAuth';
+import { passwordProblem } from './usersRoles/accessModel.mjs';
 import { 
   Lock, 
   User, 
@@ -25,6 +26,11 @@ export function Login({ onLoginSuccess }) {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
+  // Cambio de contraseña (25 nov 2026): obligatorio al entrar con una contraseña temporal, o voluntario desde el enlace.
+  const [pwChange, setPwChange] = useState(null); // { forced, email, current }
+  const [pwNew, setPwNew] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [pwError, setPwError] = useState('');
   
   // Estados para el formulario del Portal del Cliente
   const [numeroCliente, setNumeroCliente] = useState('');
@@ -110,10 +116,36 @@ export function Login({ onLoginSuccess }) {
       setPassword('');
       if (onLoginSuccess) onLoginSuccess(user);
     } catch (error) {
+      if (error?.code === 'PASSWORD_CHANGE_REQUIRED') {
+        // La contraseña temporal es correcta: se conserva SOLO en memoria para el cambio y nunca se guarda.
+        setPwChange({ forced: true, email: usuario.trim(), current: password }); setPwNew(''); setPwConfirm(''); setPwError('');
+        setPassword('');
+        return;
+      }
       setPassword('');
       setLoginError(error?.message || 'No fue posible iniciar sesión.');
     } finally { setLoginBusy(false); }
   };
+
+  const es = lang === 'es';
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    const email = pwChange.email.trim();
+    if (!email || !pwChange.current) { setPwError(es ? 'Escribe tu usuario y tu contraseña actual.' : 'Type your username and current password.'); return; }
+    if (pwNew !== pwConfirm) { setPwError(es ? 'La confirmación no coincide con la nueva contraseña.' : 'The confirmation does not match.'); return; }
+    const problem = passwordProblem(pwNew, email, pwChange.current, !es);
+    if (problem) { setPwError(problem); return; }
+    setLoginBusy(true); setPwError('');
+    try {
+      await changePassword(email, pwChange.current, pwNew);
+      const user = await loginWithPassword(email, pwNew);
+      setPwChange(null); setPwNew(''); setPwConfirm('');
+      if (onLoginSuccess) onLoginSuccess(user);
+    } catch (error) {
+      setPwError(error?.message || (es ? 'No se pudo cambiar la contraseña.' : 'The password could not be changed.'));
+    } finally { setLoginBusy(false); }
+  };
+  const cancelPasswordChange = () => { setPwChange(null); setPwNew(''); setPwConfirm(''); setPwError(''); };
 
   // Manejador de consulta del cliente (Redirige hacia ClientPortal)
   const handleClientSubmit = (e) => {
@@ -231,7 +263,32 @@ export function Login({ onLoginSuccess }) {
             </div>
 
             {/* VISTA 1: ACCESO INTERNO */}
-            {activeTab === 'interno' && (
+            {activeTab === 'interno' && pwChange && (
+              <form onSubmit={handlePasswordChange} data-testid="password-change" className="space-y-4 animate-fadeIn">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">{pwChange.forced ? (es ? 'Elige tu nueva contraseña' : 'Choose your new password') : (es ? 'Cambiar contraseña' : 'Change password')}</h2>
+                  <p className="text-xs md:text-sm text-slate-500 mt-1">{pwChange.forced
+                    ? (es ? 'Entraste con una contraseña temporal. Para continuar elige una contraseña nueva que solo tú conozcas.' : 'You signed in with a temporary password. Choose a new one only you know.')
+                    : (es ? 'Escribe tu contraseña actual y la nueva.' : 'Type your current and new password.')}</p>
+                </div>
+                {!pwChange.forced && <>
+                  <label className="block"><span className="block text-xs font-extrabold text-slate-800 mb-1.5">{t[lang].lblUser}</span>
+                    <input type="email" aria-label={es ? 'Usuario para cambiar contraseña' : 'Username to change password'} value={pwChange.email} onChange={e => setPwChange(p => ({ ...p, email: e.target.value }))} required className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm" /></label>
+                  <label className="block"><span className="block text-xs font-extrabold text-slate-800 mb-1.5">{es ? 'Contraseña actual' : 'Current password'}</span>
+                    <input type="password" autoComplete="current-password" aria-label={es ? 'Contraseña actual' : 'Current password'} value={pwChange.current} onChange={e => setPwChange(p => ({ ...p, current: e.target.value }))} required className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm" /></label>
+                </>}
+                {pwChange.forced && <p className="text-xs text-slate-600 bg-slate-50 border border-slate-100 rounded-xl p-3">{es ? 'Usuario' : 'User'}: <b>{pwChange.email}</b></p>}
+                <label className="block"><span className="block text-xs font-extrabold text-slate-800 mb-1.5">{es ? 'Nueva contraseña' : 'New password'}</span>
+                  <input type="password" autoComplete="new-password" aria-label={es ? 'Nueva contraseña' : 'New password'} value={pwNew} onChange={e => { setPwNew(e.target.value); setPwError(''); }} required maxLength={128} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm" /></label>
+                <label className="block"><span className="block text-xs font-extrabold text-slate-800 mb-1.5">{es ? 'Confirmar nueva contraseña' : 'Confirm new password'}</span>
+                  <input type="password" autoComplete="new-password" aria-label={es ? 'Confirmar nueva contraseña' : 'Confirm new password'} value={pwConfirm} onChange={e => { setPwConfirm(e.target.value); setPwError(''); }} required maxLength={128} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm" /></label>
+                <p className="text-[11px] text-slate-500">{es ? 'Mínimo 12 caracteres, con letras y números; no puede contener tu usuario ni ser igual a la actual.' : 'At least 12 characters, letters and numbers; it cannot contain your username or equal the current one.'}</p>
+                <button type="submit" disabled={loginBusy} className="w-full py-3.5 px-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl text-sm font-black">{loginBusy ? (es ? 'Guardando…' : 'Saving…') : (es ? 'Guardar y entrar' : 'Save and sign in')}</button>
+                <button type="button" onClick={cancelPasswordChange} className="w-full py-2.5 text-xs font-bold text-slate-600 hover:text-slate-900">{es ? 'Cancelar' : 'Cancel'}</button>
+                {pwError && <p role="alert" data-testid="password-change-error" className="text-sm text-red-700 bg-red-50 rounded-lg p-3">{pwError}</p>}
+              </form>
+            )}
+            {activeTab === 'interno' && !pwChange && (
               <form onSubmit={handleInternalSubmit} className="space-y-5 animate-fadeIn">
                 <div>
                   <h2 className="text-3xl font-black text-slate-900 tracking-tight">{t[lang].titleInternal}</h2>
@@ -281,6 +338,7 @@ export function Login({ onLoginSuccess }) {
                 </button>
 
                 {loginError && <p role="alert" className="text-sm text-red-700 bg-red-50 rounded-lg p-3">{loginError}</p>}
+                <button type="button" onClick={() => { setPwChange({ forced: false, email: usuario.trim(), current: '' }); setPwNew(''); setPwConfirm(''); setPwError(''); setLoginError(''); }} className="text-xs font-bold text-blue-700 hover:underline">{lang === 'es' ? '¿Cambiar contraseña?' : 'Change password?'}</button>
                 {/* Nota de pie */}
                 <div className="p-3.5 bg-slate-50 border border-slate-100 rounded-xl text-xs text-slate-500 leading-relaxed font-normal">
                   {t[lang].noteInternal}

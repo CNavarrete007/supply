@@ -69,6 +69,8 @@ foreach($f in 'docker-compose.yml','compose.supply-db.yml','compose.supply-dev.y
   'compose.supply-reqwrite.yml','compose.supply-recovery.yml','compose.supply-dbadmin.yml'){ $compose+=@('-f',(Join-Path $root $f)) }
 # Guardado de catálogos (cuenta catalogwrite): solo si existe su secreto; si se omite, Clientes/Proveedores/Suministros/Categorías no guardan.
 if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\catalogwrite-db-password.txt"){ $compose+=@('-f',(Join-Path $root 'compose.supply-catalogwrite.yml')) }
+# Gestión de acceso (cuenta useradmin: segundo Master Admin y cambio de contraseña): solo si existe su secreto.
+if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\useradmin-db-password.txt"){ $compose+=@('-f',(Join-Path $root 'compose.supply-useradmin.yml')) }
 & docker.exe @compose --profile dev config --quiet; if($LASTEXITCODE){throw 'BLOCKED'}
 ```
 4. Solo la base (camino A: restaurar aquí; camino B: instalar esquema sintético aquí): `& docker.exe @compose up -d db`
