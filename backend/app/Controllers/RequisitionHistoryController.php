@@ -12,8 +12,8 @@ use Throwable;
  * Requisición › Crear desde historial · read-only (Master Admin, cuenta API de solo SELECT).
  * GET api/v1/requisition-history/catalog?client={uuid} → política de recompra del cliente y catálogo histórico
  * (partidas de cotizaciones al cliente aprobadas con último precio, costo y proveedor).
- * Crear la requisición desde historial NO está expuesto: el alta RF1 no admite origen histórico ni tratamiento por
- * partida, y un endpoint propio requiere autorización explícita.
+ * La creación de la requisición desde historial es POST /api/v1/recovery/requisitions/from-history
+ * (RequisitionRecoveryController::createFromHistory, cuenta recovery; 25 nov 2026).
  */
 final class RequisitionHistoryController extends ReadOnlyModuleController
 {

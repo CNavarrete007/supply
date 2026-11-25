@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 namespace App\Controllers;
+use App\Libraries\RequisitionHistoryInput;
+use App\Libraries\RequisitionHistoryReadRepository;
 use App\Libraries\RequisitionRecoveryInput;
 use App\Libraries\RequisitionRegularizationInput;
 use App\Libraries\RequisitionRecoveryRepository;
@@ -120,6 +122,29 @@ final class RequisitionRecoveryController extends BaseController
             $data=RequisitionRegularizationInput::payload($this->request->getJSON(true));
             $out=(new RequisitionRecoveryRepository())->regularize((int)$this->actor['organization_id'],(int)$this->actor['id'],$id,(int)$m[1],$data,strtolower($key));
             return $this->reply(200,$out);
+        }catch(Throwable $e){return $this->error($e);}
+    }
+    /**
+     * Requisición › Crear desde historial: POST /api/v1/recovery/requisitions/from-history (201; replay 200).
+     * Same session/CSRF/JSON/Idempotency-Key boundary as RF1. The history catalog is read with the API account (SELECT) and every
+     * history line is resolved on the server; the requisition is written with the recovery account. No commercial writes.
+     */
+    public function createFromHistory():ResponseInterface
+    {
+        if($f=$this->authorize())return $f;
+        if(!$this->csrf())return $this->fail(403,'CSRF_INVALID','Solicitud no autorizada.');
+        if(!str_starts_with(strtolower($this->request->getHeaderLine('Content-Type')),'application/json'))return $this->fail(415,'JSON_REQUIRED','Se requiere JSON.');
+        if(strlen((string)$this->request->getBody())>2097152)return $this->fail(413,'PAYLOAD_TOO_LARGE','La solicitud excede el límite técnico.');
+        $key=$this->request->getHeaderLine('Idempotency-Key');
+        if(!RequisitionRecoveryInput::uuid($key))return $this->fail(422,'IDEMPOTENCY_REQUIRED','Falta la identificación de la solicitud.');
+        try{
+            $input=RequisitionHistoryInput::payload($this->request->getJSON(true));
+            $org=(int)$this->actor['organization_id'];
+            $history=new RequisitionHistoryReadRepository();
+            $catalog=$history->catalog($org,$input['general']['client_id']);
+            if(!$catalog)return $this->fail(409,'CLIENT_UNAVAILABLE','Selecciona un cliente activo.');
+            $data=(new RequisitionRecoveryRepository())->createFromHistory($org,(int)$this->actor['id'],$input['general'],$input['lines'],$catalog,$history->businessToday($org),strtolower($key));
+            return $this->reply($data['replayed']?200:201,$data);
         }catch(Throwable $e){return $this->error($e);}
     }
     public function create():ResponseInterface{return $this->write(null);}

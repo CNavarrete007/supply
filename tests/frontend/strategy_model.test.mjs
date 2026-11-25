@@ -46,6 +46,11 @@ test('propuesta inicial sin plan: un lote por categoría con sugeridos seleccion
   assert.deepEqual(st.lots.map(l => [l.name, l.suppliers.map(s => s.id), l.minQuotes]), [['EPP y seguridad', ['s1', 's2'], '3'], ['Papeleria, equipos electronicos', ['s3'], '3']]);
   assert.deepEqual(Object.values(st.items).map(x => x.lot), ['N1', 'N2', 'N1']);
   assert.equal(defaultStrategy({ history_based: true }, ITEM), NO_RFQ);
+  // Rutas de «Crear desde historial»: solo reutilizar proveedor omite la RFQ.
+  assert.equal(defaultStrategy({ history_based: true, repeat_sourcing_mode: 'reuse' }, ITEM), NO_RFQ);
+  assert.notEqual(defaultStrategy({ history_based: true, fixed_client_price: true, repeat_sourcing_mode: 'requote' }, ITEM), NO_RFQ);
+  assert.notEqual(defaultStrategy({ history_based: true, repeat_sourcing_mode: 'validate' }, ITEM), NO_RFQ);
+  assert.notEqual(defaultStrategy({ history_based: false, repeat_sourcing_mode: 'requote' }, ITEM), NO_RFQ);
   assert.equal(defaultStrategy({}, { strategy: 'Otra' }), 'Competencia abierta');
 });
 

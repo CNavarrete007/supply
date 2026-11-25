@@ -90,7 +90,7 @@ final class ProcessFlowReadRepository
     public function overview(int $org): array
     {
         $reqs = $this->rows(<<<'SQL'
-            SELECT r.id AS db_id,r.folio,r.request_date,r.route_code,r.history_based,r.latest_change_request_id,c.legal_name AS client_name,
+            SELECT r.id AS db_id,r.folio,r.request_date,r.route_code,r.history_based,r.latest_change_request_id,e.imported_at,c.legal_name AS client_name,
               EXISTS (SELECT 1 FROM service_orders so WHERE so.organization_id=r.organization_id AND so.requisition_id=r.id) AS has_service
             FROM requisitions r
             JOIN business_entities e ON e.id=r.id AND e.organization_id=r.organization_id AND e.entity_kind='requisition'

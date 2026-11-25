@@ -45,6 +45,18 @@ final class RequisitionHistoryReadRepository
         return $v === null || $v === '' ? null : (float) $v;
     }
 
+    /** Today's date in the organization's business time zone (validity of historical prices), fallback America/Mexico_City. */
+    public function businessToday(int $org): string
+    {
+        $tz = $this->rows('SELECT business_timezone FROM organizations WHERE id = ?', [$org])[0]['business_timezone'] ?? null;
+        try {
+            $zone = new \DateTimeZone(is_string($tz) && $tz !== '' ? $tz : 'America/Mexico_City');
+        } catch (\Throwable) {
+            $zone = new \DateTimeZone('America/Mexico_City');
+        }
+        return (new \DateTimeImmutable('now', $zone))->format('Y-m-d');
+    }
+
     /** @return array<string,mixed>|null null when the client does not exist in the organization. */
     public function catalog(int $org, string $clientPublicId): ?array
     {

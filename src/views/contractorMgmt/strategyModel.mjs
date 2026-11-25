@@ -36,9 +36,16 @@ export function suggestedFor(categories = [], suppliers = []) {
   return suppliers.filter(s => isAuthorized(s) && [s.category, ...(s.offering_categories || [])].some(c => want.has(fold(c)))).map(s => s.id);
 }
 
-/** Default strategy of a line: historical price when the line comes from history, else the validation strategy. */
+/**
+ * Default strategy of a line: historical price when the line comes from history, else the validation strategy.
+ * Lines created by «Crear desde historial» carry their supplier route: only «reuse» skips the RFQ; «validate» and «requote»
+ * need supplier quotes (25 nov 2026). Other/legacy history lines keep the previous rule.
+ */
 export function defaultStrategy(item, review) {
-  if (item?.history_based || item?.fixed_client_price || /hist/i.test(clean(item?.repeat_sourcing_mode))) return NO_RFQ;
+  const route = clean(item?.repeat_sourcing_mode);
+  if (route === 'reuse') return NO_RFQ;
+  const needsRfq = route === 'requote' || route === 'validate';
+  if (!needsRfq && (item?.history_based || item?.fixed_client_price || /hist/i.test(route))) return NO_RFQ;
   return ITEM_STRATEGIES.some(s => s[0] === review?.strategy) ? review.strategy : 'Competencia abierta';
 }
 

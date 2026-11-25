@@ -132,6 +132,7 @@ $routes->get('api/v1/recovery/requisitions/(:segment)/regularization', 'Requisit
 $routes->post('api/v1/recovery/requisitions/(:segment)/regularization', 'RequisitionRecoveryController::regularize/$1');
 $routes->get('api/v1/recovery/requisitions/(:segment)/document', 'RequisitionRecoveryController::document/$1');
 $routes->get('api/v1/recovery/requisitions/(:segment)', 'RequisitionRecoveryController::detail/$1');
+$routes->post('api/v1/recovery/requisitions/from-history', 'RequisitionRecoveryController::createFromHistory');
 $routes->post('api/v1/recovery/requisitions', 'RequisitionRecoveryController::create');
 $routes->put('api/v1/recovery/requisitions/(:segment)', 'RequisitionRecoveryController::update/$1');
 

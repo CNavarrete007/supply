@@ -1,7 +1,7 @@
 // Requisición › Crear desde historial · pruebas de la lógica pura. Ejecutar: node --test tests/frontend/history_requisition.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { STEPS, PRICE_MODES, SOURCING_MODES, HISTORY_FILTERS, DEFAULT_DESCRIPTION, emptyHistoryForm, validity, policyDefaults, modeBlock, lineFromHistory, newLine, newItemError, lineWarnings, filterArticles, routeSummary, validateHistoryRequisition, createLockedText } from '../../src/views/recovery/historyModel.mjs';
+import { STEPS, PRICE_MODES, SOURCING_MODES, HISTORY_FILTERS, DEFAULT_DESCRIPTION, emptyHistoryForm, validity, policyDefaults, modeBlock, lineFromHistory, newLine, newItemError, lineWarnings, filterArticles, routeSummary, validateHistoryRequisition, historyPayload, createdText, historySaveError, refreshLines } from '../../src/views/recovery/historyModel.mjs';
 
 const DAY = '2026-11-20';
 const art = (o = {}) => ({ key: o.key || 'a1', description: o.description || 'Guante de nitrilo', brand_model: o.brand_model ?? 'Ansell 92-600', unit: o.unit ?? 'caja', category: o.category ?? 'EPP y seguridad', occurrences: o.occurrences || 2,
@@ -100,5 +100,32 @@ test('requisition validation (general data like RF1 + per-line routes) and locke
   assert.match(validateHistoryRequisition(okForm, [{ ...lines[0], last: { ...lines[0].last, quote_date: '2026-01-01' } }], ctx), /vencido/);
   const s = routeSummary(lines);
   assert.deepEqual([s.total, s.history, s.fresh, s.fixed, s.requote, s.reuse, s.supplierRequote], [2, 1, 1, 1, 1, 1, 1]);
-  assert.match(createLockedText(okForm, lines, 'Cliente Uno'), /^Datos validados, pero no se creó la requisición nueva para «Cliente Uno» \(2 partida\(s\): 1 del historial y 1 nueva\(s\); precio fijo 1, recotizar 1, validar 0; proveedor reutilizado 1\)/);
+});
+
+test('alta real: cuerpo del POST (el historial solo envía referencia, cantidad y ruta), mensajes y recarga', () => {
+  const base = art(); base.last.quote_version_id = '22222222-2222-4222-8222-222222222222';
+  const lines = [lineFromHistory(base, POL, DAY), newLine({ description: 'Arnés', quantity: '2', unit: 'pza', category: 'EPP y seguridad' })];
+  const ctx = { policy: POL, day: DAY, activeCategories: ['EPP y seguridad'] };
+  const p = historyPayload({ ...okForm, project: ' PRY ', budget: ' ' }, lines);
+  assert.deepEqual(Object.keys(p).sort(), ['budget', 'client_id', 'client_reference', 'contract', 'currency', 'delivery_place', 'description', 'items', 'need_date', 'priority', 'project', 'request_date', 'requester_email', 'requester_name']);
+  assert.equal(p.project, 'PRY'); assert.equal(p.budget, '');
+  assert.deepEqual(Object.keys(p.items[0]).sort(), ['article_key', 'origin', 'price_mode', 'quantity', 'quote_version_id', 'sourcing_mode']);
+  assert.equal(p.items[0].origin, 'history'); assert.equal(p.items[0].article_key, lines[0].key.replace(/^h:/, ''));
+  assert.equal(p.items[0].quote_version_id, lines[0].last.quote_version_id);
+  assert.ok(!('unit_price' in p.items[0]) && !('cost' in p.items[0]) && !('supplier' in p.items[0]));
+  assert.deepEqual(p.items[1], { origin: 'new', description: lines[1].description, quantity: lines[1].quantity, unit: lines[1].unit, category: lines[1].category, price_mode: 'requote', sourcing_mode: 'requote' });
+  assert.match(createdText({ folio: 'QA01-REQ-2026-0007', line_count: 2, history_lines: 1, new_lines: 1, fixed_price_lines: 1, reuse_supplier_lines: 1 }, 'Cliente Uno'),
+    /^Requisición QA01-REQ-2026-0007 creada en MariaDB para «Cliente Uno»: 2 partida\(s\) \(1 del historial y 1 nueva\(s\); precio fijo 1, proveedor reutilizado 1\)\. Ya aparece en la Matriz/);
+  assert.equal(historySaveError(undefined, undefined, 'Failed to fetch').retry, true);
+  assert.match(historySaveError(undefined, undefined, 'x').text, /^No se confirmó el resultado/);
+  assert.equal(historySaveError(409, 'HISTORY_CHANGED', 'Partida 1: el historial cambió.').reload, true);
+  assert.match(historySaveError(409, 'ROUTE_NOT_ALLOWED', 'Partida 1: Sin proveedor.').text, /Sin proveedor\. No se creó la requisición\.$/);
+  assert.ok(!historySaveError(422, 'INVALID_REQUISITION', 'x').retry);
+  assert.match(historySaveError(403, 'FORBIDDEN', '').text, /Master Admin/);
+  const a0 = { key: lines[0].key.replace(/^h:/, ''), description: 'Art', unit: 'pza', category: 'Materiales', last: { ...lines[0].last, unit_price: 0 }, occurrences: 1 };
+  const r = refreshLines(lines, [a0], ctx.policy, ctx.day);
+  assert.equal(r.removed.length, 0); assert.equal(r.lines.length, 2);
+  assert.notEqual(r.lines[0].price_mode, 'fixed'); // sin precio histórico: el precio fijo ya no es válido
+  assert.equal(r.lines[0].quantity, lines[0].quantity);
+  assert.equal(refreshLines(lines, [], ctx.policy, ctx.day).removed.length, 1);
 });

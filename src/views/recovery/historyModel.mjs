@@ -1,7 +1,9 @@
 // Requisición › Crear desde historial · lógica pura (diseño del Apps Script original).
 // Fuente: GET /api/v1/requisition-history/catalog?client= (política de recompra + cotizaciones al cliente aprobadas).
-// La requisición NO se crea: el alta RF1 no admite origen histórico ni tratamiento por partida (requisition_items.
-// history_*, repeat_client_price_mode, repeat_sourcing_mode, fixed_client_*); un endpoint propio requiere autorización.
+// «Crear requisición nueva» (25 nov 2026): POST /api/v1/recovery/requisitions/from-history crea la requisición con folio propio
+// y guarda el origen y la ruta de cada partida (requisition_items.history_*, repeat_client_price_mode, repeat_sourcing_mode,
+// fixed_client_*). El servidor resuelve cada partida del historial contra el catálogo aprobado: el navegador solo envía la
+// referencia (artículo + versión de la cotización), la cantidad y la ruta elegida; nunca el precio, el costo ni el proveedor.
 import { SALES_POLICIES, SOURCING_POLICIES, policyCode } from '../clients/form.mjs';
 
 export const STEPS = [
@@ -150,7 +152,47 @@ export function validateHistoryRequisition(form, lines, { policy, day, activeCat
   return null;
 }
 
-export function createLockedText(form, lines, clientName) {
-  const s = routeSummary(lines);
-  return `Datos validados, pero no se creó la requisición nueva para «${clientName || 'el cliente'}» (${s.total} partida(s): ${s.history} del historial y ${s.fresh} nueva(s); precio fijo ${s.fixed}, recotizar ${s.requote}, validar ${s.validate}; proveedor reutilizado ${s.reuse}). SupplyFlow aún no tiene endpoint para crear requisiciones desde historial: el alta de Registro de requisición no guarda el origen histórico ni el tratamiento por partida, por eso no se usó para no perderlos. Habilitarlo requiere tu autorización.`;
+/** Body of POST /api/v1/recovery/requisitions/from-history. History lines send only their reference, quantity and route. */
+export function historyPayload(form, lines) {
+  const t = v => String(v ?? '').trim();
+  return {
+    client_id: form.client_id, request_date: form.request_date, need_date: form.need_date, project: t(form.project), contract: t(form.contract),
+    client_reference: t(form.client_reference), priority: form.priority, delivery_place: t(form.delivery_place), requester_name: t(form.requester_name),
+    requester_email: t(form.requester_email), budget: t(form.budget), currency: form.currency, description: t(form.description),
+    items: lines.map(l => (l.origin === 'new'
+      ? { origin: 'new', description: clean(l.description), quantity: String(l.quantity).trim(), unit: clean(l.unit), category: l.category, price_mode: 'requote', sourcing_mode: 'requote' }
+      : { origin: 'history', article_key: l.key.replace(/^h:/, ''), quote_version_id: l.last?.quote_version_id, quantity: String(l.quantity).trim(), price_mode: l.price_mode, sourcing_mode: l.sourcing_mode })),
+  };
+}
+
+/** Message after a confirmed creation. */
+export function createdText(out, clientName) {
+  return `Requisición ${out.folio} creada en MariaDB para «${clientName || 'el cliente'}»: ${out.line_count} partida(s) (${out.history_lines} del historial y ${out.new_lines} nueva(s); precio fijo ${out.fixed_price_lines}, proveedor reutilizado ${out.reuse_supplier_lines}). Ya aparece en la Matriz de requisiciones como «Desde historial»; las requisiciones y cotizaciones de origen no se modificaron.`;
+}
+
+/** Server error → { tone, text, retry (same operation, same key), reload (refresh the client's history) }. */
+export function historySaveError(status, code, message) {
+  if (!status) return { tone: 'danger', text: `No se confirmó el resultado (${message || 'sin respuesta del servidor'}). Presiona «Crear requisición nueva» para reintentar exactamente la misma solicitud; no se duplicará.`, retry: true };
+  if (status === 401) return { tone: 'danger', text: 'Tu sesión expiró. Inicia sesión nuevamente; no se creó la requisición.' };
+  if (status === 403) return { tone: 'danger', text: code === 'CSRF_INVALID' ? 'La sesión de seguridad cambió. Vuelve a intentarlo.' : 'Solo un Master Admin puede crear requisiciones.' };
+  if (code === 'HISTORY_CHANGED' || code === 'HISTORY_INCOMPLETE') return { tone: 'warn', text: `${message} No se creó la requisición.`, reload: true };
+  if (code === 'BUSY' || code === 'OPERATION_PENDING') return { tone: 'warn', text: `${message || 'La operación está ocupada.'} Presiona «Crear requisición nueva» para reintentarla sin duplicar.`, retry: true };
+  if (status === 409 || status === 422) return { tone: 'danger', text: `${message || 'Revisa los datos.'} No se creó la requisición.` };
+  if (status === 503 && code === 'RECOVERY_UNAVAILABLE') return { tone: 'danger', text: 'No se pudo completar la operación (servicio de requisiciones no disponible). No se confirmó un guardado: presiona «Crear requisición nueva» para reintentar sin duplicar.', retry: true };
+  return { tone: 'danger', text: `${message || 'No se pudo crear la requisición.'} Presiona «Crear requisición nueva» para reintentar sin duplicar.`, retry: true };
+}
+
+/** After HISTORY_CHANGED: refresh each history line with the reloaded catalog (removed when the article is gone). */
+export function refreshLines(lines, items, policy, day) {
+  const byKey = new Map((items || []).map(a => [`h:${a.key}`, a]));
+  const kept = [], removed = [];
+  for (const l of lines) {
+    if (l.origin === 'new') { kept.push(l); continue; }
+    const a = byKey.get(l.key);
+    if (!a) { removed.push(l); continue; }
+    const fresh = lineFromHistory(a, policy, day);
+    const keepMode = (kind, mode) => (modeBlock({ ...fresh, [kind === 'price' ? 'price_mode' : 'sourcing_mode']: mode }, kind, mode, policy, day) ? null : mode);
+    kept.push({ ...fresh, quantity: l.quantity, price_mode: keepMode('price', l.price_mode) || fresh.price_mode, sourcing_mode: keepMode('sourcing', l.sourcing_mode) || fresh.sourcing_mode });
+  }
+  return { lines: kept, removed };
 }

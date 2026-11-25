@@ -46,7 +46,7 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
     await page.locator('#reqSubnav').getByRole('button', { name: /Crear desde historial/ }).click();
     const root = page.getByTestId('history-requisition');
     await root.waitFor();
-    check('aviso RF1 menciona Crear desde historial', await page.getByText('Crear desde historial consulta la política').count() === 1);
+    check('aviso RF1 menciona Crear desde historial', await page.getByText('Crear desde historial crea la requisición en MariaDB').count() === 1);
     check('banner del original', await root.getByRole('heading', { name: /Nueva requisición desde historial del cliente/ }).count() === 1 && await root.getByText(/^No copia una requisición completa\./).count() === 1);
     check('4 pasos del original', JSON.stringify(await root.locator('.sf-hist-step b').allTextContents()) === JSON.stringify(['Cliente', 'Partidas', 'Ruta por partida', 'Nuevo expediente']));
     const labels = await root.locator('.sf-hist-grid label').allTextContents();
@@ -108,7 +108,7 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
       await root.getByRole('button', { name: /Agregar partida nueva/ }).last().click();
       check('partida nueva: siempre se recotiza', await root.getByTestId('hist-line').count() === 2 && await page.getByLabel('Tratamiento precio cliente 2').isDisabled() && await page.getByLabel('Tratamiento precio cliente 2').inputValue() === 'requote' && await page.getByLabel('Tratamiento proveedor 2').inputValue() === 'requote');
 
-      // Crear: valida y no crea
+      // Crear: este E2E es de solo lectura (aborta las escrituras): el POST real se intenta y, sin respuesta, no se da por creado.
       await page.locator('#hist-need_date').fill('2030-12-31');
       if (!await page.locator('#hist-project').inputValue()) await page.locator('#hist-project').fill('PRY-QA');
       if (!await page.locator('#hist-contract').inputValue()) await page.locator('#hist-contract').fill('CTO-QA');
@@ -117,7 +117,10 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: `$
       if (!await page.locator('#hist-requester_email').inputValue()) await page.locator('#hist-requester_email').fill('qa@cliente.invalid');
       await root.getByRole('button', { name: /Crear requisición nueva/ }).click();
       const created = await root.getByTestId('hist-msg').innerText();
-      check('crear: valida y no crea', created.startsWith(`Datos validados, pero no se creó la requisición nueva para «${client.name}» (2 partida(s): 1 del historial y 1 nueva(s)`), created);
+      await page.waitForFunction(() => !/Creando la requisición/.test(document.querySelector('[data-testid=hist-msg]')?.textContent || ''), null, { timeout: 15000 });
+      const created2 = await root.getByTestId('hist-msg').innerText();
+      check('crear: envía el alta y, sin respuesta del servidor, NO la da por creada (reintento sin duplicar)', blocked.length === 1 && blocked[0] === 'POST /api/v1/recovery/requisitions/from-history' && /^No se confirmó el resultado/.test(created2) && !/creada en MariaDB/.test(created2), `${blocked.join(',')} · ${created2} · ${created}`);
+      blocked.length = 0;
       await shot(page, 'hist-03-partidas');
       await root.getByTestId('hist-line').nth(1).getByRole('button', { name: 'Quitar' }).click();
       check('quitar partida', await root.getByTestId('hist-line').count() === 1);

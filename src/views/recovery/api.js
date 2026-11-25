@@ -73,3 +73,8 @@ async function categoryWrite(method,path,{version,payload,key}={}){
 }
 export const saveCategory=({code,version,payload,key})=>categoryWrite(code?'PUT':'POST',code?'/'+encodeURIComponent(code):'',{version:code?version:undefined,payload,key});
 export const deleteCategory=({code,version,key})=>categoryWrite('DELETE','/'+encodeURIComponent(code),{version,key});
+// Crear desde historial: alta real con CSRF + Idempotency-Key (cuenta recovery; el servidor resuelve el historial aprobado).
+export async function createFromHistory(operation) {
+ const token=await getCsrf();
+ return request('/requisitions/from-history',{method:'POST',headers:{'Content-Type':'application/json','X-SF-CSRF':token,'Idempotency-Key':operation.key},body:JSON.stringify(operation.data)});
+}

@@ -133,7 +133,10 @@ final class RequisitionRecoveryRepository
     /** Original eight-stage matrix policy. Complex history/change flows are not inferred. */
     public static function stage(array $row,array $m):?int
     {
-        if(!empty($row['history_based'])||!empty($row['latest_change_request_id']))return null;
+        // Imported history-based rows keep "pending equivalence"; a requisition created from history in SupplyFlow is a new
+        // expediente (requisition → new client quote → new PO) and follows the normal stages. Rows without imported_at: unknown.
+        if(!empty($row['history_based'])&&(!array_key_exists('imported_at',$row)||$row['imported_at']!==null))return null;
+        if(!empty($row['latest_change_request_id']))return null;
         $id=(int)$row['db_id'];$pos=$m['pos'][$id]??[];$s=0;
         foreach($m['invoices'][$id]??[] as $inv){if(!in_array(strtolower((string)($inv['legacy_status']??$inv['status_code']??'')),['cancelada','cancelled'],true))return 7;}
         if($pos){
@@ -189,7 +192,9 @@ final class RequisitionRecoveryRepository
             'requirement'=>in_array($r['regularization_requirement'],['formal','alternative','contract'],true)?$r['regularization_requirement']:'formal','due_date'=>$r['regularization_due_date'],'owner'=>$r['regularization_owner_snapshot']??''];
         $r['items']=$this->rows('SELECT public_id AS id,description,quantity,unit_label AS unit,category_label_snapshot AS category FROM requisition_items WHERE organization_id=? AND requisition_id=? ORDER BY line_number,id',[$org,$id]);
         $d=$this->one("SELECT f.public_id AS id,ef.original_filename AS name,f.size_bytes AS size,f.detected_mime AS mime FROM entity_files ef JOIN files f ON f.id=ef.file_id AND f.organization_id=ef.organization_id WHERE ef.organization_id=? AND ef.entity_id=? AND ef.file_role='documentFile' ORDER BY ef.id DESC LIMIT 1",[$org,$id]);
-        $r['document']=$d;$r['regularization_details']=$this->regularization($org,$public);unset($r['db_id'],$r['created_by'],$r['rf1_owned'],$r['imported_at'],$r['latest_change_request_id']);return $r;
+        $r['document']=$d;$r['regularization_details']=$this->regularization($org,$public);
+        $r['history']=empty($r['history_based'])?null:$this->historyDetail($org,$id);
+        unset($r['db_id'],$r['created_by'],$r['rf1_owned'],$r['imported_at'],$r['latest_change_request_id']);return $r;
     }
     public function document(int $org,string $public):?array
     {
@@ -414,6 +419,11 @@ final class RequisitionRecoveryRepository
             if($old){
                 // A different endpoint must implement regularization; do not erase its evidence by a normal edit.
                 if(preg_match('/^Regularizada/u',(string)$old['regularization_status']))throw new RecoveryConflict('REGULARIZED_RECORD','La requisición regularizada requiere el flujo de cambios controlados.');
+                if(!empty($old['history_based'])){
+                    // Created from the client's history: its lines come from that client's approved quotes and its origin is the history.
+                    if($old['client_id']!==$input['client_id'])throw new RecoveryConflict('HISTORY_CLIENT_LOCKED','La requisición se creó desde el historial de su cliente: el cliente no se cambia. Crea otra requisición para otro cliente.');
+                    foreach(['request_source_type','request_source_date','request_source_reference','request_source_notes','is_provisional','formal_at_origin','provisional_folio','provisional_created_at','regularization_requirement','regularization_due_date','regularization_owner_snapshot','regularization_status'] as $keep)unset($values[$keep]);
+                }
                 $this->update('requisitions',$values,'id=? AND organization_id=?',[$id,$org]);
             }else{$values['id']=$id;$values['organization_id']=$org;$values['provisional_created_at']=$prov?self::now():null;$this->insert('requisitions',$values);}
             $existing=$this->rows('SELECT id,public_id,line_number,category_id,category_label_snapshot FROM requisition_items WHERE organization_id=? AND requisition_id=? ORDER BY id FOR UPDATE',[$org,$id]);
@@ -441,6 +451,88 @@ final class RequisitionRecoveryRepository
             $this->db->commit();return $out;
         }catch(Throwable $e){if($inTransaction){try{$this->db->rollback();}catch(Throwable){}}throw $e;}
         finally{try{$this->one('SELECT RELEASE_LOCK(?) AS released',[$lock]);}catch(Throwable){/* Do not hide a primary exception. Connection close also releases it. */}}
+    }
+    /** Provenance of a requisition created from history: policy evaluated at creation and route of every line. */
+    private function historyDetail(int $org,int $id):array
+    {
+        $r=$this->one('SELECT repeat_policy_snapshot,history_created_at FROM requisitions WHERE organization_id=? AND id=?',[$org,$id]);
+        $lines=$this->rows(<<<'SQL'
+            SELECT i.public_id AS id,i.line_number,i.history_based,i.history_origin AS origin,i.repeat_client_price_mode AS price_mode,i.repeat_sourcing_mode AS sourcing_mode,
+                   i.fixed_client_price,i.fixed_client_unit_price,i.fixed_client_currency,sr.folio AS source_requisition_folio,v.folio AS source_quote_folio,v.version_number AS source_quote_version
+            FROM requisition_items i
+            LEFT JOIN requisitions sr ON sr.id=i.source_requisition_id AND sr.organization_id=i.organization_id
+            LEFT JOIN customer_quote_versions v ON v.id=i.source_customer_quote_version_id AND v.organization_id=i.organization_id
+            WHERE i.organization_id=? AND i.requisition_id=? ORDER BY i.line_number,i.id
+            SQL,[$org,$id]);
+        foreach($lines as &$l){$l['history_based']=(bool)$l['history_based'];$l['fixed_client_price']=(bool)$l['fixed_client_price'];$l['line_number']=(int)$l['line_number'];$l['source_quote_version']=$l['source_quote_version']===null?null:(int)$l['source_quote_version'];}unset($l);
+        return ['created_at'=>$r['history_created_at']??null,'policy'=>json_decode((string)($r['repeat_policy_snapshot']??'null'),true),'lines'=>$lines];
+    }
+    /**
+     * Requisición › Crear desde historial. A NEW requisition (own folio, revision 0) whose history lines are resolved on the
+     * server against the client's approved customer quotes ($catalog from RequisitionHistoryReadRepository). Records the
+     * origin and the price/supplier route of every line (requisition_items.history_*, repeat_*, fixed_client_*), the policy
+     * evaluated at creation and an RF1-shaped system snapshot (origin supplyflow_recovery_rf1: editable in Registro with the
+     * client locked, and eligible for Control de cambios). Never touches the source requisitions, quotes, RFQs or POs.
+     */
+    public function createFromHistory(int $org,int $actor,array $general,array $lines,array $catalog,string $today,string $key):array
+    {
+        $ep='requisition.history.create';
+        $hash=hash('sha256',self::json(['general'=>$general,'lines'=>$lines]),true);
+        $lock='supplyflow.rf1.org.'.$org;$got=$this->one('SELECT GET_LOCK(?,10) AS acquired',[$lock]);
+        if((int)($got['acquired']??0)!==1)throw new RecoveryConflict('BUSY','La operación está ocupada. Reintenta el mismo guardado.');
+        $inTransaction=false;
+        try{
+            $this->db->begin_transaction();$inTransaction=true;
+            if($again=$this->claim($org,$actor,$ep,$key,$hash)){$this->db->commit();return $again;}
+            $client=$this->one('SELECT c.id,c.code,c.legal_name,c.status_code FROM clients c JOIN business_entities e ON e.id=c.id AND e.organization_id=c.organization_id WHERE c.organization_id=? AND e.public_id=? AND e.archived_at IS NULL FOR UPDATE',[$org,$general['client_id']]);
+            if(!$client||$client['status_code']!=='active'||($catalog['client']['id']??null)!==$general['client_id'])throw new RecoveryConflict('CLIENT_UNAVAILABLE','Selecciona un cliente activo.');
+            if(!$this->one('SELECT code FROM currencies WHERE code=? AND active=1',[$general['currency']]))throw new RecoveryConflict('CURRENCY_UNAVAILABLE','La moneda no está activa.');
+            $lines=RequisitionHistoryInput::resolve($lines,$catalog,$today);
+            $folio=$this->folio($org,$general['client_id'],$general['request_date'],false)['folio'];
+            if($this->one('SELECT id FROM requisitions WHERE organization_id=? AND BINARY UPPER(folio)=BINARY UPPER(?) LIMIT 1',[$org,$folio]))throw new RecoveryConflict('DUPLICATE_FOLIO','No se pudo asignar un folio libre. Reintenta.');
+            $public=self::uuid();$now=self::now();
+            $id=$this->insert('business_entities',['organization_id'=>$org,'public_id'=>$public,'entity_kind'=>'requisition','created_at'=>$now,'updated_at'=>$now,'created_by'=>$actor,'updated_by'=>$actor,'row_version'=>1]);
+            $policy=['evaluated_on'=>$today,'client'=>['code'=>$client['code'],'legal_name'=>$client['legal_name']],'policy'=>$catalog['client']['policy']??null,'approval_rule'=>$catalog['approval_rule']??null];
+            $this->insert('requisitions',['id'=>$id,'organization_id'=>$org,'client_id'=>$client['id'],'folio'=>$folio,'client_reference'=>$general['client_reference'],'request_date'=>$general['request_date'],'need_date'=>$general['need_date'],
+                'priority_code'=>$general['priority'],'route_code'=>'supply','client_snapshot'=>self::json(['code'=>$client['code'],'legal_name'=>$client['legal_name']]),'project_reference_snapshot'=>$general['project'],'contract_reference_snapshot'=>$general['contract'],
+                'requester_name'=>$general['requester_name'],'requester_email'=>$general['requester_email'],'delivery_place'=>$general['delivery_place'],'budget_amount'=>$general['budget'],'currency_code'=>$general['currency'],'description'=>$general['description'],'notes'=>$general['notes'],
+                'request_source_type'=>RequisitionHistoryInput::SOURCE_TYPE,'request_source_date'=>$general['request_date'],'request_source_reference'=>null,'request_source_notes'=>null,'is_provisional'=>0,'formal_at_origin'=>0,'provisional_folio'=>null,'provisional_created_at'=>null,
+                'regularization_requirement'=>'none','regularization_due_date'=>null,'regularization_owner_snapshot'=>null,'regularization_status'=>'No aplica · desde historial','current_revision_number'=>0,
+                'history_based'=>1,'repeat_policy_snapshot'=>self::json($policy),'history_created_at'=>$now]);
+            $items=[];$provenance=[];
+            foreach($lines as $n=>$line){
+                $cat=$this->one('SELECT id FROM categories WHERE organization_id=? AND name=? AND active=1 ORDER BY id LIMIT 1',[$org,$line['category']]);
+                if(!$cat)throw new RecoveryConflict('CATEGORY_UNKNOWN','Partida '.($n+1).': la categoría «'.$line['category'].'» no está activa en el catálogo.');
+                $history=$line['origin']==='history';$last=$line['last']??[];$fixed=$history&&$line['price_mode']==='fixed';
+                $srcReq=null;$srcVer=null;
+                if($history){
+                    $srcReq=$this->one("SELECT e.id FROM business_entities e JOIN requisitions r ON r.id=e.id AND r.organization_id=e.organization_id WHERE e.organization_id=? AND e.public_id=? AND e.entity_kind='requisition' AND r.client_id=?",[$org,(string)($last['requisition_id']??''),$client['id']]);
+                    $srcVer=$srcReq?$this->one('SELECT e.id FROM business_entities e JOIN customer_quote_versions v ON v.id=e.id AND v.organization_id=e.organization_id WHERE e.organization_id=? AND e.public_id=? AND v.requisition_id=?',[$org,$line['quote_version_id'],$srcReq['id']]):null;
+                    if(!$srcReq||!$srcVer)throw new RecoveryConflict('HISTORY_CHANGED','Partida '.($n+1).': la cotización de referencia ya no está disponible. Se recargó el catálogo; revisa la partida.');
+                    if($fixed&&!$this->one('SELECT code FROM currencies WHERE code=?',[(string)($last['currency']??'')]))throw new RecoveryConflict('ROUTE_NOT_ALLOWED','Partida '.($n+1).': el precio histórico no tiene moneda registrada; elige «Validar precio» o «Nuevo precio».');
+                }
+                $item=self::uuid();
+                $this->insert('requisition_items',['organization_id'=>$org,'requisition_id'=>$id,'public_id'=>$item,'line_number'=>$n+1,'display_order'=>$n+1,'description'=>$line['description'],'quantity'=>$line['quantity'],'unit_label'=>$line['unit'],
+                    'category_id'=>$cat['id'],'category_label_snapshot'=>$line['category'],'line_status'=>'active','history_based'=>(int)$history,'history_origin'=>$history?RequisitionHistoryInput::HISTORY_ORIGIN:RequisitionHistoryInput::NEW_ORIGIN,
+                    'source_requisition_id'=>$srcReq['id']??null,'source_customer_quote_version_id'=>$srcVer['id']??null,'repeat_client_price_mode'=>$line['price_mode'],'repeat_sourcing_mode'=>$line['sourcing_mode'],
+                    'fixed_client_price'=>(int)$fixed,'fixed_client_unit_price'=>$fixed?sprintf('%.6F',(float)$last['unit_price']):null,'fixed_client_currency'=>$fixed?$last['currency']:null]);
+                $items[]=['id'=>$item,'description'=>$line['description'],'quantity'=>$line['quantity'],'unit'=>$line['unit'],'category'=>$line['category']];
+                $provenance[]=['id'=>$item,'line_number'=>$n+1,'origin'=>$line['origin'],'price_mode'=>$line['price_mode'],'sourcing_mode'=>$line['sourcing_mode'],
+                    'source'=>$history?['article_key'=>$line['article_key'],'quote_version_id'=>$line['quote_version_id'],'quote_folio'=>$last['quote_folio']??null,'quote_version'=>$last['version_number']??null,'quote_date'=>$last['quote_date']??null,
+                        'requisition_folio'=>$last['requisition_folio']??null,'unit_price'=>$last['unit_price']??null,'currency'=>$last['currency']??null,'cost'=>$last['cost']??null,'supplier'=>$last['supplier']??null,'validity'=>$line['validity']??null,'brand_model'=>$line['brand_model']??null]:null];
+            }
+            $snap=$general+['folio'=>$folio,'source'=>['type'=>RequisitionHistoryInput::SOURCE_TYPE,'date'=>$general['request_date'],'reference'=>null,'notes'=>null,'requirement'=>'none','due_date'=>null,'owner'=>null],
+                'items'=>$items,'document'=>null,'history'=>['created_at'=>$now,'policy'=>$policy,'lines'=>$provenance]];
+            $snapshot=self::json(['origin'=>self::ORIGIN,'version'=>1,'data'=>$snap]);
+            $this->insert('requisition_revision_snapshots',['organization_id'=>$org,'requisition_id'=>$id,'revision_number'=>0,'snapshot_schema_version'=>2,'snapshot_json'=>$snapshot,'snapshot_sha256'=>hash('sha256',$snapshot,true),'reason_text'=>'Requisición creada desde historial','recorded_at'=>$now,'provenance'=>'system']);
+            $this->insert('audit_events',['organization_id'=>$org,'public_id'=>self::uuid(),'subject_entity_id'=>$id,'actor_user_id'=>$actor,'module_code'=>'requisitions','action_code'=>'requisition.history.create','result_code'=>'success','occurred_at'=>$now,'recorded_at'=>$now,'changes_json'=>self::json(['before'=>null,'after'=>$snap,'row_version'=>1]),'source_kind'=>'system']);
+            $count=static fn(string $k,string $v)=>count(array_filter($lines,static fn($l)=>$l[$k]===$v));
+            $out=['id'=>$public,'folio'=>$folio,'version'=>1,'line_count'=>count($lines),'history_lines'=>$count('origin','history'),'new_lines'=>$count('origin','new'),
+                'fixed_price_lines'=>$count('price_mode','fixed'),'reuse_supplier_lines'=>$count('sourcing_mode','reuse'),'replayed'=>false];
+            $this->run("UPDATE idempotency_keys SET state_code='done',response_status=201,response_json=? WHERE organization_id=? AND actor_user_id=? AND endpoint_code=? AND key_sha256=?",[self::json($out),$org,$actor,$ep,hash('sha256',$key,true)]);
+            $this->db->commit();return $out;
+        }catch(Throwable $e){if($inTransaction){try{$this->db->rollback();}catch(Throwable){}}throw $e;}
+        finally{try{$this->one('SELECT RELEASE_LOCK(?) AS released',[$lock]);}catch(Throwable){/* Connection close also releases it. */}}
     }
 }
 final class RecoveryConflict extends RuntimeException

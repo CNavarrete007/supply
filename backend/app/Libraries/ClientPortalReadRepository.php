@@ -83,7 +83,7 @@ final class ClientPortalReadRepository
         }
         $reqs = $this->rows(
             'SELECT r.id AS db_id,re.public_id AS id,r.folio,r.project_reference_snapshot AS project,r.contract_reference_snapshot AS contract,r.client_reference,
-                    r.request_date,r.need_date,r.description,r.history_based,r.latest_change_request_id,
+                    r.request_date,r.need_date,r.description,r.history_based,r.latest_change_request_id,re.imported_at,
                     (SELECT COUNT(*) FROM requisition_items i WHERE i.organization_id=r.organization_id AND i.requisition_id=r.id AND COALESCE(i.line_status,\'active\')<>\'cancelled\') AS line_count
              FROM requisitions r JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
              WHERE r.organization_id=? AND r.client_id=? AND re.archived_at IS NULL ORDER BY r.request_date DESC,r.id DESC',

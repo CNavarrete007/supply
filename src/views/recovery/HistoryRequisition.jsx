@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { historyCatalog } from './api';
+import { historyCatalog, createFromHistory } from './api';
 import { fillClient, today } from './model.mjs';
 import { repeatPolicyView } from '../clients/model.mjs';
-import { STEPS, PRIORITIES, CURRENCIES, PRICE_MODES, SOURCING_MODES, HISTORY_FILTERS, emptyHistoryForm, validity, policyDefaults, modeBlock, lineFromHistory, newLine, newItemError, lineWarnings, filterArticles, routeSummary, validateHistoryRequisition, createLockedText, money, label } from './historyModel.mjs';
+import { STEPS, PRIORITIES, CURRENCIES, PRICE_MODES, SOURCING_MODES, HISTORY_FILTERS, emptyHistoryForm, validity, policyDefaults, modeBlock, lineFromHistory, newLine, newItemError, lineWarnings, filterArticles, routeSummary, validateHistoryRequisition, historyPayload, createdText, historySaveError, refreshLines, money, label } from './historyModel.mjs';
 
 // Requisición › Crear desde historial (diseño del Apps Script original).
 // Lectura real: clientes y categorías de /recovery/catalogs y GET /api/v1/requisition-history/catalog (política de recompra
-// y cotizaciones al cliente aprobadas). "Crear requisición nueva" valida todo, pero NO crea: el alta RF1 no guarda el
-// origen histórico ni el tratamiento por partida y un endpoint propio requiere autorización explícita.
+// y cotizaciones al cliente aprobadas). "Crear requisición nueva" (25 nov 2026) crea la requisición en MariaDB con
+// POST /api/v1/recovery/requisitions/from-history (CSRF + Idempotency-Key; reintentar la MISMA solicitud no la duplica).
 const EMPTY_ITEM = { description: '', quantity: '', unit: '', category: '' };
+const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
+  : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 
-export function HistoryRequisition({ clients = [], categories = [], onMatrix }) {
+export function HistoryRequisition({ clients = [], categories = [], onMatrix, onCreated }) {
   const day = today();
   const [form, setForm] = useState(() => emptyHistoryForm(day));
   const [lines, setLines] = useState([]);
@@ -19,6 +21,8 @@ export function HistoryRequisition({ clients = [], categories = [], onMatrix }) 
   const [filters, setFilters] = useState({ query: '', category: '', state: 'all' });
   const [hist, setHist] = useState({ status: 'idle', data: null, error: '' });
   const [msg, setMsg] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const pending = useRef(null); // { sig, key }: la misma solicitud reintentada conserva su Idempotency-Key
   const ctrl = useRef(null);
   useEffect(() => () => ctrl.current?.abort(), []);
 
@@ -56,10 +60,40 @@ export function HistoryRequisition({ clients = [], categories = [], onMatrix }) 
     setLines(ls => [...ls, newLine(item)]); setItem(EMPTY_ITEM); setItemMsg(''); setMsg(null);
   };
   const setLine = (key, patch) => { setLines(ls => ls.map(l => (l.key === key ? { ...l, ...patch } : l))); setMsg(null); };
-  const clear = () => { ctrl.current?.abort(); setForm(emptyHistoryForm(day)); setLines([]); setItem(EMPTY_ITEM); setItemMsg(''); setFilters({ query: '', category: '', state: 'all' }); setHist({ status: 'idle', data: null, error: '' }); setMsg(null); };
-  const create = () => {
+  const clear = () => { ctrl.current?.abort(); pending.current = null; setForm(emptyHistoryForm(day)); setLines([]); setItem(EMPTY_ITEM); setItemMsg(''); setFilters({ query: '', category: '', state: 'all' }); setHist({ status: 'idle', data: null, error: '' }); setMsg(null); };
+  // HISTORY_CHANGED: vuelve a consultar el historial y actualiza las partidas (las que ya no existen se quitan).
+  const reloadHistory = (text) => {
+    if (!client) return;
+    const a = new AbortController(); ctrl.current?.abort(); ctrl.current = a;
+    historyCatalog(client.id, a.signal).then(data => {
+      if (a.signal.aborted) return;
+      setHist({ status: 'ready', data, error: '' });
+      const r = refreshLines(lines, data.items, data.client?.policy, day);
+      setLines(r.lines);
+      setMsg({ tone: 'warn', text: text + (r.removed.length ? ` Se quitaron ${r.removed.length} partida(s) que ya no están en el historial aprobado.` : ' Se actualizaron las partidas con el historial vigente; revisa y vuelve a crear.') });
+    }).catch(() => {});
+  };
+  const create = async () => {
+    if (saving) return;
     const err = validateHistoryRequisition(form, lines, { policy, day, activeCategories });
-    setMsg(err ? { tone: 'danger', text: err } : { tone: 'warn', text: createLockedText(form, lines, client?.name) });
+    if (err) { setMsg({ tone: 'danger', text: err }); return; }
+    const data = historyPayload(form, lines);
+    const sig = JSON.stringify(data);
+    if (!pending.current || pending.current.sig !== sig) pending.current = { sig, key: newKey() };
+    setSaving(true); setMsg({ tone: 'warn', text: 'Creando la requisición en MariaDB…' });
+    try {
+      const out = await createFromHistory({ data, key: pending.current.key });
+      pending.current = null;
+      const name = client?.name;
+      ctrl.current?.abort();
+      setForm(emptyHistoryForm(day)); setLines([]); setItem(EMPTY_ITEM); setItemMsg(''); setFilters({ query: '', category: '', state: 'all' }); setHist({ status: 'idle', data: null, error: '' });
+      setMsg({ tone: 'ok', text: createdText(out, name), folio: out.folio });
+      onCreated?.(out);
+    } catch (e) {
+      const r = historySaveError(e.status, e.code, e.message);
+      if (!r.retry) pending.current = null;
+      if (r.reload) reloadHistory(r.text); else setMsg({ tone: r.tone, text: r.text });
+    } finally { setSaving(false); }
   };
 
   const input = (name, title, props = {}) => <div className={'field ' + (props.span || '')}><label htmlFor={`hist-${name}`}>{title}</label>
@@ -166,8 +200,8 @@ export function HistoryRequisition({ clients = [], categories = [], onMatrix }) 
 
     {msg && <div className={'note ' + msg.tone} role={msg.tone === 'danger' ? 'alert' : 'status'} data-testid="hist-msg" style={{ marginTop: 14 }}>{msg.text}</div>}
     <div className="toolbar">
-      <button type="button" className="btn primary" onClick={create}>💾 Crear requisición nueva</button>
-      <button type="button" className="btn light" onClick={clear}>🧹 Limpiar</button>
+      <button type="button" className="btn primary" onClick={create} disabled={saving}>{saving ? '⏳ Creando…' : '💾 Crear requisición nueva'}</button>
+      <button type="button" className="btn light" onClick={clear} disabled={saving}>🧹 Limpiar</button>
       <button type="button" className="btn ghost" onClick={() => onMatrix?.()}>📋 Ver matriz</button>
     </div>
   </div>;
