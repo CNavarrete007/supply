@@ -1,0 +1,46 @@
+# Cotizaciones (registro interno de cotizaciones de proveedor; no emite ni autoriza): overlay aditivo. No modifica db, sus volúmenes ni las cuentas existentes.
+# Requiere ${SUPPLYFLOW_LOCAL_PRIVATE_DIR}/secrets/quotewrite-db-password.txt (64 hex) y aprovisionar una vez con:
+#   docker compose ... -f compose.supply-quotewrite.yml --profile quotewrite-tools run --rm quotewrite-db-tools provision
+services:
+  api:
+    environment:
+      QUOTEWRITE_DB_USERNAME: supplyflow_quotewrite_local
+      QUOTEWRITE_DB_PASSWORD_FILE: /run/secrets/quotewrite_db_password
+    secrets:
+      - quotewrite_db_password
+
+  quotewrite-db-tools:
+    profiles: ["quotewrite-tools"]
+    build:
+      context: ./docker/supply-dev/db-provision
+      dockerfile: Dockerfile
+    entrypoint: ["python", "/quotewrite/provision.py"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      TZ: UTC
+    volumes:
+      - type: volume
+        source: supplyflow_db_socket
+        target: /run/mysqld
+        read_only: true
+      - type: bind
+        source: ./docker/supply-quotewrite
+        target: /quotewrite
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Requires private local directory}/secrets
+        target: /run/supply-secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    network_mode: none
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+
+secrets:
+  quotewrite_db_password:
+    file: ${SUPPLYFLOW_LOCAL_PRIVATE_DIR:?Requires private local directory}/secrets/quotewrite-db-password.txt

@@ -19,20 +19,19 @@ compartida con la tarjeta 2 en `src/views/quotes/RequisitionPickerModal.jsx`.
 5. Campos del diseño: folio (automático al guardar), referencia interna (de la requisición), referencia del proveedor,
    fecha de cotización*, vigencia (no anterior a la fecha), moneda, días de entrega* (entero 0–3650), condiciones de pago
    SAT (PUE / PPD), cumplimiento técnico % y documentación % (0–100), comentarios.
-6. **Validación de la captura**: muestra lo pendiente o "Captura completa … lista para guardarse cuando se habilite el
-   registro".
-7. **PDF de la cotización**: se valida por su firma `%PDF-` (máx. 10 MB) y se previsualiza solo en este navegador; no se
-   sube.
+6. **Validación de la captura**: muestra lo pendiente o "Captura completa … Presiona Guardar cotización para registrarla
+   en MariaDB".
+7. **PDF de la cotización**: se valida por su firma `%PDF-` (máx. 8 MB, límite de transporte del gateway) y se
+   previsualiza en el navegador; al guardar se almacena de forma privada con la cotización.
 8. Botones (diseño de referencia, en este orden): **💾 Guardar cotización**, **🧹 Limpiar** (deja el formulario como
    nuevo: comprador, requisición, RFQ, captura, partidas y PDF), **📊 Ver comparativo** (tarjeta 5 con la requisición) y
    **📋 Ver matriz** (tarjeta 11).
 
 **Guardar cotización** valida toda la captura: si falta algo marca los campos y partidas pendientes; si está completa
-responde "Captura validada … No se guardó", porque registrar la oferta (`supplier_quotes`, `supplier_quote_items`, PDF) es una
-escritura comercial sin pruebas integrales. Cuando se autorice, el formulario ya produce todos los campos del esquema
-(`supplier_reference`, `quote_date`, `valid_until`, `currency_code`, `subtotal_amount`, `tax_rate_pct`, `tax_amount`,
-`total_amount`, `lead_days`, `payment_terms`, `technical_score`, `document_score`, `notes` y por partida `offered`,
-`quantity`, `unit_price`, `line_subtotal`).
+**la registra en MariaDB** (26 nov 2026): `supplier_quotes` + `supplier_quote_items` con folio **COT-AAAA-NNNN**, estatus
+«Recibida», importes recalculados por el servidor y el PDF privado. Las RFQ que ya tienen cotización aparecen
+deshabilitadas («ya cotizada»): se editan con **EDITAR** desde la matriz interna. Detalle, reglas, endpoints y activación
+en la PC: [REGISTRO_COTIZACION_PROVEEDOR.md](REGISTRO_COTIZACION_PROVEEDOR.md).
 
 La lista de **cotizaciones recibidas** (tarjetas por proveedor, filtro en el servidor y detalle interno con costos) está
 en la tarjeta 11 *Matriz interna de proveedores*.

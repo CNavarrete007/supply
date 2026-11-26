@@ -7,7 +7,7 @@ Tarjeta 11 de **Cotizaciones y Comparativo** ("Matriz de cotizaciones") con el d
 ## Diseño
 
 1. "Matriz de cotizaciones" + **+ Nueva cotización** (abre Registro de cotización, tarjeta 4).
-2. Leyenda **Acciones** (EDITAR, ADJUDICAR, ELIMINAR) con el aviso de escrituras bloqueadas.
+2. Leyenda **Acciones** (EDITAR, ADJUDICAR, ELIMINAR) con qué se edita y qué sigue bloqueado.
 3. **Tarjetas por proveedor** (contenedor con desplazamiento): "Todas las cotizaciones · Vista general" con
    Cotizaciones / Adjudicadas / Sin adjudicar y una por proveedor (iniciales, nombre, "Proveedor") con
    Cotizaciones / Adjudicadas / Activas; insignia "N proveedor(es) · M cotización(es)".
@@ -30,10 +30,10 @@ estatus registrado (p. ej. Recibida, Seleccionada, No seleccionada).
 
 | Acción | Comportamiento |
 | --- | --- |
-| EDITAR | abre el detalle registrado (documento interno en iframe aislado, con Imprimir). Modificar la cotización registrada es **escritura comercial bloqueada**; ofrece abrir el comparativo o ir a Registro de cotización |
+| EDITAR | cotización **registrada en SupplyFlow, sin adjudicar y «Recibida»**: abre Registro de cotización (tarjeta 4) en modo edición con su versión (If-Match). Importadas del sistema original, sin RFQ o adjudicadas: abre el detalle registrado (iframe aislado, con Imprimir) con el motivo («se conserva como expediente») |
 | ADJUDICAR | abre el comparativo (tarjeta 5) de la requisición, donde se elige la oferta por partida |
 | ELIMINAR | con adjudicación vigente: se conserva (trazabilidad). Sin adjudicación: confirmación con el folio exacto y "No se eliminó: escritura comercial bloqueada" |
-| PDF cotización | "Sin PDF" si no hay archivo registrado; si existe, **VER PDF** muestra el nombre del archivo y la vista generada con los datos de MariaDB. La **descarga del archivo original** aún no tiene endpoint (pendiente; requiere autorización y revisión de seguridad) |
+| PDF cotización | "Sin PDF" si no hay archivo registrado; si existe, **VER PDF** muestra el nombre del archivo, la vista generada con los datos de MariaDB y **Descargar PDF** (`GET /api/v1/quotes/supplier-quotes/{id}/document`: privado, sin caché, verificado contra su huella SHA-256; los importados se leen del directorio privado de importación) |
 
 ## Pruebas (sandbox sintético)
 

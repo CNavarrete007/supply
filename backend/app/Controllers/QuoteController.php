@@ -8,7 +8,7 @@ use App\Libraries\QuoteReadRepository;
 use CodeIgniter\HTTP\ResponseInterface;
 use Throwable;
 
-/** Cotizaciones y Comparativo · read-only. Sending RFQs, capturing quotes, awarding or recording decisions is NOT exposed. */
+/** Cotizaciones y Comparativo · read-only. Recording supplier quotes is in SupplierQuoteWriteController; sending RFQs, awarding or recording client decisions is NOT exposed. */
 final class QuoteController extends ReadOnlyModuleController
 {
     private function run(array $spec, callable $fn, bool $paged = true): ResponseInterface
@@ -66,6 +66,33 @@ final class QuoteController extends ReadOnlyModuleController
     public function rfqRequisition(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->rfqRequisition($o, $i)); }
     public function supplierQuotes(): ResponseInterface { return $this->run(self::BASIC, fn ($r, $o, $f) => $r->supplierQuotes($o, $f)); }
     public function supplierQuote(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->supplierQuote($o, $i)); }
+    /** Tarjetas 4 y 11: PDF vigente de la cotización del proveedor (uso interno; almacenamiento privado verificado por su huella). */
+    public function supplierQuoteDocument(string $id): ResponseInterface
+    {
+        try {
+            if ($denied = $this->guard()) {
+                return $denied;
+            }
+            if ($this->request->getGet() !== [] || ! preg_match(self::UUID, $id)) {
+                return $this->fail(404, 'NOT_FOUND', 'Documento no encontrado.');
+            }
+            $d = (new QuoteReadRepository())->supplierQuoteDocument((int) $this->actor['organization_id'], $id);
+            if (! $d) {
+                return $this->fail(404, 'NOT_FOUND', 'La cotización no tiene PDF registrado.');
+            }
+            if (! $d['available']) {
+                return $this->fail(409, 'DOCUMENT_UNAVAILABLE', 'El PDF registrado no está disponible en este equipo o no coincide con su huella.');
+            }
+            $name = preg_replace('/[\x00-\x1f\x7f]/', '', basename(str_replace('\\', '/', (string) $d['name']))) ?: 'cotizacion.pdf';
+            return $this->response->setStatusCode(200)->setHeader('Content-Type', 'application/pdf')->setHeader('Cache-Control', 'private, no-store')
+                ->setHeader('X-Content-Type-Options', 'nosniff')->setHeader('Content-Security-Policy', "sandbox; default-src 'none'; frame-ancestors 'self'")
+                ->setHeader('Content-Disposition', "attachment; filename=\"cotizacion.pdf\"; filename*=UTF-8''" . rawurlencode($name))
+                ->setBody((string) file_get_contents($d['path']));
+        } catch (Throwable) {
+            log_message('error', 'SupplyFlow supplier quote document unavailable.');
+            return $this->fail(503, 'QUOTES_UNAVAILABLE', 'No se pudo consultar el documento.');
+        }
+    }
     public function comparison(): ResponseInterface { return $this->run(['requisition' => [self::UUID_OR_ALL, 'all']], fn ($r, $o, $f) => $r->comparison($o, $f['requisition']), false); }
     public function customerQuotes(): ResponseInterface
     {

@@ -1,9 +1,11 @@
 // Cotizaciones › Registro de cotización (oferta del proveedor contra su RFQ) · lógica pura (sin red).
-// Captura y cálculo en el navegador con las partidas reales de la RFQ; GUARDAR la cotización es una escritura comercial
-// bloqueada hasta su validación integral, por eso aquí no se registra nada.
+// Captura y cálculo en el navegador con las partidas reales de la RFQ. «Guardar cotización» la registra en MariaDB
+// (POST/PUT /api/v1/quotes/supplier-quotes, cuenta quotewrite): el servidor vuelve a validar y calcula los importes.
 
 export const PAYMENT_METHODS = [['PUE', 'PUE - Pago en una sola exhibición', 'PUE - Payment in a single installment'], ['PPD', 'PPD - Pago en parcialidades o diferido', 'PPD - Payment in installments or deferred']];
-export const PDF_MAX_BYTES = 10 * 1024 * 1024;
+// 8 MB: límite de transporte del gateway (el PDF viaja en base64 dentro del JSON; client_max_body_size 12m), igual que RF1.
+export const PDF_MAX_BYTES = 8 * 1024 * 1024;
+export const QUOTE_GUIDE = 'docs/cotizaciones/REGISTRO_COTIZACION_PROVEEDOR.md';
 
 const t = v => String(v ?? '').trim();
 const DEC = /^(?:0|[1-9][0-9]{0,13})(?:\.[0-9]{1,6})?$/;
@@ -40,12 +42,13 @@ export function qtyNote(l) { const q = num(l.qty); const r = num(l.requested); i
 
 const pct = v => { const n = num(v); return n !== null && n <= 100; };
 /** { ok, errors, first } — required (*) fields of the design plus coherent dates, percentages and priced offered lines. */
-export function validateQuote(f, lines = [], en = false) {
+export function validateQuote(f, lines = [], en = false, { edit = false } = {}) {
   const m = (es, e) => (en ? e : es);
   const errors = {};
-  if (!f.buyer) errors.buyer = m('Selecciona el comprador responsable.', 'Select the responsible buyer.');
-  if (!f.requisition) errors.requisition = m('Selecciona la requisición validada.', 'Select the validated requisition.');
-  if (!f.rfq) errors.rfq = m('Selecciona la RFQ emitida.', 'Select the issued RFQ.');
+  // Editar: comprador, requisición y RFQ quedan fijos (los de la cotización registrada).
+  if (!edit && !f.buyer) errors.buyer = m('Selecciona el comprador responsable.', 'Select the responsible buyer.');
+  if (!edit && !f.requisition) errors.requisition = m('Selecciona la requisición validada.', 'Select the validated requisition.');
+  if (!edit && !f.rfq) errors.rfq = m('Selecciona la RFQ emitida.', 'Select the issued RFQ.');
   if (!DATE.test(f.quote_date || '')) errors.quote_date = m('Indica la fecha de cotización.', 'Enter the quote date.');
   if (f.valid_until && !DATE.test(f.valid_until)) errors.valid_until = m('Fecha inválida.', 'Invalid date.');
   else if (f.valid_until && f.quote_date && f.valid_until < f.quote_date) errors.valid_until = m('La vigencia no puede ser anterior a la fecha de cotización.', 'Validity cannot be before the quote date.');
@@ -71,3 +74,90 @@ export function validateQuote(f, lines = [], en = false) {
 
 /** First bytes of a PDF ("%PDF-"); the type reported by the browser alone is not trusted. */
 export const isPdfHeader = bytes => bytes && bytes.length >= 5 && String.fromCharCode(...bytes.slice(0, 5)) === '%PDF-';
+
+// ---- Guardado en MariaDB (tarjeta 4) ----
+
+/** Body of POST/PUT /api/v1/quotes/supplier-quotes. Amounts are NOT sent: the server computes them. */
+export function quotePayload(f, lines = [], document = null, edit = false) {
+  const p = { supplier_reference: t(f.supplier_reference), quote_date: t(f.quote_date), valid_until: t(f.valid_until), vat: t(f.vat), currency: f.currency, lead_days: t(f.lead_days),
+    payment: f.payment || '', technical: t(f.technical), documentation: t(f.documentation), notes: t(f.notes),
+    lines: lines.map(l => ({ line_number: Number(l.line_number), offered: !!l.offered, qty: l.offered ? t(l.qty) : '0', price: l.offered ? t(l.price) : '0' })), document: document || null };
+  return edit ? p : { rfq_id: f.rfq, ...p };
+}
+
+/** Form and lines of a registered quote (GET /api/v1/quotes/supplier-quotes/{id}) for the edit mode. */
+export function quoteFromDetail(det) {
+  const it = det?.item || {};
+  const form = { ...emptyQuote(), requisition: it.requisition_id || '', rfq: it.rfq_id || '', supplier_reference: it.supplier_reference || '', quote_date: String(it.quote_date || '').slice(0, 10),
+    valid_until: String(it.valid_until || '').slice(0, 10), vat: it.tax_rate_pct === null || it.tax_rate_pct === undefined ? '0' : normQty(it.tax_rate_pct), currency: it.currency || 'MXN',
+    lead_days: it.lead_days === null || it.lead_days === undefined ? '' : normQty(it.lead_days), payment: PAYMENT_METHODS.some(([c]) => c === it.payment_terms) ? it.payment_terms : '',
+    technical: it.technical_score === null || it.technical_score === undefined ? '' : normQty(it.technical_score), documentation: it.document_score === null || it.document_score === undefined ? '' : normQty(it.document_score), notes: it.notes || '' };
+  const lines = (det?.items || []).map((i, n) => ({ key: `${i.line_number}-${n}`, line_number: Number(i.line_number), description: i.description, specification: '', category: i.category || '', unit: i.unit_label,
+    requested: normQty(i.requested_quantity), offered: !!i.offered, qty: i.offered ? normQty(i.quantity) : normQty(i.requested_quantity), price: i.offered ? normQty(i.unit_price) : '' }));
+  return { form, lines };
+}
+
+/** Why a quote cannot be edited ('' = editable). Codes from the server: imported | awarded | status. */
+export function editBlockText(code, folio = '', en = false) {
+  const m = (es, e) => (en ? e : es); const f = t(folio) || m('La cotización', 'The quote');
+  if (!code) return '';
+  if (code === 'imported') return m(`${f} es una cotización importada del sistema original (o sin RFQ): se conserva como expediente y no se edita.`, `${f} was imported from the original system (or has no RFQ): it is kept as a record and is not edited.`);
+  if (code === 'awarded') return m(`${f} tiene adjudicación vigente: se conserva para trazabilidad y no se edita.`, `${f} has a current award: it is kept for traceability and is not edited.`);
+  return m(`${f} ya no está en estatus «Recibida» y no se edita.`, `${f} is no longer "Received" and is not edited.`);
+}
+
+/** Same rule as the server, from a matrix row (GET /api/v1/quotes/supplier-quotes): code or null when editable. */
+export function rowEditBlock(r) {
+  if (!r) return 'imported';
+  if (r.imported || (r.source_kind && r.source_kind !== 'explicit') || !t(r.rfq_folio)) return 'imported';
+  if (r.awarded || Number(r.awarded_lines) > 0) return 'awarded';
+  return r.status === 'recibida' ? null : 'status';
+}
+
+const CHANGE_LABEL = { supplier_reference: ['referencia del proveedor', 'supplier reference'], quote_date: ['fecha', 'date'], valid_until: ['vigencia', 'validity'], currency: ['moneda', 'currency'],
+  vat: ['IVA', 'VAT'], lead_days: ['días de entrega', 'delivery days'], payment: ['condiciones de pago', 'payment terms'], technical: ['cumplimiento técnico', 'technical compliance'],
+  documentation: ['documentación', 'documentation'], notes: ['comentarios', 'comments'], lines: ['partidas', 'items'], subtotal: ['importes', 'amounts'], tax: ['importes', 'amounts'],
+  total: ['importes', 'amounts'], document: ['PDF', 'PDF'] };
+/** Server change keys → readable labels (the three amounts collapse into one). */
+export const changeLabels = (changed = [], en = false) => [...new Set(changed.map(k => (CHANGE_LABEL[k] ? CHANGE_LABEL[k][en ? 1 : 0] : k)))];
+
+/** Message after a confirmed save. */
+export function quoteSavedText(out, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const total = Number(out?.total || 0).toLocaleString(en ? 'en-US' : 'es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const doc = out?.document?.name ? m(` con el PDF «${out.document.name}»`, ` with the PDF "${out.document.name}"`) : '';
+  if (Array.isArray(out?.changed)) {
+    const labels = changeLabels(out.changed, en).join(', ');
+    return out.changed.length
+      ? m(`Cambios de ${t(out.folio)} guardados en MariaDB (${labels}); versión ${out.version}. Total $${total} ${out.currency}${doc}.`, `Changes to ${t(out.folio)} saved to MariaDB (${labels}); version ${out.version}. Total $${total} ${out.currency}${doc}.`)
+      : m('No había cambios por guardar.', 'No changes to save.');
+  }
+  return m(`Cotización ${t(out?.folio)} de ${t(out?.supplier_name)} registrada en MariaDB contra ${t(out?.rfq)} (${t(out?.requisition)}): total $${total} ${out?.currency}${doc}.`,
+    `Quote ${t(out?.folio)} from ${t(out?.supplier_name)} recorded in MariaDB against ${t(out?.rfq)} (${t(out?.requisition)}): total $${total} ${out?.currency}${doc}.`);
+}
+
+const FORM_FIELD = { rfq_id: 'rfq', supplier_reference: 'supplier_reference', quote_date: 'quote_date', valid_until: 'valid_until', vat: 'vat', currency: 'currency', lead_days: 'lead_days',
+  payment: 'payment', technical: 'technical', documentation: 'documentation', notes: 'notes', lines: 'lines', document: 'document' };
+export const QUOTE_BLOCKING_CODES = ['QUOTE_WRITE_NOT_PROVISIONED', 'QUOTE_WRITE_ACCOUNT_REJECTED', 'QUOTE_WRITE_GRANTS_INCOMPLETE'];
+
+/** Server error → { kind: error|warn, text, field (form key, or line:<key>), retry (reuse the Idempotency-Key) }. */
+export function quoteSaveError(status, body, lines = [], en = false) {
+  const m = (es, e) => (en ? e : es);
+  const code = body?.error?.code; const message = body?.error?.message; const raw = body?.error?.field || '';
+  const ln = /^line:(\d+)$/.exec(raw); const line = ln ? lines.find(l => Number(l.line_number) === Number(ln[1])) : null;
+  const field = line ? `line:${line.key}` : FORM_FIELD[raw] || null;
+  if (!status) return { kind: 'error', text: m('No se confirmó el guardado (sin respuesta del servidor). Presiona Guardar otra vez: se repite la misma operación sin duplicarla.', 'The save was not confirmed (no server response). Press Save again: the same operation is repeated without duplicating it.'), retry: true };
+  if (status === 401) return { kind: 'error', text: m('Tu sesión expiró. Inicia sesión nuevamente; no se guardó nada.', 'Your session expired; nothing was saved.') };
+  if (status === 403) return { kind: 'error', text: code === 'CSRF_INVALID' ? m('La sesión de seguridad cambió. Vuelve a intentarlo.', 'The security token changed. Try again.') : m('Solo un Master Admin puede registrar cotizaciones.', 'Only a Master Admin can record quotes.') };
+  if (QUOTE_BLOCKING_CODES.includes(code)) return { kind: 'warn', text: `${message || m('El guardado de Cotizaciones no está habilitado en este equipo.', 'Saving quotes is not enabled on this computer.')} ${m(`Consulta «Activación en la PC» en ${QUOTE_GUIDE}.`, `See "Activación en la PC" in ${QUOTE_GUIDE}.`)}` };
+  if (status === 412) return { kind: 'warn', text: m('Otra persona modificó la cotización. Vuelve a abrirla desde la matriz interna de proveedores.', 'Someone else changed the quote. Reopen it from the internal suppliers matrix.') };
+  if (status === 413) return { kind: 'error', text: m('El PDF es demasiado grande: admite hasta 8 MB.', 'The PDF is too large: up to 8 MB.'), field: 'document' };
+  if (status === 422) {
+    const text = code === 'INVALID_QUOTE'
+      ? (field === 'document' ? m('El servidor no aceptó el PDF (debe ser un PDF válido de hasta 8 MB).', 'The server did not accept the PDF (valid PDF up to 8 MB).') : line ? m(`Partida ${line.line_number}: revisa cantidad y precio unitario.`, `Item ${line.line_number}: check quantity and unit price.`) : m('Revisa el campo marcado: el servidor no lo aceptó.', 'Check the highlighted field: the server did not accept it.'))
+      : message || m('Revisa los datos capturados.', 'Check the entered data.');
+    return { kind: 'error', text, field };
+  }
+  if (status === 404 || status === 409) return { kind: 'error', text: message || m('No se pudo guardar.', 'Could not save.') };
+  return { kind: 'error', text: m(`No se confirmó el guardado (${message || 'error del servidor'}). Presiona Guardar otra vez: se repite la misma operación sin duplicarla.`, `The save was not confirmed (${message || 'server error'}). Press Save again: the same operation is repeated without duplicating it.`), retry: true };
+}

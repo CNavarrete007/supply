@@ -105,6 +105,11 @@ $routes->get('api/v1/quotes/rfqs', 'QuoteController::rfqs');
 $routes->get('api/v1/quotes/rfqs/(:segment)', 'QuoteController::rfq/$1');
 $routes->get('api/v1/quotes/supplier-quotes', 'QuoteController::supplierQuotes');
 $routes->get('api/v1/quotes/supplier-quotes/(:segment)', 'QuoteController::supplierQuote/$1');
+// Cotizaciones › Registro de cotización (tarjeta 4): registro interno de la cotización del proveedor (cuenta quotewrite).
+$routes->get('api/v1/quotes/supplier-quotes/(:segment)/document', 'QuoteController::supplierQuoteDocument/$1');
+$routes->get('api/v1/quotes/write-status', 'SupplierQuoteWriteController::writeStatus');
+$routes->post('api/v1/quotes/supplier-quotes', 'SupplierQuoteWriteController::create');
+$routes->put('api/v1/quotes/supplier-quotes/(:segment)', 'SupplierQuoteWriteController::update/$1');
 $routes->get('api/v1/quotes/comparison', 'QuoteController::comparison');
 $routes->get('api/v1/quotes/customer-quotes', 'QuoteController::customerQuotes');
 $routes->get('api/v1/quotes/customer-quotes/(:segment)', 'QuoteController::customerQuote/$1');

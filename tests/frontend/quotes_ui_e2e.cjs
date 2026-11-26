@@ -164,24 +164,25 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('button', { name: 'Ver matriz' }).click();
     check('"Ver matriz" vuelve a la matriz de RFQ', (await page.getByRole('button', { name: /Matriz de RFQ/ }).getAttribute('aria-pressed')) === 'true');
 
-    // 4 · Registro de cotización: RFQ real → partidas, importes, IVA y totales; guardar sigue bloqueado
+    // 4 · Registro de cotización: RFQ real → partidas, importes, IVA y totales. Guardar envía el POST real; aquí la ruta de
+    // escritura está abortada (prueba de solo lectura): el fallo no se da por guardado (los guardados reales: supplier_quote_write_*).
     const st4 = await api('/api/v1/quotes/rfq-setup');
     await page.getByRole('button', { name: /Cotizaciones recibidas/ }).click();
     await page.getByTestId('quote-card').waitFor();
     check('registro: sin RFQ seleccionada al inicio', flat(await page.getByTestId('quote-rfq-banner').innerText()).includes('Sin RFQ seleccionada') && flat(await page.getByTestId('quote-items').innerText()).includes('Selecciona una requisición y un proveedor'));
-    let buyer4 = null; let reqs4 = null;
-    for (const b of st4.buyers) { const l = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&rfq=with&buyer=${b.key}`); if (l.total) { buyer4 = b; reqs4 = l; if (l.items.some(x => x.quote_count > 0)) break; } }
+    let buyer4 = null; let reqs4 = null; let req4 = null; let det4 = null;
+    // Requisición con al menos una RFQ sin cotización (las que ya tienen cotización se editan desde la matriz y quedan deshabilitadas).
+    outer4: for (const b of st4.buyers) { const l = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&rfq=with&buyer=${b.key}`);
+      for (const x of l.items) { const d = await api(`/api/v1/quotes/rfq-requisitions/${x.id}`); if (d.rfqs.some(f => !f.quote_folios)) { buyer4 = b; reqs4 = l; req4 = x; det4 = d; break outer4; } } }
     check('registro: requisiciones con RFQ del comprador (API)', reqs4 && reqs4.items.every(r => r.rfq_count > 0 && r.buyer_key === buyer4.key));
     await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer4.key);
     await page.getByTestId('rfq-req-modal').waitFor(); await page.getByTestId('rfq-req-option').first().waitFor();
     check('registro: la ventana lista solo requisiciones con RFQ emitida', await page.getByTestId('rfq-req-option').count() === reqs4.items.length);
-    const req4 = reqs4.items.find(x => x.quote_count > 0) || reqs4.items[0];
-    const det4 = await api(`/api/v1/quotes/rfq-requisitions/${req4.id}`);
     await page.getByTestId('rfq-req-option').filter({ hasText: req4.folio }).getByRole('button', { name: 'Seleccionar' }).click();
     await page.waitForFunction(f => document.querySelector('input[aria-label="Requisición validada"]')?.value.startsWith(f), req4.folio);
     await page.waitForFunction(n => document.querySelectorAll('select[aria-label="RFQ emitida"] option').length === n + 1, det4.rfqs.length);
-    check('registro: RFQ emitidas de la requisición', true);
-    const rfq4 = det4.rfqs.find(x => x.quote_folios) || det4.rfqs[0];
+    check('registro: RFQ emitidas de la requisición; las ya cotizadas, deshabilitadas', await page.locator('select[aria-label="RFQ emitida"] option[disabled]').count() === det4.rfqs.filter(x => x.quote_folios).length);
+    const rfq4 = det4.rfqs.find(x => !x.quote_folios);
     const rfqDet4 = await api(`/api/v1/quotes/rfqs/${rfq4.id}`);
     await page.getByRole('combobox', { name: 'RFQ emitida' }).selectOption(rfq4.id);
     await page.getByTestId('quote-line').first().waitFor();
@@ -190,7 +191,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('registro: moneda tomada de la RFQ', (await page.getByRole('combobox', { name: 'Moneda' }).inputValue()) === rfqDet4.item.currency);
     check('registro: referencia interna desde la requisición', (await page.getByRole('textbox', { name: 'Referencia interna' }).inputValue()).startsWith(det4.item.internal_reference || det4.item.folio));
     const banner4 = flat(await page.getByTestId('quote-rfq-banner').innerText());
-    check('registro: resumen de la RFQ y aviso si ya tiene cotización', banner4.includes(rfq4.folio) && (!rfq4.quote_folios || banner4.includes(`ya tiene cotización registrada (${rfq4.quote_folios})`)), banner4);
+    check('registro: resumen de la RFQ', banner4.includes(rfq4.folio) && banner4.includes(rfq4.supplier_name), banner4);
     check('registro: pendiente mientras faltan datos', flat(await page.getByTestId('quote-check').innerText()).startsWith('Pendiente:'));
     const actions4 = (await page.getByTestId('quote-actions').getByRole('button').allInnerTexts()).map(flat);
     check('botones del diseño en orden: Guardar, Limpiar, Ver comparativo, Ver matriz (sin "Nueva cotización")', JSON.stringify(actions4) === JSON.stringify(['💾 Guardar cotización', '🧹 Limpiar', '📊 Ver comparativo', '📋 Ver matriz']) && await page.getByRole('button', { name: /Guardar cotización/ }).isEnabled(), JSON.stringify(actions4));
@@ -222,8 +223,11 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('button', { name: 'Quitar PDF' }).click();
     check('registro: Quitar PDF', await page.getByTestId('quote-pdf').count() === 0 && await page.getByText('No se ha cargado el PDF de la cotización.').isVisible());
     await page.getByRole('button', { name: /Guardar cotización/ }).click();
-    const saved4 = flat(await page.getByTestId('quote-check').innerText());
-    check('Guardar con captura completa: valida y avisa que NO se guardó (escritura comercial bloqueada)', saved4.startsWith('Captura validada') && saved4.includes('No se guardó') && writes.length === 0, saved4);
+    await page.getByTestId('quote-result').filter({ hasText: 'No se confirmó' }).waitFor({ timeout: 15000 });
+    const saved4 = flat(await page.getByTestId('quote-result').innerText());
+    check('Guardar con captura completa: envía el POST real; abortado, NO se da por guardado', saved4.includes('No se confirmó el guardado') && JSON.stringify(writes) === JSON.stringify(['POST /api/v1/quotes/supplier-quotes'])
+      && (await page.getByRole('textbox', { name: 'Folio de cotización' }).inputValue()) === '', `${saved4} | ${writes.join(',')}`);
+    writes.splice(0);
     await shot(page, 'cot_4_registro');
     await page.getByRole('button', { name: 'Ver comparativo' }).click();
     await page.getByTestId('cmp-summary').waitFor();
@@ -788,7 +792,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('EDITAR consulta el detalle interno (200)', (await det11).status() === 200);
     const dd11 = flat(await page.getByTestId('sqm-doc').contentFrame().locator('body').innerText());
     check('detalle: partidas con precio unitario del proveedor y aviso interno', dd11.includes('Material sintético') && dd11.includes(usd(q4.total_amount)) && dd11.includes('no compartir con el cliente') && (await page.getByTestId('sqm-doc').getAttribute('sandbox')) === '');
-    check('EDITAR: modificar la cotización registrada está bloqueado', /escritura comercial bloqueada/.test(await page.getByTestId('sqm-detail').innerText()));
+    check('EDITAR: la cotización importada o sin RFQ se conserva (detalle con el motivo, sin edición)', /se conserva como expediente/.test(await page.getByTestId('sqm-detail').innerText()) && await page.getByTestId('quote-edit-banner').count() === 0);
     await page.getByTestId('sqm-detail').getByRole('button', { name: 'Cerrar' }).click();
     const aw11 = m11.items.find(x => x.awarded);
     if (aw11) {

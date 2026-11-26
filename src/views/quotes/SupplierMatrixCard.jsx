@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, AlertCircle, Lock, ChevronLeft, ChevronRight, Search, X, Printer, Paperclip } from 'lucide-react';
-import { listSupplierQuotes, getSupplierQuote, getComparison } from './api';
+import { Loader2, AlertCircle, Lock, ChevronLeft, ChevronRight, Search, X, Printer, Paperclip, Download } from 'lucide-react';
+import { listSupplierQuotes, getSupplierQuote, getComparison, supplierQuoteDocumentUrl } from './api';
 import { money } from './model.mjs';
 import { supplierCards, quoteStatus, requisitionRef, pct, leadText, scoreTone, scoresFromComparison, deleteBlock, supplierQuoteHtml } from './supplierMatrix.mjs';
+import { rowEditBlock, editBlockText } from './supplierQuote.mjs';
 
 // Tarjeta 11 · Matriz interna de proveedores (uso interno, con costos). Lee de MariaDB
 // GET /api/v1/quotes/supplier-quotes (filtro por proveedor y búsqueda en el servidor) y, para el puntaje, el comparativo
-// de cada requisición visible (GET /quotes/comparison). EDITAR muestra el detalle registrado; ADJUDICAR abre el
+// de cada requisición visible (GET /quotes/comparison). EDITAR abre en la tarjeta 4 las registradas en SupplyFlow sin
+// adjudicar (las demás muestran el detalle y el motivo); ADJUDICAR abre el
 // comparativo (tarjeta 5); ELIMINAR y modificar la cotización son escrituras comerciales bloqueadas.
 function useLoad(fn, deps, enabled = true) {
   const [st, setSt] = useState({ status: 'idle', data: null, error: null });
@@ -44,7 +46,7 @@ function useScores(reqIds, refresh) {
   return cache.current;
 }
 
-export function SupplierMatrixCard({ en = false, notify, refresh = 0, onNew, onCompare }) {
+export function SupplierMatrixCard({ en = false, notify, refresh = 0, onNew, onCompare, onEdit }) {
   const tx = (es, e) => (en ? e : es);
   const [supplier, setSupplier] = useState(null); // null = solo tarjetas; 'all' | public id
   const [input, setInput] = useState(''); const [q, setQ] = useState('');
@@ -79,7 +81,8 @@ export function SupplierMatrixCard({ en = false, notify, refresh = 0, onNew, onC
     </div>
     <div className="px-4 py-3 rounded-xl border border-blue-100 bg-blue-50/50 text-[11px] text-slate-700" data-testid="sqm-actions">
       <strong className="text-slate-900">{tx('Acciones:', 'Actions:')}</strong> <strong className="text-slate-900">{tx('EDITAR', 'EDIT')}</strong> {tx('abre la cotización para modificarla.', 'opens the quote to modify it.')} <strong className="text-slate-900 ml-1.5">{tx('ADJUDICAR', 'AWARD')}</strong> {tx('abre el comparativo para elegir la oferta con la que se emitirá la orden de compra.', 'opens the comparison to choose the offer used to issue the purchase order.')} <strong className="text-slate-900 ml-1.5">{tx('ELIMINAR', 'DELETE')}</strong> {tx('borra la cotización después de confirmar.', 'deletes the quote after confirming.')}
-      <span className="block text-[10.5px] text-amber-800 mt-1"><Lock className="w-3 h-3 inline -mt-0.5 mr-1" />{tx('Modificar y eliminar cotizaciones son escrituras comerciales bloqueadas hasta su autorización: aquí se consultan y validan.', 'Modifying and deleting quotes are commercial writes blocked until authorized: here they are reviewed and validated.')}</span>
+      <span className="block text-[10.5px] text-slate-600 mt-1">{tx('EDITAR abre en Registro de cotización (tarjeta 4) las registradas en SupplyFlow sin adjudicar; las importadas del sistema original y las adjudicadas se conservan como expediente (solo consulta).', 'EDIT opens quotes recorded in SupplyFlow without award in Quote registration (card 4); imported and awarded quotes are kept as records (view only).')}</span>
+      <span className="block text-[10.5px] text-amber-800 mt-1"><Lock className="w-3 h-3 inline -mt-0.5 mr-1" />{tx('Eliminar cotizaciones y adjudicar siguen bloqueados (escrituras comerciales pendientes de autorización).', 'Deleting quotes and awarding remain blocked (commercial writes pending authorization).')}</span>
     </div>
 
     <div className="p-4 sm:p-5 rounded-2xl border border-slate-200/80 bg-gradient-to-br from-white to-purple-50/30 space-y-4">
@@ -126,7 +129,7 @@ export function SupplierMatrixCard({ en = false, notify, refresh = 0, onNew, onC
             <td className="py-3 px-3"><span className={`inline-block px-2.5 py-1 rounded-full text-[10.5px] font-black border whitespace-nowrap ${st.tone}`}>{st.text}</span></td>
             <td className="py-3 px-3">{r.file_count ? <span className="text-xs font-black"><button type="button" onClick={() => { setDetId(r.id); setDetMode('pdf'); }} title={r.file_name || undefined} className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl whitespace-nowrap">{tx('VER PDF', 'VIEW PDF')}</button></span> : <span className="inline-block px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-[10px] font-black text-slate-600 whitespace-nowrap">{tx('Sin PDF', 'No PDF')}</span>}</td>
             <td className="py-3 px-3"><div className="flex items-center gap-1.5 text-[11px] font-black">
-              <button type="button" onClick={() => { setDetId(r.id); setDetMode('edit'); }} className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm">{tx('EDITAR', 'EDIT')}</button>
+              <button type="button" onClick={() => { if (!rowEditBlock(r) && onEdit) { onEdit(r.id); return; } setDetId(r.id); setDetMode('edit'); }} title={rowEditBlock(r) ? editBlockText(rowEditBlock(r), r.folio, en) : undefined} className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-800 rounded-xl shadow-sm">{tx('EDITAR', 'EDIT')}</button>
               <button type="button" onClick={() => onCompare?.(r.requisition_id)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-sm">{tx('ADJUDICAR', 'AWARD')}</button>
               <button type="button" onClick={() => { setDel(r); setTyped(''); setDelMsg(''); }} className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-sm">{tx('ELIMINAR', 'DELETE')}</button>
             </div></td>
@@ -145,10 +148,11 @@ export function SupplierMatrixCard({ en = false, notify, refresh = 0, onNew, onC
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 text-xs">
           {det.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p>}
           {det.error && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{det.error.message}</p>}
-          {detMode === 'edit' && <p className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{tx('Modificar una cotización registrada es una escritura comercial bloqueada hasta su autorización. Aquí se consulta lo registrado; para capturar una nueva oferta usa Registro de cotización (tarjeta 4).', 'Modifying a recorded quote is a commercial write blocked until authorized. Here the recorded data is shown; to capture a new offer use Quote registration (card 4).')}</span></p>}
-          {detRow && <p className="flex items-center gap-2 p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-700"><Paperclip className="w-4 h-4 shrink-0" />{detRow.file_count ? tx(`Archivo original registrado: ${detRow.file_name || 'sin nombre'}. Su descarga desde esta pantalla aún no está habilitada; la vista siguiente se genera con los datos registrados en MariaDB.`, `Original file recorded: ${detRow.file_name || 'unnamed'}. Downloading it from this screen is not enabled yet; the view below is generated from the data recorded in MariaDB.`) : tx('Sin archivo original del proveedor registrado; la vista se genera con los datos de MariaDB.', 'No original supplier file recorded; the view is generated from MariaDB data.')}</p>}
+          {detMode === 'edit' && det.data?.item && <p className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{det.data.item.editable ? tx('Cotización registrada en SupplyFlow sin adjudicar: se edita en Registro de cotización (tarjeta 4).', 'Quote recorded in SupplyFlow without award: it is edited in Quote registration (card 4).') : editBlockText(det.data.item.edit_block, det.data.item.folio, en)}</span></p>}
+          {detRow && <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-700"><span className="flex items-center gap-2"><Paperclip className="w-4 h-4 shrink-0" />{detRow.file_count ? tx(`Archivo original registrado: ${detRow.file_name || 'sin nombre'}. La vista siguiente se genera con los datos registrados en MariaDB.`, `Original file recorded: ${detRow.file_name || 'unnamed'}. The view below is generated from the data recorded in MariaDB.`) : tx('Sin archivo original del proveedor registrado; la vista se genera con los datos de MariaDB.', 'No original supplier file recorded; the view is generated from MariaDB data.')}</span>
+            {detRow.file_count > 0 && <a data-testid="sqm-download" href={supplierQuoteDocumentUrl(detRow.id)} download className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg font-bold flex items-center gap-1.5"><Download className="w-3.5 h-3.5" />{tx('Descargar PDF', 'Download PDF')}</a>}</div>}
           {doc && <iframe data-testid="sqm-doc" title={tx('Cotización de proveedor', 'Supplier quote')} srcDoc={doc.html} sandbox="" className="w-full h-[560px] rounded-lg border border-slate-200 bg-white" />}
-          {detMode === 'edit' && <div className="flex justify-end gap-2 text-xs font-bold"><button type="button" onClick={() => { setDetId(''); onCompare?.(detRow?.requisition_id); }} className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg">{tx('Abrir comparativo', 'Open comparison')}</button><button type="button" onClick={() => { setDetId(''); onNew?.(); }} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg">{tx('Ir a Registro de cotización', 'Go to Quote registration')}</button></div>}
+          {detMode === 'edit' && <div className="flex justify-end gap-2 text-xs font-bold"><button type="button" onClick={() => { setDetId(''); onCompare?.(detRow?.requisition_id); }} className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg">{tx('Abrir comparativo', 'Open comparison')}</button><button type="button" onClick={() => { const id = detId; setDetId(''); if (det.data?.item?.editable && onEdit) onEdit(id); else onNew?.(); }} className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg">{det.data?.item?.editable ? tx('Editar en Registro de cotización', 'Edit in Quote registration') : tx('Ir a Registro de cotización', 'Go to Quote registration')}</button></div>}
         </div>
       </div>
     </div>}

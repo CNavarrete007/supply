@@ -46,6 +46,9 @@ if ($UserAdmin) { $Files += 'compose.supply-useradmin.yml' }
 # Gestion del Contratista (validacion interna y estrategia): cuenta mgmtwrite (docs/gestion-contratista/GUARDADO_VALIDACION_ESTRATEGIA.md).
 $MgmtWrite = Test-Path -LiteralPath (Join-Path $PrivateDir 'secrets\mgmtwrite-db-password.txt') -PathType Leaf
 if ($MgmtWrite) { $Files += 'compose.supply-mgmtwrite.yml' }
+# Cotizaciones (registro interno de la cotizacion del proveedor, tarjeta 4): cuenta quotewrite (docs/cotizaciones/REGISTRO_COTIZACION_PROVEEDOR.md).
+$QuoteWrite = Test-Path -LiteralPath (Join-Path $PrivateDir 'secrets\quotewrite-db-password.txt') -PathType Leaf
+if ($QuoteWrite) { $Files += 'compose.supply-quotewrite.yml' }
 $script:Problems = New-Object System.Collections.Generic.List[string]
 
 function Say([string]$Status, [string]$Text) { Write-Host ('[{0,-7}] {1}' -f $Status, $Text) }
@@ -219,6 +222,8 @@ switch ($Phase) {
     else { Say 'INFO' 'Gestion de acceso NO habilitada: falta secrets\useradmin-db-password.txt (segundo Master Admin y cambio de contrasena; ver docs/usuarios/SEGUNDO_MASTER_ADMIN.md).' }
     if ($MgmtWrite) { Say 'OK' 'Gestion del Contratista: overlay compose.supply-mgmtwrite.yml incluido (las tarjetas avisan si falta aprovisionar la cuenta).' }
     else { Say 'INFO' 'Guardado de Gestion del Contratista NO habilitado: falta secrets\mgmtwrite-db-password.txt (ver docs/gestion-contratista/GUARDADO_VALIDACION_ESTRATEGIA.md).' }
+    if ($QuoteWrite) { Say 'OK' 'Cotizaciones: overlay compose.supply-quotewrite.yml incluido (Registro de cotizacion avisa si falta aprovisionar la cuenta).' }
+    else { Say 'INFO' 'Registro de cotizaciones de proveedor NO habilitado: falta secrets\quotewrite-db-password.txt (ver docs/cotizaciones/REGISTRO_COTIZACION_PROVEEDOR.md).' }
     if ($ok) { Say 'PASS' 'SupplyFlow en http://localhost:8080 (inicia sesion con tu usuario de la PC anterior).'; exit 0 }
     exit 1
   }

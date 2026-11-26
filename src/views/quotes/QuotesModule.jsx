@@ -16,9 +16,10 @@ import { SupplierMatrixCard } from './SupplierMatrixCard';
 import { docModel, quoteDocHtml } from './quoteDocument.mjs';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
-// Cotizaciones y Comparativo · diseño Grupo Gerez (11 tarjetas) conectado a MariaDB en modo consulta.
-// GET /api/v1/quotes/* (Master Admin). Enviar RFQ, capturar cotizaciones, seleccionar, adjudicar, emitir la cotización al
-// cliente y registrar su decisión son escrituras comerciales que siguen bloqueadas hasta su validación integral.
+// Cotizaciones y Comparativo · diseño Grupo Gerez (11 tarjetas) conectado a MariaDB.
+// GET /api/v1/quotes/* (Master Admin). La tarjeta 4 registra y edita la cotización recibida del proveedor (registro interno;
+// cuenta quotewrite). Enviar RFQ, seleccionar/adjudicar, emitir la cotización al cliente y registrar su decisión son
+// escrituras comerciales que siguen bloqueadas hasta su validación integral.
 
 function useLoad(fn, deps, enabled = true) {
   const [st, setSt] = useState({ status: 'idle', data: null, error: null });
@@ -36,7 +37,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const en = Boolean(isEnglish || lang === 'en' || language === 'en');
   const tx = (es, e) => (en ? e : es);
   const notify = (t, m, k = 'info') => { if (typeof onNotify === 'function') onNotify(t, m, k); };
-  const LOCK = tx('Modo consulta MariaDB: enviar RFQ, capturar cotizaciones, seleccionar, adjudicar, emitir la cotización al cliente y registrar su decisión son escrituras comerciales bloqueadas hasta su validación integral.', 'MariaDB read mode: sending RFQs, capturing quotes, selecting, awarding, issuing client quotes and recording decisions are commercial writes blocked until fully validated.');
+  const LOCK = tx('Modo consulta MariaDB: enviar RFQ, seleccionar, adjudicar, emitir la cotización al cliente y registrar su decisión son escrituras comerciales bloqueadas hasta su validación integral. Las cotizaciones recibidas de proveedores sí se registran (tarjeta 4).', 'MariaDB read mode: sending RFQs, selecting, awarding, issuing client quotes and recording decisions are commercial writes blocked until fully validated. Quotes received from suppliers are recorded (card 4).');
   const tabs = [
     [1, '🔄', tx('Revisiones/modificaciones', 'Revisions & Modifications'), tx('Historial de versiones de la cotización al cliente.', 'Client quote version history.')],
     [2, '📑', tx('Solicitud a proveedores (RFQ)', 'Supplier Request (RFQ)'), tx('Documento sin precios enviado a cada proveedor.', 'Document without prices sent to each supplier.')],
@@ -59,7 +60,8 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const [changeFor, setChangeFor] = useState(null);
   const [blocked, setBlocked] = useState(null);
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
-  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setRevStatus('all'); };
+  const [editQuote, setEditQuote] = useState(''); // tarjeta 4 en modo edición (EDITAR desde la matriz interna)
+  const go = id => { setTab(id); setPage(1); setInput(''); setQ(''); setRevStatus('all'); if (id !== 4) setEditQuote(''); };
 
   const fams = useLoad(s => listRevisionFamilies({ page, q, status: revStatus }, s), [tab, page, q, revStatus, rev], tab === 1);
   const pdf = useLoad(s => getCustomerQuote(pdfId, s), [pdfId], !!pdfId);
@@ -155,9 +157,10 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
 
     {tab === 3 && <RfqMatrixCard en={en} notify={notify} onNewRfq={() => go(2)} docLang={rfqLang} onDocLang={setRfqLang} refresh={rev} />}
 
-    {tab === 4 && <SupplierQuoteCard en={en} notify={notify} lockText={LOCK} refresh={rev} onMatrix={() => go(11)} onCompare={reqId => { go(5); if (reqId) setCompReq(reqId); }} />}
+    {tab === 4 && <SupplierQuoteCard en={en} notify={notify} refresh={rev} editId={editQuote} onExitEdit={() => setEditQuote('')} onSaved={() => setRev(n => n + 1)}
+      onMatrix={() => go(11)} onCompare={reqId => { go(5); if (reqId) setCompReq(reqId); }} />}
 
-    {tab === 11 && <SupplierMatrixCard en={en} notify={notify} refresh={rev} onNew={() => go(4)} onCompare={reqId => { go(5); if (reqId) setCompReq(reqId); }} />}
+    {tab === 11 && <SupplierMatrixCard en={en} notify={notify} refresh={rev} onNew={() => go(4)} onEdit={id => { go(4); setEditQuote(id); }} onCompare={reqId => { go(5); if (reqId) setCompReq(reqId); }} />}
 
     {tab === 5 && <ComparisonCard en={en} notify={notify} requisition={compReq} onRequisition={setCompReq} refresh={rev} onAddCompany={() => go(4)}
       onRegisterSupplier={() => onNavigate?.('suppliers')} onOpenOrders={() => onNavigate?.('purchase_orders')} />}

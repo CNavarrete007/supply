@@ -18,10 +18,10 @@ SRC = os.path.join(ROOT, 'src')
 ACCOUNTS = {
     'api': 'supplyflow_api_local (solo SELECT)', 'auth': 'supplyflow_auth_local', 'reqwrite': 'supplyflow_reqwrite_local',
     'recovery': 'supplyflow_recovery_local (contrato 52)', 'catalogwrite': 'supplyflow_catalogwrite_local',
-    'useradmin': 'supplyflow_useradmin_local', 'mgmtwrite': 'supplyflow_mgmtwrite_local',
+    'useradmin': 'supplyflow_useradmin_local', 'mgmtwrite': 'supplyflow_mgmtwrite_local', 'quotewrite': 'supplyflow_quotewrite_local',
 }
 ENV_ACCOUNT = {'AUTH_DB_USERNAME': 'auth', 'REQWRITE_DB_USERNAME': 'reqwrite', 'RECOVERY_DB_USERNAME': 'recovery', 'CATALOGWRITE_DB_USERNAME': 'catalogwrite',
-               'USERADMIN_DB_USERNAME': 'useradmin', 'MGMTWRITE_DB_USERNAME': 'mgmtwrite'}
+               'USERADMIN_DB_USERNAME': 'useradmin', 'MGMTWRITE_DB_USERNAME': 'mgmtwrite', 'QUOTEWRITE_DB_USERNAME': 'quotewrite'}
 
 
 def read(path):
@@ -136,11 +136,11 @@ def literal_sets(path):
 
 
 def grants():
-    """(tabla, privilegio) concedidos a cada cuenta según los contratos versionados (77/52 + catalogwrite, useradmin y mgmtwrite)."""
+    """(tabla, privilegio) concedidos a cada cuenta según los contratos versionados (77/52 + catalogwrite, useradmin, mgmtwrite y quotewrite)."""
     d = os.path.join(ROOT, 'docker')
     def prov(rel):
         v = literal_sets(os.path.join(d, rel))
-        cols = {(t, 'UPDATE') for t in (v.get('UPDATE_COLUMNS') or {})}  # UPDATE por columna (useradmin, mgmtwrite)
+        cols = {(t, 'UPDATE') for t in (v.get('UPDATE_COLUMNS') or {})}  # UPDATE por columna (useradmin, mgmtwrite, quotewrite)
         return {(t, p) for p in ('SELECT', 'INSERT', 'UPDATE', 'DELETE') for t in v.get(p + '_TABLES', ())} | cols
     acc = literal_sets(os.path.join(d, 'supply-int03', 'accounts.py'))
     return {
@@ -149,6 +149,7 @@ def grants():
         'catalogwrite': prov('supply-catalogwrite/provision.py'),
         'useradmin': prov('supply-useradmin/provision.py'),
         'mgmtwrite': prov('supply-mgmtwrite/provision.py'),
+        'quotewrite': prov('supply-quotewrite/provision.py'),
         'auth': {(t, 'SELECT') for t in acc['AUTH_TABLES']} | set(acc['AUTH_EXTRA']) | {(t, p) for t, _, p in acc['AUTH_COLUMNS']},
     }
 

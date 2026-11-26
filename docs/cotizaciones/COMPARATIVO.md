@@ -50,6 +50,12 @@ Valida las cantidades (mayores a cero; avisa si exceden lo ofertado) y compara c
 cambios lo indica; con cambios muestra "Adjudicación preparada … No se guardó", porque adjudicar y generar OC son
 escrituras comerciales bloqueadas hasta su autorización. Nunca simula un guardado.
 
+> **Selección preliminar (26 nov 2026):** en los datos del sistema original no existe un registro de «selección
+> preliminar» separado: la selección del comparativo **es** la adjudicación (`awards`; las cotizaciones pasan a «Adjudicada
+> total/parcial» o «No adjudicada»). Guardarla es una autorización comercial, fuera del alcance «solo registro interno»
+> aprobado, por eso esta tarjeta sigue siendo de cálculo. Las cotizaciones que se registran en la tarjeta 4 sí aparecen aquí
+> de inmediato.
+
 ## Pruebas (sandbox sintético)
 
 | Prueba | Resultado |

@@ -25,6 +25,12 @@
 > **Actualización del 25 nov, tarde.** Gestión de acceso: `GET /api/v1/users/access-status`, `POST /api/v1/users/{id}/access`
 > (`UserAccessController`, `UserAccessRepository`, `UserAccessInput`; cuenta nueva `useradmin`) y `POST /api/v1/auth/password/change`
 > (`AuthController::changePassword`). Mapa: **125 rutas, 91 clases PHP, 0 problemas.**
+>
+> **Actualización del 26 nov.** Cotizaciones registra la cotización del proveedor: `GET /api/v1/quotes/write-status`,
+> `POST /api/v1/quotes/supplier-quotes`, `PUT /api/v1/quotes/supplier-quotes/{id}` (`SupplierQuoteWriteController`,
+> `SupplierQuoteInput`, `SupplierQuoteWriteRepository`; cuenta nueva `quotewrite`, 22 + 21 permisos) y
+> `GET /api/v1/quotes/supplier-quotes/{id}/document` (`QuoteController`, cuenta de lectura). El mapa verifica también los
+> permisos de `quotewrite`: **133 rutas, 97 clases PHP, 144 archivos de interfaz, 0 problemas.**
 
 ## Conclusión
 

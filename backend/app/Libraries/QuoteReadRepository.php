@@ -279,7 +279,7 @@ final class QuoteReadRepository
             r.folio AS requisition,c.legal_name AS client_name,se.public_id AS supplier_id,s.code AS supplier_code,s.legal_name AS supplier_name,
             (SELECT f.folio FROM rfqs f WHERE f.id=q.rfq_id AND f.organization_id=q.organization_id) AS rfq_folio,
             (SELECT COUNT(*) FROM supplier_quote_items it WHERE it.organization_id=q.organization_id AND it.supplier_quote_id=q.id) AS item_count,{$awarded} AS awarded,
-            re.public_id AS requisition_id,r.client_reference,r.internal_reference,
+            re.public_id AS requisition_id,r.client_reference,r.internal_reference,(e.imported_at IS NOT NULL OR e.legacy_id IS NOT NULL) AS imported,
             (SELECT COUNT(*) FROM supplier_quote_items it WHERE it.organization_id=q.organization_id AND it.supplier_quote_id=q.id AND it.offered=1) AS offered_count,
             (SELECT COUNT(DISTINCT aw.requisition_item_id) FROM awards aw JOIN requisition_items li ON li.id=aw.requisition_item_id AND li.organization_id=aw.organization_id
               WHERE aw.organization_id=q.organization_id AND aw.supplier_quote_id=q.id AND li.line_status='active' AND aw.status_code='active' AND aw.superseded_at IS NULL) AS awarded_lines,
@@ -287,7 +287,7 @@ final class QuoteReadRepository
             (SELECT COUNT(*) {$files}) AS file_count,(SELECT ef.original_filename {$files} ORDER BY ef.created_at DESC,ef.id DESC LIMIT 1) AS file_name",
             $from, $where . $sq, [...$binds, ...$sb], 'COALESCE(q.quote_date,DATE(e.created_at)) DESC,q.id DESC', $f);
         foreach ($res['items'] as &$i) {
-            $i['item_count'] = (int) $i['item_count']; $i['awarded'] = (bool) $i['awarded'];
+            $i['item_count'] = (int) $i['item_count']; $i['awarded'] = (bool) $i['awarded']; $i['imported'] = (bool) $i['imported'];
             foreach (['offered_count', 'awarded_lines', 'req_items', 'file_count'] as $k) { $i[$k] = (int) $i[$k]; }
         }
         unset($i);
@@ -303,16 +303,51 @@ final class QuoteReadRepository
     public function supplierQuote(int $org, string $id): ?array
     {
         $h = $this->rows('SELECT e.public_id AS id,q.id AS db_id,q.folio,q.supplier_reference,q.quote_date,q.valid_until,q.currency_code AS currency,q.subtotal_amount,q.tax_rate_pct,q.tax_amount,q.total_amount,q.lead_days,q.payment_terms,q.technical_score,q.document_score,q.notes,q.status_code AS status,q.legacy_status,
-            r.folio AS requisition,c.legal_name AS client_name,s.legal_name AS supplier_name,s.code AS supplier_code
+            r.folio AS requisition,c.legal_name AS client_name,s.legal_name AS supplier_name,s.code AS supplier_code,
+            q.source_kind,e.row_version AS version,(e.imported_at IS NOT NULL OR e.legacy_id IS NOT NULL) AS imported,
+            (SELECT fe.public_id FROM business_entities fe WHERE fe.id=q.rfq_id AND fe.organization_id=q.organization_id) AS rfq_id,(SELECT f.folio FROM rfqs f WHERE f.id=q.rfq_id AND f.organization_id=q.organization_id) AS rfq_folio,
+            (SELECT re.public_id FROM business_entities re WHERE re.id=q.requisition_id AND re.organization_id=q.organization_id) AS requisition_id,
+            EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=q.organization_id AND aw.supplier_quote_id=q.id AND aw.status_code=\'active\' AND aw.superseded_at IS NULL) AS awarded
             FROM supplier_quotes q JOIN business_entities e ON e.id=q.id AND e.organization_id=q.organization_id' . sprintf(self::REQ, 'q') . sprintf(self::SUP, 'q') . ' WHERE q.organization_id=? AND e.public_id=? LIMIT 1', [$org, $id]);
         if (! $h) {
             return null;
         }
         $q = $h[0];
         $items = $this->rows('SELECT line_number,description,category_snapshot AS category,unit_label,requested_quantity,offered,quantity,unit_price,line_subtotal FROM supplier_quote_items WHERE organization_id=? AND supplier_quote_id=? ORDER BY line_number,id', [$org, (int) $q['db_id']]);
-        foreach ($items as &$i) { $i['offered'] = (bool) $i['offered']; }
+        foreach ($items as &$i) { $i['offered'] = (bool) $i['offered']; $i['line_number'] = (int) $i['line_number']; }
+        $doc = $this->rows("SELECT ef.original_filename AS name,f.size_bytes AS size FROM entity_files ef JOIN files f ON f.id=ef.file_id AND f.organization_id=ef.organization_id
+            WHERE ef.organization_id=? AND ef.entity_id=? AND ef.file_role='documentFile' ORDER BY ef.created_at DESC,ef.id DESC LIMIT 1", [$org, (int) $q['db_id']]);
         unset($i, $q['db_id']);
+        $q['version'] = (int) $q['version']; $q['imported'] = (bool) $q['imported']; $q['awarded'] = (bool) $q['awarded'];
+        $q['document'] = $doc ? ['name' => $doc[0]['name'], 'size' => (int) $doc[0]['size']] : null;
+        // Tarjeta 4: solo se editan las registradas en SupplyFlow contra una RFQ, sin adjudicación vigente y en estatus «Recibida».
+        $q['edit_block'] = $q['imported'] || $q['source_kind'] !== 'explicit' || $q['rfq_id'] === null ? 'imported' : ($q['awarded'] ? 'awarded' : ($q['status'] !== 'recibida' ? 'status' : null));
+        $q['editable'] = $q['edit_block'] === null;
         return ['item' => $q, 'items' => $items];
+    }
+
+    /** Current PDF of a supplier quote for download: private path checked against its size and SHA-256, or null. */
+    public function supplierQuoteDocument(int $org, string $id): ?array
+    {
+        $r = $this->rows("SELECT f.scan_status,f.storage_backend,f.storage_key,f.size_bytes,LOWER(HEX(f.sha256)) AS sha256,ef.original_filename AS name
+            FROM supplier_quotes q JOIN business_entities e ON e.id=q.id AND e.organization_id=q.organization_id
+            JOIN entity_files ef ON ef.entity_id=q.id AND ef.organization_id=q.organization_id AND ef.file_role='documentFile'
+            JOIN files f ON f.id=ef.file_id AND f.organization_id=ef.organization_id
+            WHERE q.organization_id=? AND e.public_id=? ORDER BY ef.created_at DESC,ef.id DESC LIMIT 1", [$org, $id]);
+        if (! $r) {
+            return null;
+        }
+        $f = $r[0];
+        $path = '';
+        if ($f['storage_backend'] === 'supplyflow_quote_private_v1' && preg_match('~^[1-9][0-9]*/[a-f0-9]{64}$~D', (string) $f['storage_key'])) {
+            $path = WRITEPATH . 'supplyflow_quotes/files/' . $f['storage_key'];
+        } elseif ($f['storage_backend'] === 'supplyflow_rf1_private' && preg_match('~^[1-9][0-9]*/[a-f0-9]{64}$~D', (string) $f['storage_key'])) {
+            $path = WRITEPATH . 'supplyflow_rf1/files/' . $f['storage_key'];
+        } elseif ($f['storage_backend'] === 'supplyflow_local_private_v1' && preg_match('~^imports/' . RequisitionRecoveryRepository::SOURCE_HASH . '/files/([a-f0-9]{64}\.(?:pdf|png|jpg|bin))$~D', (string) $f['storage_key'], $m)) {
+            $path = '/run/supply-import-files/' . $m[1];
+        }
+        $ok = $f['scan_status'] !== 'quarantined' && $path !== '' && is_file($path) && ! is_link($path) && filesize($path) === (int) $f['size_bytes'] && hash_equals((string) $f['sha256'], (string) hash_file('sha256', $path));
+        return ['available' => $ok, 'path' => $ok ? $path : null, 'name' => $f['name'], 'size' => (int) $f['size_bytes']];
     }
 
     /** Without requisition: requisitions with supplier quotes. With requisition: items × offers (comparativo). */

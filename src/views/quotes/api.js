@@ -1,4 +1,6 @@
-// Cotizaciones y Comparativo · cliente HTTP de SOLO LECTURA (GET con la sesión del servidor; sin datos de demostración).
+// Cotizaciones y Comparativo · cliente HTTP (GET con la sesión del servidor; sin datos de demostración). La única escritura
+// es el registro interno de la cotización del proveedor (tarjeta 4; cuenta quotewrite; CSRF + Idempotency-Key + If-Match).
+import { getCsrf } from '../../apiAuth';
 async function getJson(path, signal) {
   const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' }, signal });
   const body = await response.json().catch(() => ({}));
@@ -28,3 +30,25 @@ export const getRfqRequisition = (id, s) => one('/api/v1/quotes/rfq-requisitions
 export const getRfqContacts = s => getJson('/api/v1/quotes/rfq-contacts', s);
 // Tarjeta 6 · tipo de cambio registrado y políticas de aprobación vigentes (solo lectura).
 export const getCustomerQuoteSetup = s => getJson('/api/v1/quotes/customer-quote-setup', s);
+// Tarjeta 4 · Registro de cotización (escritura): { ok, status, data } (nunca lanzan por un 4xx/5xx; un fallo de red sí lanza
+// y la tarjeta conserva la clave para reintentar la MISMA operación sin duplicarla).
+async function write(method, path, { data, key, version }) {
+  const token = await getCsrf();
+  const r = await fetch(path, { method, credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-SF-CSRF': token, 'Idempotency-Key': key, ...(version !== undefined ? { 'If-Match': `"${version}"` } : {}) },
+    body: JSON.stringify(data) });
+  return { ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) };
+}
+export const createSupplierQuote = op => write('POST', '/api/v1/quotes/supplier-quotes', op);
+export const updateSupplierQuote = op => (uuid(op.id) ? write('PUT', `/api/v1/quotes/supplier-quotes/${encodeURIComponent(op.id)}`, op) : Promise.reject(new Error('Identificador inválido.')));
+/** PDF registrado de la cotización (descarga privada, sin caché). */
+export const supplierQuoteDocumentUrl = id => (uuid(id) ? `/api/v1/quotes/supplier-quotes/${encodeURIComponent(id)}/document` : '');
+let statusCache = null;
+/** Diagnóstico del guardado (una consulta por minuto); 401/403/red → null (sin aviso). */
+export function quoteWriteStatus(now = Date.now()) {
+  if (statusCache && now - statusCache.at < 60000) return statusCache.promise;
+  const promise = fetch('/api/v1/quotes/write-status', { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } })
+    .then(r => (r.ok ? r.json() : null)).catch(() => null);
+  statusCache = { at: now, promise };
+  return promise;
+}

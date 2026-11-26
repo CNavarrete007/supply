@@ -73,6 +73,8 @@ if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\catalogwrit
 if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\useradmin-db-password.txt"){ $compose+=@('-f',(Join-Path $root 'compose.supply-useradmin.yml')) }
 # Gestión del Contratista (cuenta mgmtwrite: validación interna y estrategia/lotificación): solo si existe su secreto.
 if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\mgmtwrite-db-password.txt"){ $compose+=@('-f',(Join-Path $root 'compose.supply-mgmtwrite.yml')) }
+# Cotizaciones (cuenta quotewrite: registro interno de la cotización del proveedor): solo si existe su secreto.
+if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\quotewrite-db-password.txt"){ $compose+=@('-f',(Join-Path $root 'compose.supply-quotewrite.yml')) }
 & docker.exe @compose --profile dev config --quiet; if($LASTEXITCODE){throw 'BLOCKED'}
 ```
 4. Solo la base (camino A: restaurar aquí; camino B: instalar esquema sintético aquí): `& docker.exe @compose up -d db`
