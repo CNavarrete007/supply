@@ -168,7 +168,9 @@ try:
     check('versión anterior: guardar otra vez exige la versión nueva (412)', adm.call('PUT', P, E2, ifm=1)[0] == 412)
 
     # Cotizaciones que ya existen y no son borradores de SupplyFlow: no se duplican ni se editan aquí.
-    other = next((x for x in adm.get(f'{C}?page=1&page_size=50&scope=all')['items'] if x['folio'] != a['folio'] and x.get('requisition_id')), None)
+    # Se prefiere una cotización importada/no borrador (las «sf:» de otras corridas son borradores editables y quedan al frente).
+    others = [x for x in adm.get(f'{C}?page=1&page_size=50&scope=all')['items'] if x['folio'] != a['folio'] and x.get('requisition_id')]
+    other = next((x for x in others if not str(x.get('series') or '').startswith('sf:')), None) or next(iter(others), None)
     if other:
         oc = adm.get(f"{B}/comparison?requisition={other['requisition_id']}").get('customer_quote') or {}
         s, r = adm.call('POST', C, {**OK, 'requisition_id': other['requisition_id']})

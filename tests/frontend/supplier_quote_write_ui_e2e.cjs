@@ -115,6 +115,7 @@ const pdfBytes = label => Buffer.from(`%PDF-1.4\n% SupplyFlow UI ${label}\n1 0 o
     // 2) Matriz interna → EDITAR abre la tarjeta 4 en modo edición (If-Match).
     await page.getByRole('button', { name: /Ver matriz/ }).click();
     await page.getByRole('button', { name: 'Abrir todas: Todas las cotizaciones' }).click();
+    await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(b1.folio);
     const row = page.locator(`[data-testid="sqm-row"][data-folio="${b1.folio}"]`); await row.waitFor({ timeout: 15000 });
     check('matriz: la cotización con PDF (VER PDF)', flat(await row.innerText()).includes('VER PDF'));
     const detResp = page.waitForResponse(r => r.url().endsWith(`/api/v1/quotes/supplier-quotes/${b1.id}`));
@@ -148,6 +149,8 @@ const pdfBytes = label => Buffer.from(`%PDF-1.4\n% SupplyFlow UI ${label}\n1 0 o
     if (keep) {
       await page.getByRole('button', { name: /Matriz interna de proveedores/ }).first().click();
       await page.getByRole('button', { name: 'Abrir todas: Todas las cotizaciones' }).click();
+      // Los datos sintéticos crecen con cada corrida: se busca por folio en lugar de suponer la página 1.
+      await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(keep.folio);
       const kr = page.locator(`[data-testid="sqm-row"][data-folio="${keep.folio}"]`); await kr.waitFor({ timeout: 15000 });
       await kr.getByRole('button', { name: 'EDITAR' }).click();
       await page.getByTestId('sqm-detail').getByText('se conserva como expediente').waitFor({ timeout: 15000 });

@@ -165,7 +165,7 @@ automáticamente si existe su secreto.
 | `tests/frontend/customer_quote_write_ui_e2e.cjs` | Navegador, **escribe**: borrador desde la tarjeta 6 con fallo de red y reintento, edición con If-Match, 412 con recarga y tarjeta 8 | 26/26 |
 | `tests/frontend/rfq_write_ui_e2e.cjs` | Navegador, **escribe**: RFQ en Borrador con fallo de red y reintento con la misma clave, otra Enviada, Marcar enviada (If-Match) y disponibilidad en la tarjeta 4 | 19/19 |
 | `tests/supplier_quote_write_http_check.py` | HTTP, **escribe**; registra sus propias RFQ por la API | 41/41 |
-| `tests/frontend/supplier_quote_write_ui_e2e.cjs` | Navegador, **escribe**: alta con fallo de red y reintento, edición con If-Match, PDF reemplazado y descargado | 20/20 |
+| `tests/frontend/supplier_quote_write_ui_e2e.cjs` | Navegador, **escribe**: alta con fallo de red y reintento, edición con If-Match, PDF reemplazado y descargado | 23/23 |
 | `tests/frontend/quotes_ui_e2e.cjs` | Navegador, solo lectura: los guardados se abortan y no se dan por guardados | 237/237 |
 | `tests/quotewrite_contract_check.py` | Contrato PHP = `provision.py` (35 + 76) y columnas prohibidas del borrador al cliente | 11/11 |
 | `tests/frontend/rfq_model.test.mjs`, `supplier_quote.test.mjs` | Lógica pura | 13/13 y 11/11 |
