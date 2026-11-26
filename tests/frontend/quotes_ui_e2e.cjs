@@ -80,13 +80,19 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByTestId('rfq-contact-all').click();
     check('"Abrir todas" consulta toda la matriz (200)', (await allResp).status() === 200);
     await page.getByRole('row').filter({ hasText: rfqs.items[0].folio }).waitFor();
-    const overdue = rfqs.items.find(r => !r.responded && r.deadline < new Date().toISOString().slice(0, 10));
-    const answered = rfqs.items.find(r => r.responded);
-    check('RFQ vencida sin respuesta marcada', overdue && flat(await page.getByRole('row').filter({ hasText: overdue.folio }).innerText()).includes('Vencida'));
-    check('RFQ respondida muestra la cotización', answered && flat(await page.getByRole('row').filter({ hasText: answered.folio }).innerText()).includes(`Respondida · ${answered.quote_folio}`));
     const rowA = rfqs.items[0];
     const rowText = flat(await page.getByRole('row').filter({ hasText: rowA.folio }).innerText());
     check('fila: requisición, referencia, comprador, proveedor, fechas y moneda', [rowA.requisition, rowA.supplier_name, rowA.request_date, rowA.deadline, rowA.currency, rowA.buyer_name || '—'].every(x => rowText.includes(String(x).slice(0, 10))), rowText);
+    // La matriz muestra 25 por página: las RFQ de los casos se buscan por folio (la base sintética crece con las pruebas de escritura).
+    const rfqRowOf = async f => {
+      const resp = page.waitForResponse(r => /\/quotes\/rfqs\?/.test(r.url()) && new URL(r.url()).searchParams.get('q') === f);
+      await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(f); await resp;
+      const row = page.getByRole('row').filter({ hasText: f }); await row.waitFor(); return flat(await row.innerText());
+    };
+    const overdue = rfqs.items.find(r => !r.responded && r.deadline < new Date().toISOString().slice(0, 10));
+    const answered = rfqs.items.find(r => r.responded);
+    check('RFQ vencida sin respuesta marcada', overdue && (await rfqRowOf(overdue.folio)).includes('Vencida'));
+    check('RFQ respondida muestra la cotización', answered && (await rfqRowOf(answered.folio)).includes(`Respondida · ${answered.quote_folio}`));
     const searched = page.waitForResponse(r => /\/quotes\/rfqs\?.*q=RFQ-QA-0004/.test(r.url()));
     await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill('RFQ-QA-0004');
     check('búsqueda en el servidor (200)', (await searched).status() === 200);

@@ -33,6 +33,11 @@ compartida con la tarjeta 2 en `src/views/quotes/RequisitionPickerModal.jsx`.
 deshabilitadas («ya cotizada»): se editan con **EDITAR** desde la matriz interna. Detalle, reglas, endpoints y activación
 en la PC: [REGISTRO_COTIZACION_PROVEEDOR.md](REGISTRO_COTIZACION_PROVEEDOR.md).
 
+**Formato de cantidades y precios (26 nov 2026):** se aceptan como los escribe el comprador: con signo de pesos, comas de miles
+y espacios (`$ 1,250.50`, `1 500`, `.5`, `1500.`). Se calculan al momento y se guardan limpios (`1250.50`). Si el texto no es un
+número claro (`abc`, `1,5`, `1.234,50`), la partida lo marca en rojo de inmediato («Formato no válido») y no se puede guardar; un
+precio en `0` muestra una advertencia para confirmar que el proveedor no lo cobra.
+
 La lista de **cotizaciones recibidas** (tarjetas por proveedor, filtro en el servidor y detalle interno con costos) está
 en la tarjeta 11 *Matriz interna de proveedores*.
 

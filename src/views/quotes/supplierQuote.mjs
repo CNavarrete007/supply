@@ -10,7 +10,19 @@ export const QUOTE_GUIDE = 'docs/cotizaciones/REGISTRO_COTIZACION_PROVEEDOR.md';
 const t = v => String(v ?? '').trim();
 const DEC = /^(?:0|[1-9][0-9]{0,13})(?:\.[0-9]{1,6})?$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const num = v => (t(v) !== '' && DEC.test(t(v)) ? Number(t(v)) : null);
+/**
+ * Cantidad o precio tal como lo escribe el comprador → número decimal en texto: acepta signo de pesos, espacios, comas de
+ * miles (1,500.00), «.5» y «1500.». Devuelve el texto limpio; si no es un número válido, devuelve el texto sin cambios.
+ */
+export function cleanNumber(v) {
+  let s = t(v).replace(/^\$\s*/, '').replace(/\s+/g, '');
+  if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) s = s.replace(/,/g, '');
+  if (/^\.\d+$/.test(s)) s = `0${s}`;
+  if (/^\d+\.$/.test(s)) s = s.slice(0, -1);
+  if (/^0\d/.test(s)) s = s.replace(/^0+(?=\d)/, '');
+  return DEC.test(s) ? s : t(v);
+}
+const num = v => { const s = cleanNumber(v); return s !== '' && DEC.test(s) ? Number(s) : null; };
 const round2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 /** '3.000000' → '3' */
 export const normQty = v => { const s = t(v); return DEC.test(s) && s.includes('.') ? (s.replace(/0+$/, '').replace(/\.$/, '') || '0') : s; };
@@ -38,6 +50,14 @@ export function quoteTotals(lines = [], vat) {
   return { offered: lines.filter(l => l.offered).length, subtotal, tax, total: round2(subtotal + tax) };
 }
 /** "partial" | "over" | "" — quoted quantity vs requested. */
+/** Aviso inmediato de una partida ofertada: formato no válido (error) o precio en cero (advertencia). */
+export function lineNote(l, en = false) {
+  if (!l?.offered) return null;
+  const m = (es, e) => (en ? e : es);
+  if ((t(l.qty) && num(l.qty) === null) || (t(l.price) && num(l.price) === null)) return { kind: 'error', text: m('Formato no válido: escribe solo el número, p. ej. 1500.50 (se aceptan $ y comas de miles).', 'Invalid format: type only the number, e.g. 1500.50 ($ and thousands commas are accepted).') };
+  if (t(l.price) && num(l.price) === 0) return { kind: 'warn', text: m('Precio en $0: confirma que el proveedor no la cobra.', 'Price is $0: confirm the supplier does not charge it.') };
+  return null;
+}
 export function qtyNote(l) { const q = num(l.qty); const r = num(l.requested); if (!l.offered || q === null || r === null || q === r) return ''; return q < r ? 'partial' : 'over'; }
 
 const pct = v => { const n = num(v); return n !== null && n <= 100; };
@@ -64,8 +84,8 @@ export function validateQuote(f, lines = [], en = false, { edit = false } = {}) 
     if (!offered.length) errors.lines = m('Marca al menos una partida que ofrece el proveedor.', 'Mark at least one item offered by the supplier.');
     for (const l of offered) {
       const q = num(l.qty); const p = num(l.price);
-      if (q === null || q <= 0) errors[`line:${l.key}`] = m(`Partida ${l.line_number}: cantidad cotizada mayor a cero.`, `Item ${l.line_number}: quoted quantity above zero.`);
-      else if (p === null) errors[`line:${l.key}`] = m(`Partida ${l.line_number}: captura el precio unitario recibido.`, `Item ${l.line_number}: enter the unit price received.`);
+      if (q === null || q <= 0) errors[`line:${l.key}`] = t(l.qty) && q === null ? m(`Partida ${l.line_number}: cantidad con formato no válido (p. ej. 10 o 2.5).`, `Item ${l.line_number}: invalid quantity format (e.g. 10 or 2.5).`) : m(`Partida ${l.line_number}: cantidad cotizada mayor a cero.`, `Item ${l.line_number}: quoted quantity above zero.`);
+      else if (p === null) errors[`line:${l.key}`] = t(l.price) ? m(`Partida ${l.line_number}: precio con formato no válido (p. ej. 1500.50).`, `Item ${l.line_number}: invalid price format (e.g. 1500.50).`) : m(`Partida ${l.line_number}: captura el precio unitario recibido.`, `Item ${l.line_number}: enter the unit price received.`);
     }
   }
   const first = Object.values(errors)[0] || '';
@@ -81,7 +101,7 @@ export const isPdfHeader = bytes => bytes && bytes.length >= 5 && String.fromCha
 export function quotePayload(f, lines = [], document = null, edit = false) {
   const p = { supplier_reference: t(f.supplier_reference), quote_date: t(f.quote_date), valid_until: t(f.valid_until), vat: t(f.vat), currency: f.currency, lead_days: t(f.lead_days),
     payment: f.payment || '', technical: t(f.technical), documentation: t(f.documentation), notes: t(f.notes),
-    lines: lines.map(l => ({ line_number: Number(l.line_number), offered: !!l.offered, qty: l.offered ? t(l.qty) : '0', price: l.offered ? t(l.price) : '0' })), document: document || null };
+    lines: lines.map(l => ({ line_number: Number(l.line_number), offered: !!l.offered, qty: l.offered ? cleanNumber(l.qty) : '0', price: l.offered ? cleanNumber(l.price) : '0' })), document: document || null };
   return edit ? p : { rfq_id: f.rfq, ...p };
 }
 

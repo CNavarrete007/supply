@@ -113,3 +113,17 @@ test('aviso de guardado no habilitado (write-status)', () => {
   assert.match(quoteNotice({ enabled: false, code: 'QUOTE_WRITE_GRANTS_INCOMPLETE', expected_grants: 43, missing_grants: ['INSERT files'] }).text, /Faltan 1 de 43 permisos \(INSERT files\)/);
   assert.match(quoteNotice({ enabled: false, code: 'QUOTE_WRITE_ACCOUNT_REJECTED' }).title, /rechazó/);
 });
+
+import { cleanNumber, lineNote } from '../../src/views/quotes/supplierQuote.mjs';
+test('precios y cantidades: acepta $, comas de miles, espacios, «.5» y «1500.»; avisa formato no válido y precio en cero', () => {
+  for (const [raw, clean] of [['1500', '1500'], ['1,500.00', '1500.00'], ['$1500', '1500'], ['$ 1,234.50', '1234.50'], ['1 500', '1500'], ['1500.', '1500'], ['.5', '0.5'], ['01', '1']]) assert.equal(cleanNumber(raw), clean, raw);
+  assert.deepEqual(lineAmounts({ offered: true, qty: '2', price: '$1,250.50' }, '16'), { subtotal: 2501, tax: 400.16, total: 2901.16 });
+  for (const bad of ['1,5', '1.234,50', 'abc', '12-3']) { assert.equal(cleanNumber(bad), bad); assert.equal(lineNote({ offered: true, qty: '1', price: bad }).kind, 'error', bad); }
+  assert.equal(lineNote({ offered: true, qty: '1', price: '0' }).kind, 'warn');
+  assert.equal(lineNote({ offered: true, qty: '1', price: '' }), null); assert.equal(lineNote({ offered: false, qty: '1', price: 'abc' }), null);
+  assert.equal(lineNote({ offered: true, qty: 'dos', price: '10' }).kind, 'error');
+  const l = linesFromRfq(items); l[0].price = '$1,250.50'; l[1].price = 'abc';
+  assert.match(validateQuote(ready(), l).errors[`line:${l[1].key}`], /precio con formato no válido/);
+  l[1].price = '10';
+  assert.deepEqual(quotePayload(ready(), l).lines.map(x => x.price), ['1250.50', '10']);
+});

@@ -76,7 +76,13 @@ const pdfBytes = label => Buffer.from(`%PDF-1.4\n% SupplyFlow UI ${label}\n1 0 o
     await page.getByLabel('Fecha de cotización').fill(new Date().toISOString().slice(0, 10));
     await page.getByLabel('Días de entrega').fill('9');
     await page.getByRole('combobox', { name: 'Condiciones de pago (SAT / SHCP)' }).selectOption('PUE');
-    for (const [n, it] of items.entries()) await page.getByLabel(`Precio unitario partida ${Number(it.line_number)}`).fill(n === 0 ? '123.45' : '10');
+    // Formatos del comprador: «abc» avisa en la partida; «$ 123.45» se calcula y se envía limpio.
+    if (items.length > 1) {
+      await page.getByLabel(`Precio unitario partida ${Number(items[1].line_number)}`).fill('abc');
+      check('precio con formato no válido: aviso inmediato en la partida', /Formato no válido/.test(await page.getByTestId('quote-line').nth(1).getByTestId('quote-line-note').innerText()));
+    }
+    for (const [n, it] of items.entries()) await page.getByLabel(`Precio unitario partida ${Number(it.line_number)}`).fill(n === 0 ? '$ 123.45' : '10');
+    check('precio con $ y espacios: se calcula sin aviso', await page.getByTestId('quote-line-note').count() === 0 && flat(await page.getByTestId('quote-line').first().innerText()).includes('$'));
     await page.getByLabel('PDF de la cotización').setInputFiles({ name: `oferta-${RUN}.pdf`, mimeType: 'application/pdf', buffer: pdfBytes(`A ${RUN}`) });
     await page.getByText(`oferta-${RUN}.pdf`).waitFor();
     const uiTotal = await page.getByRole('textbox', { name: 'Total de la cotización recibida' }).inputValue();
@@ -91,6 +97,7 @@ const pdfBytes = label => Buffer.from(`%PDF-1.4\n% SupplyFlow UI ${label}\n1 0 o
     await page.getByRole('button', { name: /Guardar cotización/ }).click();
     const r1 = await resp; const h1 = r1.request().headers(); const sent = JSON.parse(r1.request().postData() || '{}'); const b1 = await r1.json();
     check('reintento: POST 201 con CSRF y la MISMA Idempotency-Key; folio COT', r1.status() === 201 && !!h1['x-sf-csrf'] && h1['idempotency-key'] === firstKey && /^COT-\d{4}-\d{4,}$/.test(b1.folio || ''), `${r1.status()} ${JSON.stringify(b1)}`);
+    check('el precio «$ 123.45» viaja limpio (123.45)', sent.lines?.[0]?.price === '123.45', JSON.stringify(sent.lines?.[0]));
     check('el navegador no envía importes; sí partidas, RFQ y PDF en base64', !('total' in sent) && !('subtotal' in sent) && sent.rfq_id === fx.rfq.id && sent.lines.length === items.length && sent.document?.name === `oferta-${RUN}.pdf`
       && Buffer.from(sent.document.data, 'base64').equals(pdfBytes(`A ${RUN}`)), JSON.stringify({ ...sent, document: sent.document && { name: sent.document.name } }).slice(0, 300));
     const fmt = n => Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
