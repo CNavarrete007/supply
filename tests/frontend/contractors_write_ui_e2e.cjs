@@ -86,6 +86,9 @@ function png(w, h, rgb) {
     await page.getByTestId('contractors-msg').waitFor();
     check('vuelve a la matriz con el aviso de guardado', (await page.getByTestId('contractors-msg').innerText()).includes('Datos de la empresa guardados en MariaDB'));
     await page.getByTestId('contractor-registered').waitFor();
+    // La matriz se recarga tras guardar: esperar a que muestre el dato nuevo (antes podía leerse la versión anterior).
+    await page.getByTestId('contractor-registered').filter({ hasText: NEW.name }).waitFor({ timeout: 15000 }).catch(() => {});
+    await page.getByTestId('contractor-row').first().filter({ hasText: NEW.rfc }).waitFor({ timeout: 15000 }).catch(() => {});
     check('la matriz muestra la razón social guardada y el RFC', (await page.getByTestId('contractor-registered').innerText()).includes(NEW.name) && (await page.getByTestId('contractor-row').first().innerText()).includes(NEW.rfc));
     const c1 = await current();
     check('MariaDB: datos guardados tal cual (domicilio con salto de línea)', c1.legal_name === NEW.name && c1.tax_identifier === NEW.rfc && c1.phone === NEW.phone && c1.email === NEW.email && c1.postal_address === NEW.address && c1.version === b1.version, JSON.stringify(c1).slice(0, 300));

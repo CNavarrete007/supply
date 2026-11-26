@@ -136,10 +136,10 @@ automáticamente si existe su secreto.
 
 | Prueba | Tipo | Resultado (sandbox sintético) |
 |---|---|---|
-| `tests/supplier_quote_write_http_check.py` | HTTP, **escribe** (`SF_SYNTHETIC_WRITES=1`); usa RFQ sintéticas `RFQ-QW-*` | 40/40 |
+| `tests/supplier_quote_write_http_check.py` | HTTP, **escribe** (`SF_SYNTHETIC_WRITES=1`); usa RFQ sintéticas `RFQ-QW-*` | 41/41 |
 | `tests/frontend/supplier_quote_write_ui_e2e.cjs` | Navegador, **escribe**: alta con fallo de red y reintento con la misma clave, edición con If-Match, PDF reemplazado y descargado | 20/20 |
 | `tests/frontend/quotes_ui_e2e.cjs` | Navegador, solo lectura: el guardado se aborta y no se da por guardado | 232/232 |
-| `tests/quotes_http_check.py` | HTTP, solo lectura | 158/158 |
+| `tests/quotes_http_check.py` | HTTP, solo lectura | 159/159 |
 | `tests/quotewrite_contract_check.py` | Contrato PHP = `provision.py` (22 + 21) | 8/8 |
 | `tests/frontend/supplier_quote.test.mjs` | Lógica pura (cuerpo, edición, mensajes, aviso) | 11/11 |
 
