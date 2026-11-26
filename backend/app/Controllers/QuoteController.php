@@ -61,7 +61,7 @@ final class QuoteController extends ReadOnlyModuleController
     public function rfqSetup(): ResponseInterface { return $this->run([], fn ($r, $o, $f) => $r->rfqSetup($o), false); }
     public function rfqRequisitions(): ResponseInterface
     {
-        return $this->run(['q' => [self::TEXT, ''], 'buyer' => [self::PERSON_KEY, 'all'], 'rfq' => ['/^(any|with|quoted)$/D', 'any']], fn ($r, $o, $f) => $r->rfqRequisitions($o, $f));
+        return $this->run(['q' => [self::TEXT, ''], 'buyer' => [self::PERSON_KEY, 'all'], 'rfq' => ['/^(any|with|quoted|quotable)$/D', 'any']], fn ($r, $o, $f) => $r->rfqRequisitions($o, $f));
     }
     public function rfqRequisition(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->rfqRequisition($o, $i)); }
     public function supplierQuotes(): ResponseInterface { return $this->run(self::BASIC, fn ($r, $o, $f) => $r->supplierQuotes($o, $f)); }

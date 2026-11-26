@@ -33,6 +33,12 @@ compartida con la tarjeta 2 en `src/views/quotes/RequisitionPickerModal.jsx`.
 deshabilitadas («ya cotizada»): se editan con **EDITAR** desde la matriz interna. Detalle, reglas, endpoints y activación
 en la PC: [REGISTRO_COTIZACION_PROVEEDOR.md](REGISTRO_COTIZACION_PROVEEDOR.md).
 
+**Qué RFQ se pueden elegir (26 nov 2026):** la ventana del comprador lista solo requisiciones con al menos una RFQ **por
+cotizar** (enviada, no cancelada y sin cotización; `GET /api/v1/quotes/rfq-requisitions?rfq=quotable`). En la lista «RFQ
+emitida» las demás aparecen deshabilitadas con su motivo: «ya cotizada: COT-…» (se corrige con EDITAR en la matriz interna),
+«borrador: márcala como enviada en la Matriz de RFQ» o «borrador importado: registra una RFQ nueva en la tarjeta 2». Si la
+requisición elegida ya no tiene RFQ por cotizar, la tarjeta lo explica con accesos a la matriz interna y a la tarjeta 2.
+
 **Formato de cantidades y precios (26 nov 2026):** se aceptan como los escribe el comprador: con signo de pesos, comas de miles
 y espacios (`$ 1,250.50`, `1 500`, `.5`, `1500.`). Se calculan al momento y se guardan limpios (`1250.50`). Si el texto no es un
 número claro (`abc`, `1,5`, `1.234,50`), la partida lo marca en rojo de inmediato («Formato no válido») y no se puede guardar; un

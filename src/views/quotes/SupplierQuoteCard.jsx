@@ -4,7 +4,7 @@ import { getRfqSetup, listRfqRequisitions, getRfqRequisition, getRfq, getSupplie
 import { money, label } from './model.mjs';
 import { internalReference } from './rfq.mjs';
 import { RequisitionPickerModal } from './RequisitionPickerModal';
-import { PAYMENT_METHODS, PDF_MAX_BYTES, emptyQuote, linesFromRfq, lineAmounts, lineNote, quoteTotals, qtyNote, validateQuote, isPdfHeader, quotePayload, quoteFromDetail, editBlockText, quoteSavedText, quoteSaveError } from './supplierQuote.mjs';
+import { PAYMENT_METHODS, PDF_MAX_BYTES, emptyQuote, linesFromRfq, lineAmounts, lineNote, rfqOptionBlock, quoteTotals, qtyNote, validateQuote, isPdfHeader, quotePayload, quoteFromDetail, editBlockText, quoteSavedText, quoteSaveError } from './supplierQuote.mjs';
 import { QuoteWriteStatus } from './QuoteWriteStatus.jsx';
 
 // Tarjeta 4 · Registro de cotización (oferta recibida del proveedor) con el diseño Grupo Gerez. Comprador, requisición
@@ -33,7 +33,7 @@ function useLoad(fn, deps, enabled = true) {
   return st;
 }
 
-export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, refresh = 0, editId = '', onExitEdit, onSaved }) {
+export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, onNewRfq, refresh = 0, editId = '', onExitEdit, onSaved }) {
   const tx = (es, e) => (en ? e : es);
   const edit = Boolean(editId);
   const [form, setForm] = useState(emptyQuote);
@@ -54,7 +54,8 @@ export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, ref
   useEffect(() => () => { if (pdf?.url) URL.revokeObjectURL(pdf.url); }, [pdf]);
 
   const setup = useLoad(s => getRfqSetup(s), [refresh, reload]);
-  const reqs = useLoad(s => listRfqRequisitions({ buyer: form.buyer, q: mq, rfq: 'with' }, s), [form.buyer, mq, refresh, reload], !!form.buyer && !edit);
+  // Solo requisiciones con al menos una RFQ por cotizar (enviada y sin cotización registrada).
+  const reqs = useLoad(s => listRfqRequisitions({ buyer: form.buyer, q: mq, rfq: 'quotable' }, s), [form.buyer, mq, refresh, reload], !!form.buyer && !edit);
   const req = useLoad(s => getRfqRequisition(form.requisition, s), [form.requisition, refresh, reload], !!form.requisition);
   const rfq = useLoad(s => getRfq(form.rfq, s), [form.rfq, refresh], !!form.rfq && !edit);
   // Editar (EDITAR desde la matriz interna): la cotización registrada en MariaDB con su versión.
@@ -64,6 +65,7 @@ export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, ref
   const S = setup.data || {};
   const R = req.data?.item || null;
   const rfqOpt = (req.data?.rfqs || []).find(x => x.id === form.rfq) || null;
+  const noQuotable = !edit && req.status === 'ready' && req.data?.item?.id === form.requisition && (req.data?.rfqs || []).every(x => rfqOptionBlock(x, en));
   const F = rfq.data?.item || null;
 
   // A newly loaded RFQ brings its items (all offered, quoted qty = requested) and its requested currency.
@@ -166,16 +168,16 @@ export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, ref
         <div className="md:col-span-5">{lbl(tx('Comprador responsable', 'Responsible buyer'), true, 'buyer',
           <div className="flex gap-2"><select aria-label={tx('Comprador responsable', 'Responsible buyer')} value={form.buyer} disabled={edit} onChange={e => pickBuyer(e.target.value)} className={ctl('buyer', edit ? 'cursor-not-allowed' : 'bg-white')}><option value="">{edit ? (R?.buyer_name || tx('Cotización registrada', 'Recorded quote')) : tx('Seleccionar comprador...', 'Select buyer...')}</option>{(S.buyers || []).map(b => <option key={b.key} value={b.key}>{b.key === 'unassigned' ? tx('Sin comprador asignado', 'No buyer assigned') : b.name}</option>)}</select>
             <button type="button" title={tx('Recargar', 'Reload')} aria-label={tx('Recargar compradores y requisiciones', 'Reload buyers and requisitions')} onClick={() => { setReload(n => n + 1); if (edit) setDetRev(n => n + 1); }} className="px-3 border border-slate-200 hover:bg-slate-50 rounded-xl text-slate-600 shrink-0">{setup.status === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCw className="w-4 h-4" />}</button></div>,
-          tx('Al escoger un comprador se abrirá una ventana con sus requisiciones validadas que ya tienen RFQ.', 'Choosing a buyer opens a window with their validated requisitions that already have an RFQ.'))}</div>
+          tx('Al escoger un comprador se abrirá una ventana con sus requisiciones validadas que tienen RFQ enviadas por cotizar.', 'Choosing a buyer opens a window with their validated requisitions that have sent RFQs awaiting a quote.'))}</div>
         <div className="md:col-span-4">{lbl(tx('Requisición validada', 'Validated requisition'), true, 'requisition',
           <input aria-label={tx('Requisición validada', 'Validated requisition')} type="text" readOnly value={R ? `${R.folio} · ${R.client_name}` : ''} placeholder={tx('Selecciona primero un comprador...', 'Select a buyer first...')} className={ctl('requisition', 'cursor-default')} />,
-          edit ? tx('Fija: la de la cotización registrada.', 'Fixed: the one of the recorded quote.') : form.buyer ? tx(`${reqs.data?.total ?? '…'} requisición(es) con RFQ de este comprador.`, `${reqs.data?.total ?? '…'} requisition(s) with RFQ for this buyer.`) : tx('Selecciona un comprador para consultar sus requisiciones.', 'Select a buyer to see their requisitions.'))}</div>
+          edit ? tx('Fija: la de la cotización registrada.', 'Fixed: the one of the recorded quote.') : form.buyer ? tx(`${reqs.data?.total ?? '…'} requisición(es) con RFQ por cotizar de este comprador.`, `${reqs.data?.total ?? '…'} requisition(s) with RFQs awaiting a quote for this buyer.`) : tx('Selecciona un comprador para consultar sus requisiciones.', 'Select a buyer to see their requisitions.'))}</div>
         <div className="md:col-span-3 flex items-start pt-5 text-sm font-bold"><button type="button" onClick={() => setModal(true)} disabled={!form.buyer || edit} className="w-full px-4 py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-xl shadow-xs flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"><Search className="w-4 h-4" />{tx('Ver requisiciones', 'View requisitions')}</button></div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
         <div className="md:col-span-6">{lbl(tx('RFQ emitida', 'Issued RFQ'), true, 'rfq',
-          <select aria-label={tx('RFQ emitida', 'Issued RFQ')} value={form.rfq} disabled={!form.requisition || edit} onChange={e => pickRfq(e.target.value)} className={ctl('rfq', form.requisition && !edit ? 'bg-white' : 'cursor-not-allowed')}><option value="">{form.requisition ? tx('Seleccionar RFQ...', 'Select RFQ...') : tx('Selecciona primero una requisición...', 'Select a requisition first...')}</option>{(req.data?.rfqs || []).map(x => <option key={x.id} value={x.id} disabled={!edit && !!x.quote_folios}>{x.folio} · {x.supplier_name} · {label(x.status, en)}{x.quote_folios ? ` · ${tx('ya cotizada', 'already quoted')}: ${x.quote_folios}` : ''}</option>)}</select>,
-          edit ? null : tx('Las RFQ que ya tienen cotización se editan desde la matriz interna de proveedores (EDITAR).', 'RFQs that already have a quote are edited from the internal suppliers matrix (EDIT).'))}</div>
+          <select aria-label={tx('RFQ emitida', 'Issued RFQ')} value={form.rfq} disabled={!form.requisition || edit} onChange={e => pickRfq(e.target.value)} className={ctl('rfq', form.requisition && !edit ? 'bg-white' : 'cursor-not-allowed')}><option value="">{form.requisition ? tx('Seleccionar RFQ...', 'Select RFQ...') : tx('Selecciona primero una requisición...', 'Select a requisition first...')}</option>{(req.data?.rfqs || []).map(x => { const block = edit ? '' : rfqOptionBlock(x, en); return <option key={x.id} value={x.id} disabled={!!block}>{x.folio} · {x.supplier_name} · {x.legacy_status || label(x.status, en)}{block ? ` · ${block}` : ''}</option>; })}</select>,
+          edit ? null : tx('Solo se eligen RFQ enviadas sin cotización. Las ya cotizadas se editan desde la matriz interna de proveedores (EDITAR).', 'Only sent RFQs without a quote can be chosen. Quoted ones are edited from the internal suppliers matrix (EDIT).'))}</div>
         <div className="md:col-span-6">{lbl(tx('Proveedor de la RFQ', 'RFQ supplier'), false, null, <input aria-label={tx('Proveedor de la RFQ', 'RFQ supplier')} type="text" readOnly value={rfqOpt ? `${rfqOpt.supplier_code} - ${rfqOpt.supplier_name}` : ''} placeholder={tx('Automático desde la RFQ', 'Automatic from the RFQ')} className={ctl(null, 'font-bold cursor-default')} />)}</div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
@@ -201,6 +203,11 @@ export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, ref
         <div className="md:col-span-9">{lbl(tx('Comentarios', 'Comments'), false, 'notes', <textarea aria-label={tx('Comentarios', 'Comments')} rows={2} maxLength={4000} value={form.notes} onChange={e => set('notes', e.target.value)} className={ctl('notes', 'resize-y')} />)}</div>
       </div>
     </form>
+
+    {noQuotable && <div role="alert" data-testid="quote-rfq-none" className="p-3.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 text-xs space-y-2">
+      <p><strong>{tx('Esta requisición no tiene RFQ por cotizar.', 'This requisition has no RFQ awaiting a quote.')}</strong> {tx('Sus RFQ ya tienen cotización registrada o siguen en borrador. Para corregir una cotización usa EDITAR en la matriz interna; para cotizar con otro proveedor registra una RFQ nueva (tarjeta 2); un borrador registrado en SupplyFlow se marca como enviado en la Matriz de RFQ.', 'Its RFQs already have a recorded quote or are still drafts. To fix a quote use EDIT in the internal matrix; to quote with another supplier record a new RFQ (card 2); a draft recorded in SupplyFlow is marked as sent in the RFQ Matrix.')}</p>
+      <div className="flex flex-wrap gap-2 font-bold"><button type="button" onClick={() => onMatrix?.()} className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg">{tx('Ver matriz interna', 'View internal matrix')}</button><button type="button" onClick={() => onNewRfq?.()} className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg">{tx('Ir a Solicitud a proveedores (RFQ)', 'Go to Supplier request (RFQ)')}</button></div>
+    </div>}
 
     <div data-testid="quote-items" className="p-4 border border-dashed border-slate-300 rounded-2xl bg-slate-50/50 space-y-3">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-2 pb-2 border-b border-slate-200">
@@ -275,9 +282,9 @@ export function SupplierQuoteCard({ en = false, notify, onCompare, onMatrix, ref
       <button type="button" onClick={() => onMatrix?.()} className="px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-800 rounded-xl border border-slate-200 shadow-2xs flex items-center gap-2 transition-all"><span aria-hidden="true">📋</span>{tx('Ver matriz', 'View matrix')}</button>
     </div>
 
-    {modal && <RequisitionPickerModal en={en} title={tx('Requisiciones validadas con RFQ emitida', 'Validated requisitions with issued RFQ')} buyerName={(S.buyers || []).find(b => b.key === form.buyer)?.name}
+    {modal && <RequisitionPickerModal en={en} title={tx('Requisiciones validadas con RFQ por cotizar', 'Validated requisitions with RFQs awaiting a quote')} buyerName={(S.buyers || []).find(b => b.key === form.buyer)?.name}
       search={mInput} onSearch={setMInput} state={reqs} selectedId={form.requisition} onPick={pickRequisition} onClose={() => setModal(false)}
-      emptyText={tx('Este comprador no tiene requisiciones validadas con RFQ emitida.', 'This buyer has no validated requisitions with an issued RFQ.')} />}
+      emptyText={tx('Este comprador no tiene requisiciones con RFQ enviadas pendientes de cotizar. Registra o marca como enviada una RFQ en las tarjetas 2 y 3.', 'This buyer has no requisitions with sent RFQs awaiting a quote. Record or mark an RFQ as sent in cards 2 and 3.')} />}
   </div>;
 }
 

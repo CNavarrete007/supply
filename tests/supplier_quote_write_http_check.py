@@ -203,6 +203,12 @@ try:
         s, r = adm.call('PUT', f"{Q}/{aw['id']}", E, ifm=kd['version'])
         check('cotización adjudicada: no se edita (409)', s == 409 and r['error']['code'] in ('AWARDED_READ_ONLY', 'IMPORTED_READ_ONLY') and kd.get('editable') is False, f'{s} {r}')
     check('sin rutas para eliminar, adjudicar ni emitir RFQ (≠ 2xx)', all(not 200 <= adm.call(m, p, {})[0] < 300 for m, p in [('DELETE', P), ('POST', f'{P}/award'), ('POST', f'{B}/awards'), ('POST', f'{B}/rfqs'), ('PUT', f"{B}/rfqs/{rfq['id']}")]))
+    # Tarjeta 4: la requisición sale de la lista «por cotizar» cuando sus RFQ enviadas ya tienen cotización (el borrador no cuenta).
+    rq = adm.get(f"/api/v1/quotes/rfq-requisitions/{req['id']}")
+    quot = adm.get(f"/api/v1/quotes/rfq-requisitions?rfq=quotable&page=1&page_size=50&q={req['folio']}")['items']
+    check('lista «por cotizar»: excluye la requisición con sus RFQ enviadas ya cotizadas; el borrador no cuenta', all(x['id'] != req['id'] for x in quot)
+          and any(x['id'] == req['id'] for x in adm.get(f"/api/v1/quotes/rfq-requisitions?rfq=with&page=1&page_size=50&q={req['folio']}")['items'])
+          and any(f['status'] in ('borrador', 'draft') and not f.get('quote_folios') and f.get('imported') is False for f in rq['rfqs']), json.dumps([x['folio'] for x in quot]))
     log = adm.get('/api/v1/audit-events?module=quotes&page_size=50')['items']
     acts = {x['action'] for x in log if a['folio'] in json.dumps(x, ensure_ascii=False) or b2.get('folio', '-') in json.dumps(x, ensure_ascii=False)}
     check('bitácora: supplier_quote.create y supplier_quote.update', {'supplier_quote.create', 'supplier_quote.update'} <= acts, str(acts))

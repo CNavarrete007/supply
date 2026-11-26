@@ -187,17 +187,18 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('registro: sin RFQ seleccionada al inicio', flat(await page.getByTestId('quote-rfq-banner').innerText()).includes('Sin RFQ seleccionada') && flat(await page.getByTestId('quote-items').innerText()).includes('Selecciona una requisición y un proveedor'));
     let buyer4 = null; let reqs4 = null; let req4 = null; let det4 = null;
     // Requisición con al menos una RFQ sin cotización (las que ya tienen cotización se editan desde la matriz y quedan deshabilitadas).
-    outer4: for (const b of st4.buyers) { const l = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&rfq=with&buyer=${b.key}`);
-      for (const x of l.items) { const d = await api(`/api/v1/quotes/rfq-requisitions/${x.id}`); if (d.rfqs.some(f => !f.quote_folios)) { buyer4 = b; reqs4 = l; req4 = x; det4 = d; break outer4; } } }
-    check('registro: requisiciones con RFQ del comprador (API)', reqs4 && reqs4.items.every(r => r.rfq_count > 0 && r.buyer_key === buyer4.key));
+    const quotable4 = f => !f.quote_folios && !['borrador', 'draft', 'cancelada', 'cancelled', 'canceled', 'anulada'].includes(String(f.status).toLowerCase());
+    outer4: for (const b of st4.buyers) { const l = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&rfq=quotable&buyer=${b.key}`);
+      for (const x of l.items) { const d = await api(`/api/v1/quotes/rfq-requisitions/${x.id}`); if (d.rfqs.some(quotable4)) { buyer4 = b; reqs4 = l; req4 = x; det4 = d; break outer4; } } }
+    check('registro: requisiciones con RFQ por cotizar del comprador (API)', reqs4 && reqs4.items.every(r => r.rfq_count > 0 && r.buyer_key === buyer4.key));
     await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer4.key);
     await page.getByTestId('rfq-req-modal').waitFor(); await page.getByTestId('rfq-req-option').first().waitFor();
     check('registro: la ventana lista solo requisiciones con RFQ emitida', await page.getByTestId('rfq-req-option').count() === reqs4.items.length);
     await page.getByTestId('rfq-req-option').filter({ hasText: req4.folio }).getByRole('button', { name: 'Seleccionar' }).click();
     await page.waitForFunction(f => document.querySelector('input[aria-label="Requisición validada"]')?.value.startsWith(f), req4.folio);
     await page.waitForFunction(n => document.querySelectorAll('select[aria-label="RFQ emitida"] option').length === n + 1, det4.rfqs.length);
-    check('registro: RFQ emitidas de la requisición; las ya cotizadas, deshabilitadas', await page.locator('select[aria-label="RFQ emitida"] option[disabled]').count() === det4.rfqs.filter(x => x.quote_folios).length);
-    const rfq4 = det4.rfqs.find(x => !x.quote_folios);
+    check('registro: RFQ de la requisición; las ya cotizadas, en borrador o canceladas, deshabilitadas con su motivo', await page.locator('select[aria-label="RFQ emitida"] option[disabled]').count() === det4.rfqs.filter(x => !quotable4(x)).length);
+    const rfq4 = det4.rfqs.find(quotable4);
     const rfqDet4 = await api(`/api/v1/quotes/rfqs/${rfq4.id}`);
     await page.getByRole('combobox', { name: 'RFQ emitida' }).selectOption(rfq4.id);
     await page.getByTestId('quote-line').first().waitFor();

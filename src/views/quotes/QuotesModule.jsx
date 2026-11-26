@@ -157,7 +157,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
 
     {tab === 3 && <RfqMatrixCard en={en} notify={notify} onNewRfq={() => go(2)} docLang={rfqLang} onDocLang={setRfqLang} refresh={rev} />}
 
-    {tab === 4 && <SupplierQuoteCard en={en} notify={notify} refresh={rev} editId={editQuote} onExitEdit={() => setEditQuote('')} onSaved={() => setRev(n => n + 1)}
+    {tab === 4 && <SupplierQuoteCard en={en} notify={notify} refresh={rev} editId={editQuote} onExitEdit={() => setEditQuote('')} onSaved={() => setRev(n => n + 1)} onNewRfq={() => go(2)}
       onMatrix={() => go(11)} onCompare={reqId => { go(5); if (reqId) setCompReq(reqId); }} />}
 
     {tab === 11 && <SupplierMatrixCard en={en} notify={notify} refresh={rev} onNew={() => go(4)} onEdit={id => { go(4); setEditQuote(id); }} onCompare={reqId => { go(5); if (reqId) setCompReq(reqId); }} />}

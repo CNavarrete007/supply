@@ -117,6 +117,16 @@ export function quoteFromDetail(det) {
   return { form, lines };
 }
 
+/** Por qué una RFQ no puede recibir cotización en la tarjeta 4 ('' = disponible): ya cotizada, borrador o cancelada. */
+export function rfqOptionBlock(x, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const st = t(x?.status).toLowerCase();
+  if (t(x?.quote_folios)) return m(`ya cotizada: ${t(x.quote_folios)}`, `already quoted: ${t(x.quote_folios)}`);
+  if (['borrador', 'draft'].includes(st)) return x?.imported ? m('borrador importado: registra una RFQ nueva en la tarjeta 2', 'imported draft: record a new RFQ in card 2') : m('borrador: márcala como enviada en la Matriz de RFQ', 'draft: mark it as sent in the RFQ Matrix');
+  if (['cancelada', 'cancelled', 'canceled', 'anulada'].includes(st)) return m('cancelada', 'cancelled');
+  return '';
+}
+
 /** Why a quote cannot be edited ('' = editable). Codes from the server: imported | awarded | status. */
 export function editBlockText(code, folio = '', en = false) {
   const m = (es, e) => (en ? e : es); const f = t(folio) || m('La cotización', 'The quote');

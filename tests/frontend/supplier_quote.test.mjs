@@ -114,7 +114,15 @@ test('aviso de guardado no habilitado (write-status)', () => {
   assert.match(quoteNotice({ enabled: false, code: 'QUOTE_WRITE_ACCOUNT_REJECTED' }).title, /rechazó/);
 });
 
-import { cleanNumber, lineNote } from '../../src/views/quotes/supplierQuote.mjs';
+import { cleanNumber, lineNote, rfqOptionBlock } from '../../src/views/quotes/supplierQuote.mjs';
+test('RFQ en la tarjeta 4: solo las enviadas sin cotización; las demás dicen por qué', () => {
+  assert.equal(rfqOptionBlock({ status: 'enviada', quote_folios: null }), '');
+  assert.equal(rfqOptionBlock({ status: 'respondida', quote_folios: '' }), '');
+  assert.equal(rfqOptionBlock({ status: 'enviada', quote_folios: 'COT-2026-0001' }), 'ya cotizada: COT-2026-0001');
+  assert.match(rfqOptionBlock({ status: 'borrador', imported: false }), /márcala como enviada/);
+  assert.match(rfqOptionBlock({ status: 'borrador', imported: true }), /registra una RFQ nueva/);
+  assert.equal(rfqOptionBlock({ status: 'cancelada' }), 'cancelada');
+});
 test('precios y cantidades: acepta $, comas de miles, espacios, «.5» y «1500.»; avisa formato no válido y precio en cero', () => {
   for (const [raw, clean] of [['1500', '1500'], ['1,500.00', '1500.00'], ['$1500', '1500'], ['$ 1,234.50', '1234.50'], ['1 500', '1500'], ['1500.', '1500'], ['.5', '0.5'], ['01', '1']]) assert.equal(cleanNumber(raw), clean, raw);
   assert.deepEqual(lineAmounts({ offered: true, qty: '2', price: '$1,250.50' }, '16'), { subtotal: 2501, tax: 400.16, total: 2901.16 });
