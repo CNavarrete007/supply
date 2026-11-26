@@ -101,6 +101,8 @@ final class QuoteController extends ReadOnlyModuleController
             'group' => ['/^(all|attention|prep|client|approved|change|rejected)$/D', 'all']], fn ($r, $o, $f) => $r->customerQuotes($o, $f, (int) $this->actor['id']));
     }
     public function customerQuote(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->customerQuote($o, $i)); }
+    /** Tarjeta 6: datos internos (costos, gasto y margen) de un borrador registrado en SupplyFlow para seguir editándolo. */
+    public function customerQuoteDraft(string $id): ResponseInterface { return $this->one($id, fn ($r, $o, $i) => $r->customerQuoteDraft($o, $i)); }
     /** Revisiones/modificaciones: client-quote families (Rev. 0 → Rev. N). Read-only; R3A eligibility is informative only. */
     public function revisions(): ResponseInterface
     {

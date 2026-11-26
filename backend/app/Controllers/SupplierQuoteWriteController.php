@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Libraries\ClientInput;
+use App\Libraries\CustomerQuoteInput;
+use App\Libraries\CustomerQuoteWriteRepository;
 use App\Libraries\QuoteConflict;
 use App\Libraries\QuoteStale;
 use App\Libraries\QuoteWriteUnavailable;
@@ -25,7 +27,9 @@ use Throwable;
  * - POST /api/v1/quotes/rfqs/{id}/mark-sent          tarjeta 3: un Borrador registrado en SupplyFlow pasa a Enviada (If-Match).
  * - POST /api/v1/quotes/supplier-quotes              tarjeta 4: registro interno de la cotización recibida contra una RFQ enviada.
  * - PUT  /api/v1/quotes/supplier-quotes/{id}         edición (If-Match = versión) de las registradas en SupplyFlow sin adjudicar.
- * Sesión, CSRF, JSON, Idempotency-Key y errores comunes. No adjudica, no crea cotizaciones al cliente ni OC.
+ * - POST /api/v1/quotes/customer-quotes              tarjeta 6: cotización al cliente como BORRADOR INTERNO (Rev. 0, folio COT).
+ * - PUT  /api/v1/quotes/customer-quotes/{id}         edición del borrador (If-Match); no emite, no autoriza ni envía.
+ * Sesión, CSRF, JSON, Idempotency-Key y errores comunes. No adjudica, no emite ni autoriza cotizaciones al cliente ni crea OC.
  */
 final class SupplierQuoteWriteController extends BaseController
 {
@@ -118,7 +122,7 @@ final class SupplierQuoteWriteController extends BaseController
         }
         if ($e instanceof QuoteWriteUnavailable) {
             $messages = [
-                'QUOTE_WRITE_NOT_PROVISIONED' => 'El guardado de Cotizaciones (RFQ y cotizaciones de proveedor) no está habilitado en este equipo (falta la cuenta de escritura: overlay compose.supply-quotewrite.yml y su secreto). No se guardó nada.',
+                'QUOTE_WRITE_NOT_PROVISIONED' => 'El guardado de Cotizaciones (RFQ, cotizaciones de proveedor y borradores al cliente) no está habilitado en este equipo (falta la cuenta de escritura: overlay compose.supply-quotewrite.yml y su secreto). No se guardó nada.',
                 'QUOTE_WRITE_ACCOUNT_REJECTED' => 'MariaDB rechazó la cuenta de escritura de Cotizaciones (no existe o su contraseña no coincide con el secreto). No se guardó nada.',
             ];
             $code = $e->getMessage();
@@ -208,6 +212,43 @@ final class SupplierQuoteWriteController extends BaseController
             return $this->reply(200, (new RfqWriteRepository())->markSent((int) $this->actor['organization_id'], (int) $this->actor['id'], strtolower($id), (int) $m[1], $key));
         } catch (Throwable $e) {
             return $this->handle($e, 'INVALID_RFQ');
+        }
+    }
+
+    public function createCustomerQuote(): ResponseInterface
+    {
+        $b = $this->boundary();
+        if ($b instanceof ResponseInterface) {
+            return $b;
+        }
+        [$json, $key] = $b;
+        try {
+            $p = CustomerQuoteInput::payload($json);
+            $out = (new CustomerQuoteWriteRepository())->createDraft((int) $this->actor['organization_id'], (int) $this->actor['id'], $p, $key);
+            return $this->reply($out['replayed'] ? 200 : 201, $out);
+        } catch (Throwable $e) {
+            return $this->handle($e, 'INVALID_CUSTOMER_QUOTE');
+        }
+    }
+
+    public function updateCustomerQuote(string $id): ResponseInterface
+    {
+        $b = $this->boundary();
+        if ($b instanceof ResponseInterface) {
+            return $b;
+        }
+        [$json, $key] = $b;
+        if (! CustomerQuoteInput::uuid(strtolower($id))) {
+            return $this->fail(404, 'NOT_FOUND', 'Cotización al cliente no encontrada.');
+        }
+        if (preg_match('/^"([1-9][0-9]{0,8})"$/D', $this->request->getHeaderLine('If-Match'), $m) !== 1) {
+            return $this->fail(428, 'IF_MATCH_REQUIRED', 'Se necesita la versión vigente del borrador.');
+        }
+        try {
+            $p = CustomerQuoteInput::payload($json, true);
+            return $this->reply(200, (new CustomerQuoteWriteRepository())->updateDraft((int) $this->actor['organization_id'], (int) $this->actor['id'], strtolower($id), (int) $m[1], $p, $key));
+        } catch (Throwable $e) {
+            return $this->handle($e, 'INVALID_CUSTOMER_QUOTE');
         }
     }
 

@@ -1,14 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, AlertCircle, Lock, CheckCircle2, RotateCw, Printer, X } from 'lucide-react';
-import { getRfqSetup, listRfqRequisitions, getComparison, getCustomerQuoteSetup } from './api';
+import { getRfqSetup, listRfqRequisitions, getComparison, getCustomerQuoteSetup, createCustomerQuote, updateCustomerQuote, getCustomerQuoteDraft } from './api';
+import { QuoteWriteStatus } from './QuoteWriteStatus.jsx';
 import { money } from './model.mjs';
 import { docModel, quoteDocHtml } from './quoteDocument.mjs';
 import { internalReference } from './rfq.mjs';
-import { CQ_STATUSES, CURRENCIES, emptyCq, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData } from './customerQuoteBuilder.mjs';
+import { CURRENCIES, emptyCq, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData, CQ_SAVE_STATUS, cqPayload, cqFromDraft, cqExistingBlock, cqSavedText, cqSaveError } from './customerQuoteBuilder.mjs';
 
 // Tarjeta 6 · Cotización formal al cliente (diseño Grupo Gerez). Partidas y costos salen de la adjudicación vigente o
 // de la mejor oferta registrada en MariaDB; precio de venta, descuento, IVA, Service Fee y nivel de aprobación se
-// calculan aquí. Los costos internos no salen en la vista previa. GUARDAR/EMITIR es una escritura comercial bloqueada.
+// calculan aquí y el servidor los recalcula. «Guardar» la registra como BORRADOR INTERNO (Rev. 0, folio COT; cuenta
+// quotewrite, CSRF, Idempotency-Key e If-Match) y, si la requisición ya tiene su borrador de SupplyFlow, lo edita.
+// Los costos internos no salen en la vista previa. Enviar a revisión, autorizar y enviar al cliente siguen bloqueados.
+const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
+  : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 function useLoad(fn, deps, enabled = true) {
   const [st, setSt] = useState({ status: 'idle', data: null, error: null });
@@ -23,51 +28,87 @@ function useLoad(fn, deps, enabled = true) {
 }
 const fmt = (v, en) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? '0.00' : Number(v).toLocaleString(en ? 'en-US' : 'es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
-export function CustomerQuoteCard({ en = false, notify, onMatrix, lockText, refresh = 0 }) {
+export function CustomerQuoteCard({ en = false, notify, onMatrix, refresh = 0 }) {
   const tx = (es, e) => (en ? e : es);
   const [form, setForm] = useState(() => emptyCq(localToday()));
   const [lines, setLines] = useState([]);
   const [touched, setTouched] = useState({});
   const [saveTry, setSaveTry] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [saving, setSaving] = useState(false); const [msg, setMsg] = useState(null); const [srvErr, setSrvErr] = useState({}); const [rev, setRev] = useState(0);
+  const pending = useRef(null); // { sig, key }: retrying the SAME save reuses its Idempotency-Key
   const cardRef = useRef(null);
   const setup = useLoad(s => getRfqSetup(s), [refresh]);
   const cqSetup = useLoad(s => getCustomerQuoteSetup(s), [refresh]);
   const reqs = useLoad(s => listRfqRequisitions({ buyer: form.buyer, rfq: 'quoted' }, s), [form.buyer, refresh], !!form.buyer);
-  const comp = useLoad(s => getComparison(form.requisition, s), [form.requisition, refresh], !!form.requisition);
+  const comp = useLoad(s => getComparison(form.requisition, s), [form.requisition, refresh, rev], !!form.requisition);
   const S = setup.data || {};
   const R = comp.data?.requisition || null;
-  const prior = comp.data?.customer_quote || null;
+  const prior = comp.data?.requisition?.id === form.requisition ? comp.data?.customer_quote || null : null;
+  // Borrador interno ya registrado en SupplyFlow para esta requisición: se abre para editarlo (If-Match = su versión).
+  const draft = useLoad(s => getCustomerQuoteDraft(prior.id, s), [prior?.id, prior?.row_version], !!prior?.editable_draft);
+  const base = prior?.editable_draft && draft.data?.item?.id === prior.id && draft.data.item.version === prior.row_version ? draft.data.item : null;
+  const block = cqExistingBlock(prior, en);
   const policy = (cqSetup.data?.policies || []).find(p => /customer|client|cotiz/i.test(p.applies_to)) || null;
 
   // A newly loaded requisition brings its items/costs, currency, delivery place and the next revision number.
   useEffect(() => {
     if (!R) return;
     setLines(linesFromComparison(comp.data.lines));
-    setForm(f => ({ ...f, currency: CURRENCIES.some(c => c[0] === R.currency) ? R.currency : f.currency, delivery_place: f.delivery_place || R.delivery_place || '', revision: String(prior ? prior.revision + 1 : 0) }));
+    setForm(f => ({ ...f, currency: CURRENCIES.some(c => c[0] === R.currency) ? R.currency : f.currency, delivery_place: f.delivery_place || R.delivery_place || '', revision: String(prior?.editable_draft ? prior.revision : prior ? prior.revision + 1 : 0), status: CQ_SAVE_STATUS }));
   }, [R?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The registered draft fills the form and the lines (costs keep coming from the current award / registered offer).
+  const applyDraft = () => { if (!base || !comp.data) return; setForm(f => cqFromDraft(draft.data, [], f).form); setLines(cqFromDraft(draft.data, linesFromComparison(comp.data.lines)).lines); setTouched({}); setSrvErr({}); };
+  useEffect(() => { applyDraft(); }, [base?.id, base?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const v = useMemo(() => validateCq(form, lines, en), [form, lines, en]);
   const totals = useMemo(() => cqTotals(lines, form), [lines, form]);
   const level = useMemo(() => approvalLevel(policy, lines, form, totals), [policy, lines, form, totals]);
   useEffect(() => { setSaveTry(false); }, [form, lines]);
-  const set = (k, val) => { setForm(f => ({ ...f, [k]: val })); setTouched(x => ({ ...x, [k]: true })); };
-  const setLine = (key, patch) => { setLines(ls => ls.map(l => (l.key === key ? { ...l, ...patch } : l))); setTouched(x => ({ ...x, [`line:${key}`]: true })); };
-  const pickBuyer = val => { const isContact = (S.contacts || []).some(c => c.id === val); setForm(f => ({ ...f, buyer: val, requisition: '', preparer: isContact ? val : f.preparer })); setLines([]); };
-  const pickRequisition = id => { setForm(f => ({ ...f, requisition: id, delivery_place: '' })); setLines([]); setTouched(x => ({ ...x, requisition: true })); };
-  const clear = () => { setForm(emptyCq(localToday())); setLines([]); setTouched({}); setSaveTry(false); setPreview(false); };
+  const touch = k => { setMsg(m => (m?.kind === 'ok' ? m : null)); setSrvErr(x => (x[k] ? { ...x, [k]: '' } : x)); };
+  const set = (k, val) => { setForm(f => ({ ...f, [k]: val })); setTouched(x => ({ ...x, [k]: true })); touch(k); };
+  const setLine = (key, patch) => { setLines(ls => ls.map(l => (l.key === key ? { ...l, ...patch } : l))); setTouched(x => ({ ...x, [`line:${key}`]: true })); touch(`line:${key}`); };
+  const pickBuyer = val => { const isContact = (S.contacts || []).some(c => c.id === val); setForm(f => ({ ...f, buyer: val, requisition: '', preparer: isContact ? val : f.preparer })); setLines([]); setMsg(null); setSrvErr({}); pending.current = null; };
+  const pickRequisition = id => { setForm(f => ({ ...f, requisition: id, delivery_place: '' })); setLines([]); setTouched(x => ({ ...x, requisition: true })); setMsg(null); setSrvErr({}); pending.current = null; };
+  // "Limpiar": nueva captura → formulario como nuevo; borrador abierto → vuelve a lo guardado en MariaDB.
+  const clear = () => { setSaveTry(false); setPreview(false); setMsg(null); pending.current = null; if (base) { applyDraft(); return; } setForm(emptyCq(localToday())); setLines([]); setTouched({}); setSrvErr({}); };
   const refreshFx = () => {
     const fx = cqSetup.data?.fx;
     if (!fx) { notify?.(tx('Tipo de cambio', 'Exchange rate'), tx('No hay un tipo de cambio registrado en MariaDB; captúralo manualmente con su fuente.', 'There is no exchange rate recorded in MariaDB; enter it manually with its source.'), 'warning'); return; }
     setForm(f => ({ ...f, usd_mxn: fx.usd_mxn ? String(Number(fx.usd_mxn)) : f.usd_mxn, eur_mxn: fx.eur_mxn ? String(Number(fx.eur_mxn)) : f.eur_mxn, fx_date: fx.date ? String(fx.date).slice(0, 10) : f.fx_date, fx_source: `${fx.source || tx('Registrado', 'Recorded')} (${fx.folio})` }));
     notify?.(tx('Tipo de cambio actualizado', 'Exchange rate updated'), tx(`Último tipo de cambio registrado en MariaDB (${fx.folio}).`, `Latest exchange rate recorded in MariaDB (${fx.folio}).`), 'success');
   };
-  const save = () => {
+  // «Guardar»: BORRADOR INTERNO en MariaDB (alta Rev. 0 o edición del borrador abierto). El servidor toma el costo de la
+  // adjudicación / oferta registrada y recalcula precios y totales; un reintento usa la misma Idempotency-Key.
+  const save = async () => {
+    if (saving) return;
     setTouched(x => ({ ...x, ...Object.fromEntries(Object.keys(v.errors).map(k => [k, true])) }));
     setSaveTry(true);
+    if (block) { setMsg({ kind: 'error', text: block }); return; }
     if (!v.ok) { notify?.(tx('Cotización incompleta', 'Incomplete quote'), v.first, 'warning'); setTimeout(() => cardRef.current?.querySelector('[role=alert]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0); return; }
-    notify?.(tx('Registro no habilitado', 'Recording not enabled'), tx('La cotización al cliente está validada, pero no se guardó: registrarla y emitirla es una escritura comercial pendiente de autorización.', 'The client quote is validated but was not saved: recording and issuing it is a commercial write pending authorization.'), 'warning');
+    const data = cqPayload(form, lines, !!base);
+    const sig = JSON.stringify([base?.id || '', base?.version || 0, data]);
+    if (!pending.current || pending.current.sig !== sig) pending.current = { sig, key: newKey() };
+    setSaving(true); setSrvErr({}); setMsg({ kind: 'info', text: tx('Guardando en MariaDB…', 'Saving to MariaDB…') });
+    let r;
+    try { r = base ? await updateCustomerQuote({ id: base.id, version: base.version, data, key: pending.current.key }) : await createCustomerQuote({ data, key: pending.current.key }); }
+    catch { r = { ok: false, status: 0, data: {} }; }
+    finally { setSaving(false); }
+    if (r.ok) {
+      pending.current = null;
+      const text = cqSavedText(r.data, en);
+      setMsg({ kind: 'ok', text }); setSaveTry(false); notify?.(base ? tx('Borrador actualizado', 'Draft updated') : tx('Borrador guardado', 'Draft saved'), text, 'success');
+      setRev(x => x + 1); // reload: the requisition now has its draft (edit mode)
+      return;
+    }
+    const e = cqSaveError(r.status, r.data, en);
+    if (!e.retry) pending.current = null;
+    if (e.field) setSrvErr({ [e.field]: e.text });
+    setMsg({ kind: e.kind, text: e.text });
+    if (r.status === 412) setRev(x => x + 1); // another session saved the draft: load its current version
+    notify?.(tx('Cotización no guardada', 'Quote not saved'), e.text, 'warning');
   };
+  useEffect(() => { if (msg && msg.kind !== 'info') setTimeout(() => document.querySelector('[data-testid="cq-result"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0); }, [msg]);
   const preparerRec = (S.contacts || []).find(c => c.id === form.preparer); const preparerName = preparerRec?.name || '';
   const docHtml = useMemo(() => (preview ? quoteDocHtml(docModel(previewData({ form, lines, totals, req: R, preparerName, preparerPosition: preparerRec?.position || '', issuer: cqSetup.data?.issuer, en }), en), en, { preview: true, logoUrl: `${window.location.origin}/image_923273.svg` }).html : ''), [preview, form, lines, totals, R, preparerName, preparerRec, cqSetup.data, en]);
   const print = () => {
@@ -76,10 +117,11 @@ export function CustomerQuoteCard({ en = false, notify, onMatrix, lockText, refr
     w.document.write(docHtml); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250);
   };
 
-  const err = k => Boolean(touched[k] && v.errors[k]);
+  const err = k => Boolean((touched[k] && v.errors[k]) || srvErr[k]);
+  const errText = k => (touched[k] && v.errors[k]) || srvErr[k] || '';
   const lbl = (text, req2, k, control, hint, span = '') => <label className={`block text-xs font-medium text-slate-700 ${span}`}>
     <span className="block text-[11px] font-bold text-slate-700 mb-1">{text}{req2 ? ' *' : ''}</span>{control}
-    {k && err(k) ? <span role="alert" className="block text-[10px] text-rose-600 mt-1">{v.errors[k]}</span> : hint ? <span className="block text-[9.5px] text-slate-400 mt-1">{hint}</span> : null}
+    {k && err(k) ? <span role="alert" className="block text-[10px] text-rose-600 mt-1">{errText(k)}</span> : hint ? <span className="block text-[9.5px] text-slate-400 mt-1">{hint}</span> : null}
   </label>;
   const ctl = (k, extra = '') => `w-full px-3.5 py-2.5 bg-white border ${k && err(k) ? 'border-rose-400 ring-1 ring-rose-200' : 'border-slate-200'} rounded-xl outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs disabled:bg-slate-50 disabled:text-slate-400 read-only:bg-slate-100/70 read-only:text-slate-500 ${extra}`;
   const cur = form.currency;
@@ -95,19 +137,22 @@ export function CustomerQuoteCard({ en = false, notify, onMatrix, lockText, refr
       <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 border-l-4 border-l-amber-500 text-slate-700"><strong className="text-slate-900">{tx('Información interna:', 'Internal information:')}</strong> {tx('costo del proveedor, gastos y margen solo se muestran durante la elaboración y nunca aparecen en el PDF del cliente.', 'supplier cost, expenses and margin are only shown while preparing and never appear in the client PDF.')}</div>
       <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 border-l-4 border-l-emerald-500 text-slate-700"><strong className="text-slate-900">{tx('Información visible:', 'Visible information:')}</strong> {tx('el cliente recibe descripción, cantidad, precio unitario de venta, impuestos, total, vigencia y condiciones comerciales.', 'the client receives description, quantity, unit selling price, taxes, total, validity and commercial terms.')}</div>
     </div>
+    <QuoteWriteStatus en={en} />
+    {base && <div data-testid="cq-edit-banner" className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/70 text-xs text-indigo-950"><strong>{tx('Editando el borrador', 'Editing draft')} {base.folio}</strong> · Rev. {base.revision} · {tx('versión', 'version')} {base.version} · {tx('borrador interno: no se ha enviado a revisión ni al cliente.', 'internal draft: not sent for review nor to the client.')}</div>}
+    {block && <p role="alert" data-testid="cq-block" className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{block}</span></p>}
     {(setup.error || cqSetup.error || reqs.error || comp.error) && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{(setup.error || cqSetup.error || reqs.error || comp.error).message}</p>}
 
     <div className="p-5 border border-slate-200 rounded-2xl space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {lbl(tx('Comprador responsable', 'Responsible buyer'), true, 'buyer', <select aria-label={tx('Comprador responsable', 'Responsible buyer')} value={form.buyer} onChange={e => pickBuyer(e.target.value)} className={ctl('buyer', 'border-blue-500 ring-1 ring-blue-200')}><option value="">{tx('Seleccionar comprador...', 'Select buyer...')}</option>{(S.buyers || []).map(b => <option key={b.key} value={b.key}>{b.key === 'unassigned' ? tx('Sin comprador asignado', 'No buyer assigned') : b.name}</option>)}</select>, tx('Selecciona al comprador responsable de la requisición.', 'Select the buyer responsible for the requisition.'))}
         {lbl(tx('Requisición del cliente', 'Client requisition'), true, 'requisition', <select aria-label={tx('Requisición del cliente', 'Client requisition')} value={form.requisition} disabled={!form.buyer} onChange={e => pickRequisition(e.target.value)} className={ctl('requisition')}><option value="">{form.buyer ? tx('Seleccionar requisición...', 'Select requisition...') : tx('Seleccionar primero un comprador...', 'Select a buyer first...')}</option>{(reqs.data?.items || []).map(r => <option key={r.id} value={r.id}>{r.folio} - {r.client_name}</option>)}</select>, form.buyer ? tx(`${reqs.data?.total ?? '…'} requisición(es) con cotizaciones de proveedor.`, `${reqs.data?.total ?? '…'} requisition(s) with supplier quotes.`) : tx('Solo se muestran requisiciones del comprador seleccionado.', "Only the selected buyer's requisitions are shown."))}
-        {lbl(tx('Folio de cotización', 'Quote folio'), false, null, <input aria-label={tx('Folio de cotización', 'Quote folio')} type="text" readOnly value="" placeholder={tx('Automático', 'Automatic')} className={ctl(null)} />)}
+        {lbl(tx('Folio de cotización', 'Quote folio'), false, null, <input aria-label={tx('Folio de cotización', 'Quote folio')} type="text" readOnly value={base?.folio || ''} placeholder={tx('Automático', 'Automatic')} className={ctl(null, 'font-bold')} />, base ? null : tx('Se asigna al guardar (COT-AAAA-NNNN).', 'Assigned on save (COT-YYYY-NNNN).'))}
         {lbl(tx('Referencia interna', 'Internal reference'), false, null, <input aria-label={tx('Referencia interna', 'Internal reference')} type="text" readOnly value={R ? internalReference(R) : ''} placeholder={tx('Automática desde la requisición', 'Automatic from the requisition')} className={ctl(null)} />)}
-        {lbl(tx('Revisión', 'Revision'), true, 'revision', <input aria-label={tx('Revisión', 'Revision')} type="text" inputMode="numeric" value={form.revision} onChange={e => set('revision', e.target.value)} className={ctl('revision')} />, prior ? tx(`Vigente: ${prior.folio} (Rev. ${prior.revision}).`, `Current: ${prior.folio} (Rev. ${prior.revision}).`) : null)}
+        {lbl(tx('Revisión', 'Revision'), true, 'revision', <input aria-label={tx('Revisión', 'Revision')} type="text" readOnly value={form.revision} className={ctl('revision')} />, prior && !prior.editable_draft ? tx(`Vigente: ${prior.folio} (Rev. ${prior.revision}).`, `Current: ${prior.folio} (Rev. ${prior.revision}).`) : tx('Rev. 0 al guardar el borrador; las revisiones siguientes se originan con «Solicitar modificación».', 'Rev. 0 when saving the draft; later revisions start with "Request modification".'))}
         {lbl(tx('Fecha de emisión', 'Issue date'), true, 'issue_date', <input aria-label={tx('Fecha de emisión', 'Issue date')} type="date" value={form.issue_date} onChange={e => set('issue_date', e.target.value)} className={ctl('issue_date')} />)}
         {lbl(tx('Vigencia hasta', 'Valid until'), true, 'valid_until', <input aria-label={tx('Vigencia hasta', 'Valid until')} type="date" value={form.valid_until} min={form.issue_date} onChange={e => set('valid_until', e.target.value)} className={ctl('valid_until')} />)}
         {lbl(tx('Moneda de cotización / cliente', 'Quote / client currency'), true, 'currency', <select aria-label={tx('Moneda de cotización / cliente', 'Quote / client currency')} value={form.currency} onChange={e => set('currency', e.target.value)} className={ctl('currency')}>{CURRENCIES.map(([c, es, e2]) => <option key={c} value={c}>{c} - {en ? e2 : es}</option>)}</select>, tx('Todos los precios visibles al cliente y el PDF se expresarán en esta moneda.', 'All prices visible to the client and the PDF will be in this currency.'))}
-        {lbl(tx('Estatus', 'Status'), false, null, <select aria-label={tx('Estatus', 'Status')} value={form.status} onChange={e => set('status', e.target.value)} className={ctl(null)}>{CQ_STATUSES.map(([es, e2]) => <option key={es} value={es}>{en ? e2 : es}</option>)}</select>)}
+        {lbl(tx('Estatus', 'Status'), false, null, <select aria-label={tx('Estatus', 'Status')} value={CQ_SAVE_STATUS} disabled className={ctl(null)}><option value={CQ_SAVE_STATUS}>{tx('Borrador', 'Draft')}</option></select>, tx('Se guarda como borrador interno; enviar a revisión, autorizar y enviar al cliente siguen bloqueados.', 'Saved as an internal draft; review, authorization and sending stay blocked.'))}
         {lbl(tx('Comprador', 'Buyer'), true, 'preparer', <select aria-label={tx('Comprador', 'Buyer')} value={form.preparer} onChange={e => set('preparer', e.target.value)} className={ctl('preparer')}><option value="">{tx('Seleccionar comprador...', 'Select buyer...')}</option>{(S.contacts || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>)}
         {lbl(tx('Tiempo de entrega ofrecido', 'Offered delivery time'), false, null, <input aria-label={tx('Tiempo de entrega ofrecido', 'Offered delivery time')} type="text" maxLength={500} value={form.lead_time} onChange={e => set('lead_time', e.target.value)} placeholder={tx('Ej. 10 días hábiles después de la OC', 'E.g. 10 business days after the PO')} className={ctl(null)} />, null, 'sm:col-span-2')}
         {lbl(tx('Lugar de entrega', 'Delivery place'), false, null, <input aria-label={tx('Lugar de entrega', 'Delivery place')} type="text" maxLength={500} value={form.delivery_place} onChange={e => set('delivery_place', e.target.value)} className={ctl(null)} />, null, 'sm:col-span-2')}
@@ -141,7 +186,7 @@ export function CustomerQuoteCard({ en = false, notify, onMatrix, lockText, refr
           {!lines.length && <tr><td colSpan={10} className="p-3"><div className="py-8 text-center text-slate-500 border border-slate-200 rounded-xl">{form.requisition ? tx('La requisición no tiene partidas vigentes.', 'The requisition has no active items.') : tx('Selecciona una requisición.', 'Select a requisition.')}</div></td></tr>}
           {lines.map(l => { const p = priceLine(l, form); const e = err(`line:${l.key}`); return <tr key={l.key} data-testid="cq-line" className="align-top">
             <td className="py-2.5 px-3 font-bold text-slate-500">{l.line_number}</td>
-            <td className="py-2.5 px-3"><p className="font-bold text-slate-900 leading-tight">{l.description}</p><p className={`text-[10px] mt-0.5 ${l.source === 'award' ? 'text-emerald-700' : l.source === 'offer' ? 'text-amber-700' : 'text-rose-600'}`}>{l.source === 'award' ? tx(`Adjudicación vigente · ${l.supplier}`, `Current award · ${l.supplier}`) : l.source === 'offer' ? tx(`Mejor oferta (sin adjudicar) · ${l.supplier}`, `Best offer (not awarded) · ${l.supplier}`) : tx('Sin costo: falta cotización del proveedor', 'No cost: supplier quote missing')}</p>{e && <p role="alert" className="text-[10px] text-rose-600 mt-1">{v.errors[`line:${l.key}`]}</p>}</td>
+            <td className="py-2.5 px-3"><p className="font-bold text-slate-900 leading-tight">{l.description}</p><p className={`text-[10px] mt-0.5 ${l.source === 'award' ? 'text-emerald-700' : l.source === 'offer' ? 'text-amber-700' : 'text-rose-600'}`}>{l.source === 'award' ? tx(`Adjudicación vigente · ${l.supplier}`, `Current award · ${l.supplier}`) : l.source === 'offer' ? tx(`Mejor oferta (sin adjudicar) · ${l.supplier}`, `Best offer (not awarded) · ${l.supplier}`) : tx('Sin costo: falta cotización del proveedor', 'No cost: supplier quote missing')}</p>{e && <p role="alert" className="text-[10px] text-rose-600 mt-1">{errText(`line:${l.key}`)}</p>}</td>
             <td className="py-2.5 px-3"><input aria-label={tx(`Marca / modelo partida ${l.line_number}`, `Brand / model item ${l.line_number}`)} type="text" maxLength={255} value={l.brand_model} onChange={ev => setLine(l.key, { brand_model: ev.target.value })} className="w-32 px-2 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-blue-500" /></td>
             <td className="py-2.5 px-3"><input aria-label={tx(`Cantidad partida ${l.line_number}`, `Quantity item ${l.line_number}`)} type="text" inputMode="decimal" value={l.qty} onChange={ev => setLine(l.key, { qty: ev.target.value })} className="w-20 px-2 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-blue-500 text-center" /></td>
             <td className="py-2.5 px-3">{l.unit}</td>
@@ -190,15 +235,18 @@ export function CustomerQuoteCard({ en = false, notify, onMatrix, lockText, refr
       <div className="p-3 rounded-xl bg-white border border-emerald-200 border-l-4 border-l-emerald-500 text-xs text-slate-700"><strong className="text-slate-900">{tx('Control del documento:', 'Document control:')}</strong> {tx('el PDF externo se emite sin imágenes de firmas. Las aprobaciones internas permanecen registradas electrónicamente y la cotización solo puede enviarse al cliente mediante el botón ✉️ ENVIAR AL CLIENTE después de quedar autorizada internamente.', 'the external PDF is issued without signature images. Internal approvals stay recorded electronically and the quote can only be sent to the client with the ✉️ SEND TO CLIENT button after internal authorization.')}</div>
     </div>
 
-    <div data-testid="cq-status" className={`p-3.5 rounded-xl border-l-4 text-xs flex items-start gap-2 ${saveTry ? (v.ok ? 'bg-amber-50 border-l-amber-500 text-amber-900' : 'bg-rose-50 border-l-rose-500 text-rose-800') : 'bg-blue-50/60 border-l-blue-600 text-slate-800'}`}>
-      {saveTry && (v.ok ? <Lock className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />)}
+    <div data-testid="cq-status" className={`p-3.5 rounded-xl border-l-4 text-xs flex items-start gap-2 ${saveTry && !v.ok ? 'bg-rose-50 border-l-rose-500 text-rose-800' : 'bg-blue-50/60 border-l-blue-600 text-slate-800'}`}>
+      {saveTry && !v.ok && <AlertCircle className="w-4 h-4 shrink-0" />}
       <span>{!R ? <strong>{tx('Selecciona una requisición para cargar cliente, partidas, costos adjudicados y moneda.', 'Select a requisition to load client, items, awarded costs and currency.')}</strong>
-        : saveTry ? (v.ok ? tx(`Cotización validada: ${lines.length} partida(s), total ${money(totals.total, cur, en)}. No se guardó: registrar y emitir la cotización al cliente es una escritura comercial que sigue bloqueada hasta su autorización.`, `Quote validated: ${lines.length} item(s), total ${money(totals.total, cur, en)}. Not saved: recording and issuing the client quote is a commercial write that stays blocked until authorized.`) : `${tx('No se puede guardar. Pendiente:', 'Cannot save. Pending:')} ${v.first}`)
-          : <>{R.folio} · {R.client_name} · {tx(`${lines.length} partida(s): ${srcCount('award')} con adjudicación, ${srcCount('offer')} con mejor oferta, ${srcCount('none')} sin costo.`, `${lines.length} item(s): ${srcCount('award')} awarded, ${srcCount('offer')} best offer, ${srcCount('none')} without cost.`)}{prior && ` ${tx(`Ya existe ${prior.folio} (Rev. ${prior.revision}); esta captura sería la Rev. ${form.revision}.`, `${prior.folio} (Rev. ${prior.revision}) already exists; this capture would be Rev. ${form.revision}.`)}`}</>}</span>
+        : saveTry && !v.ok ? `${tx('No se puede guardar. Pendiente:', 'Cannot save. Pending:')} ${v.first}`
+          : <>{R.folio} · {R.client_name} · {tx(`${lines.length} partida(s): ${srcCount('award')} con adjudicación, ${srcCount('offer')} con mejor oferta, ${srcCount('none')} sin costo.`, `${lines.length} item(s): ${srcCount('award')} awarded, ${srcCount('offer')} best offer, ${srcCount('none')} without cost.`)}{v.ok && !block ? ` ${tx(`Lista para guardarse como borrador interno: total ${money(totals.total, cur, en)}.`, `Ready to be saved as an internal draft: total ${money(totals.total, cur, en)}.`)}` : ''}</>}</span>
     </div>
+    {msg && <div role="status" data-testid="cq-result" data-kind={msg.kind} className={`p-3 rounded-xl border text-[11px] flex items-start gap-2 ${msg.kind === 'ok' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : msg.kind === 'info' ? 'bg-slate-50 border-slate-200 text-slate-700' : msg.kind === 'warn' ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-rose-50 border-rose-300 text-rose-900'}`}>
+      {msg.kind === 'ok' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : msg.kind === 'info' ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <AlertCircle className="w-4 h-4 shrink-0" />}<span>{msg.text}</span>
+    </div>}
 
     <div className="flex flex-wrap items-center gap-3 text-sm font-medium" data-testid="cq-actions">
-      <button type="button" onClick={save} title={lockText} className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2"><span aria-hidden="true">💾</span>{tx('Guardar cotización al cliente', 'Save client quote')}</button>
+      <button type="button" onClick={save} disabled={saving || !!block || (prior?.editable_draft && !base)} className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"><span aria-hidden="true">{saving ? '⏳' : '💾'}</span>{tx('Guardar cotización al cliente', 'Save client quote')}</button>
       <button type="button" onClick={clear} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-2xs text-slate-800 flex items-center gap-2"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
       <button type="button" onClick={() => setPreview(true)} disabled={!R} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-2xs text-slate-800 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"><span aria-hidden="true">👁️</span>{tx('Vista previa', 'Preview')}</button>
       <button type="button" onClick={() => onMatrix?.()} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-2xs text-slate-800 flex items-center gap-2"><span aria-hidden="true">📋</span>{tx('Ver matriz', 'View matrix')}</button>

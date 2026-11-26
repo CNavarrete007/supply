@@ -31,7 +31,7 @@ const pdfBytes = label => Buffer.from(`%PDF-1.4\n% SupplyFlow UI ${label}\n1 0 o
     await page.locator('nav button').first().waitFor({ timeout: 20000 });
     const api = async p => (await page.request.get(UI + p)).json();
     const ws = await api('/api/v1/quotes/write-status');
-    check('guardado habilitado (write-status OK, 52 permisos)', ws.code === 'OK' && ws.expected_grants === 52, JSON.stringify(ws));
+    check('guardado habilitado (write-status OK, 111 permisos)', ws.code === 'OK' && ws.expected_grants === 111, JSON.stringify(ws));
     // Requisición sintética propia (Registro RF1) validada, con dos RFQ enviadas registradas por la API (tarjeta 2).
     const post = async (path, data) => { const csrf = (await api('/api/v1/auth/csrf')).csrf_token; const r = await page.request.post(UI + path, { headers: { 'X-SF-CSRF': csrf, 'Idempotency-Key': require('crypto').randomUUID() }, data }); return [r.status(), await r.json()]; };
     const day = new Date().toISOString().slice(0, 10); const year = new Date().getFullYear();

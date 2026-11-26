@@ -84,7 +84,7 @@ def fixtures(op):
 adm = S(USER)
 try:
     st = adm.get(f'{B}/write-status')
-    check('write-status: OK, 52 permisos, sin faltantes, sin secretos', st.get('code') == 'OK' and st.get('enabled') is True and st.get('expected_grants') == 52 and st.get('missing_grants') == []
+    check('write-status: OK, 111 permisos, sin faltantes, sin secretos', st.get('code') == 'OK' and st.get('enabled') is True and st.get('expected_grants') == 111 and st.get('missing_grants') == []
           and not re.search(r'(?i)password|secret|/run/|[0-9a-f]{64}', json.dumps(st)), json.dumps(st))
     free, draft = fixtures(adm)
     if len(free) < 2:

@@ -113,6 +113,10 @@ $routes->put('api/v1/quotes/supplier-quotes/(:segment)', 'SupplierQuoteWriteCont
 // Cotizaciones › Solicitud a proveedores (tarjeta 2): registro de la RFQ y Borrador → Enviada (tarjeta 3). Sin envío de correo.
 $routes->post('api/v1/quotes/rfqs', 'SupplierQuoteWriteController::createRfq');
 $routes->post('api/v1/quotes/rfqs/(:segment)/mark-sent', 'SupplierQuoteWriteController::markRfqSent/$1');
+// Cotizaciones › Cotización formal al cliente (tarjeta 6): BORRADOR INTERNO (alta y edición). Emitir, autorizar y enviar siguen bloqueados.
+$routes->get('api/v1/quotes/customer-quotes/(:segment)/draft', 'QuoteController::customerQuoteDraft/$1');
+$routes->post('api/v1/quotes/customer-quotes', 'SupplierQuoteWriteController::createCustomerQuote');
+$routes->put('api/v1/quotes/customer-quotes/(:segment)', 'SupplierQuoteWriteController::updateCustomerQuote/$1');
 $routes->get('api/v1/quotes/comparison', 'QuoteController::comparison');
 $routes->get('api/v1/quotes/customer-quotes', 'QuoteController::customerQuotes');
 $routes->get('api/v1/quotes/customer-quotes/(:segment)', 'QuoteController::customerQuote/$1');

@@ -13,16 +13,18 @@ use Throwable;
 /**
  * Cotizaciones · base de las escrituras con la cuenta SQL dedicada supplyflow_quotewrite_local (mínimo privilegio):
  * conexión, contrato de permisos, diagnóstico, idempotencia, bloqueos, eventos de flujo y bitácora (módulo quotes).
- * La usan RfqWriteRepository (tarjeta 2, registro de la RFQ) y SupplierQuoteWriteRepository (tarjeta 4, cotización recibida).
+ * La usan RfqWriteRepository (tarjeta 2, registro de la RFQ), SupplierQuoteWriteRepository (tarjeta 4, cotización recibida) y
+ * CustomerQuoteWriteRepository (tarjeta 6, borrador interno de la cotización al cliente).
  * Las excepciones de estas escrituras viven aquí para estar disponibles en cuanto se carga cualquiera de las dos.
  */
 abstract class QuoteWriteBase
 {
     /** Contrato de permisos (debe coincidir con docker/supply-quotewrite/provision.py; tests/quotewrite_contract_check.py). */
     public const GRANTS = [
-        'SELECT' => ['awards', 'business_entities', 'currencies', 'entity_files', 'files', 'idempotency_keys', 'people', 'requisition_items', 'requisition_reviews', 'requisitions',
-            'rfq_items', 'rfqs', 'roles', 'supplier_quote_items', 'supplier_quotes', 'suppliers', 'user_roles', 'users'],
-        'INSERT' => ['audit_events', 'business_entities', 'entity_files', 'files', 'idempotency_keys', 'rfq_items', 'rfqs', 'supplier_quote_items', 'supplier_quotes', 'workflow_events'],
+        'SELECT' => ['approval_policy_versions', 'awards', 'business_entities', 'currencies', 'customer_quote_items', 'customer_quote_versions', 'entity_files', 'files', 'idempotency_keys', 'people',
+            'requisition_items', 'requisition_reviews', 'requisitions', 'rfq_items', 'rfqs', 'roles', 'supplier_quote_items', 'supplier_quotes', 'suppliers', 'user_roles', 'users'],
+        'INSERT' => ['audit_events', 'business_entities', 'customer_quote_items', 'customer_quote_versions', 'customer_quotes', 'entity_files', 'files', 'idempotency_keys', 'rfq_items', 'rfqs',
+            'supplier_quote_items', 'supplier_quotes', 'workflow_events'],
         'UPDATE' => ['idempotency_keys'],
     ];
     public const COLUMN_GRANTS = [
@@ -31,6 +33,9 @@ abstract class QuoteWriteBase
         'business_entities' => ['row_version', 'updated_at', 'updated_by'],
         'entity_files' => ['file_role'],
         'rfqs' => ['legacy_status', 'status_code'],
+        // Tarjeta 6 · borrador interno de la cotización al cliente: datos y montos; NUNCA estatus, emisión, bloqueo ni autorizaciones.
+        'customer_quote_versions' => ['approval_evaluation_snapshot', 'approval_policy_snapshot', 'approval_policy_version_id', 'currency_code', 'delivery_place', 'discount_amount', 'discount_kind', 'discount_rate_pct', 'eur_mxn_rate', 'exchange_rate_date', 'exchange_rate_label_snapshot', 'exchange_rate_source', 'exclusions_text', 'inclusions_text', 'lead_time_text', 'notes', 'payment_terms', 'people_snapshots', 'prepared_by', 'quote_date', 'service_fee_base_amount', 'service_fee_comments', 'service_fee_enabled', 'service_fee_rate_pct', 'service_fee_subtotal_amount', 'service_fee_tax_amount', 'service_fee_tax_rate_pct', 'service_fee_total_amount', 'service_fee_unit_price', 'subtotal_amount', 'tax_amount', 'tax_rate_pct', 'third_party_tax_amount', 'third_party_taxable_amount', 'third_party_total_amount', 'total_amount', 'usd_mxn_rate', 'valid_until', 'warranty_text'],
+        'customer_quote_items' => ['award_id', 'brand_model', 'charge_pct', 'cost_amount', 'cost_source_text', 'exchange_rate', 'exchange_rate_date', 'exchange_rate_source', 'extra_amount', 'line_subtotal', 'original_cost_amount', 'original_cost_currency', 'quantity', 'unit_price'],
     ];
     private const ACCOUNT_REJECTED_ERRNO = [1044, 1045, 1698];
     protected mysqli $db;

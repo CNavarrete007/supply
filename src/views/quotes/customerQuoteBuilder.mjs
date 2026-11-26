@@ -1,7 +1,8 @@
 // Cotizaciones › Cotización formal al cliente · lógica pura (sin red).
 // Costos de la adjudicación o de la mejor oferta, convertidos a la moneda del cliente; precio de venta por partida con
 // entrega/manipulación y % de margen; descuento, IVA, Service Fee y nivel de aprobación según la política vigente.
-// Los costos internos nunca salen en el formato del cliente. GUARDAR/EMITIR es una escritura comercial bloqueada.
+// Los costos internos nunca salen en el formato del cliente. «Guardar» la registra como BORRADOR INTERNO en MariaDB (el
+// servidor toma el costo de la adjudicación u oferta registrada y recalcula todo); emitir, autorizar y enviar siguen bloqueados.
 
 export const CQ_STATUSES = [['Borrador', 'Draft'], ['En revisión interna', 'Under internal review'], ['Pendiente de autorización', 'Pending authorization'], ['Enviada al cliente', 'Sent to the client'],
   ['Aprobada', 'Approved'], ['Rechazada', 'Rejected'], ['Solicitud de modificación', 'Change request'], ['Sustituida', 'Superseded'], ['Vencida', 'Expired']];
@@ -37,10 +38,10 @@ export function linesFromComparison(lines = []) {
   return lines.filter(l => !l.line_status || l.line_status === 'active').map(l => {
     const offers = (l.offers || []).filter(o => o.offered && num(o.unit_price) !== null);
     const best = [...offers].sort((a, b) => num(a.unit_price) - num(b.unit_price))[0];
-    const src = l.award ? { source: 'award', qty: l.award.quantity, cost: l.award.unit_price, currency: l.award.currency, supplier: l.award.supplier_name }
-      : best ? { source: 'offer', qty: l.quantity, cost: best.unit_price, currency: best.currency, supplier: best.supplier_name } : { source: 'none', qty: l.quantity, cost: '', currency: '', supplier: '' };
+    const src = l.award ? { source: 'award', qty: l.award.quantity, cost: l.award.unit_price, currency: l.award.currency, supplier: l.award.supplier_name, quote_id: l.award.quote_id || '' }
+      : best ? { source: 'offer', qty: l.quantity, cost: best.unit_price, currency: best.currency, supplier: best.supplier_name, quote_id: best.quote_id || '' } : { source: 'none', qty: l.quantity, cost: '', currency: '', supplier: '', quote_id: '' };
     return { key: l.id, line_number: l.line_number, description: l.description, brand_model: '', unit: l.unit_label, category: l.category || '', qty: normQty(src.qty), cost_unit: src.cost === '' ? '' : String(Number(src.cost)),
-      cost_currency: src.currency, supplier: src.supplier, source: src.source, handling: '0', margin: '' };
+      cost_currency: src.currency, supplier: src.supplier, source: src.source, quote_id: src.quote_id, handling: '0', margin: '' };
   });
 }
 
@@ -123,4 +124,65 @@ export function previewData({ form, lines, totals, req, preparerName, preparerPo
       notes: t(form.notes) || DEFAULT_PDF_NOTES[en ? 1 : 0], prepared_by: preparerName || '', reviewed_by: '', approved_by: '' },
     items: lines.map(l => { const p = priceLine(l, form); return { line_number: l.line_number, description: l.description, brand_model: t(l.brand_model), quantity: l.qty, unit_label: l.unit, unit_price: p.unit, line_subtotal: p.subtotal }; }),
   };
+}
+
+// ---- Borrador interno en MariaDB (POST/PUT /api/v1/quotes/customer-quotes) ----
+/** Único estatus que se guarda desde la tarjeta: enviar a revisión, autorizar y enviar al cliente siguen bloqueados. */
+export const CQ_SAVE_STATUS = 'Borrador';
+
+/** Body: the server takes each cost from the award/registered offer and recomputes prices and totals (none are sent). */
+export function cqPayload(f, lines = [], edit = false) {
+  const needs = new Set([f.currency, ...lines.map(l => l.cost_currency).filter(Boolean)]);
+  const p = { issue_date: f.issue_date, valid_until: f.valid_until, currency: f.currency, preparer_id: f.preparer, lead_time: t(f.lead_time), delivery_place: t(f.delivery_place),
+    payment_terms: t(f.payment_terms), warranty: t(f.warranty), inclusions: t(f.inclusions), exclusions: t(f.exclusions), notes: t(f.notes), fx_date: f.fx_date || null,
+    usd_mxn: needs.has('USD') ? t(f.usd_mxn) : null, eur_mxn: needs.has('EUR') ? t(f.eur_mxn) : null, fx_source: t(f.fx_source), discount: t(f.discount), vat: t(f.vat),
+    sf_enabled: Boolean(f.sf_enabled), sf_pct: f.sf_enabled ? t(f.sf_pct) : '0', sf_comments: f.sf_enabled ? t(f.sf_comments) : '',
+    lines: lines.map(l => ({ line_id: l.key, source: l.source, quote_id: l.quote_id, qty: t(l.qty), handling: t(l.handling), margin: t(l.margin), brand_model: t(l.brand_model) })) };
+  return edit ? p : { requisition_id: f.requisition, ...p };
+}
+
+/** Form and lines of a registered draft (GET …/customer-quotes/{id}/draft) over the current lines of the comparison. */
+export function cqFromDraft(draft, compLines = [], f = {}) {
+  const d = draft?.item || {}; const byLine = Object.fromEntries((draft?.items || []).map(i => [i.line_id, i]));
+  const n = v => (v === null || v === undefined || v === '' ? '' : normQty(String(v)));
+  const form = { ...f, requisition: d.requisition_id || f.requisition, revision: String(d.revision ?? 0), issue_date: String(d.quote_date || '').slice(0, 10), valid_until: String(d.valid_until || '').slice(0, 10),
+    currency: d.currency || f.currency, status: CQ_SAVE_STATUS, preparer: d.preparer_id || '', lead_time: d.lead_time_text || '', delivery_place: d.delivery_place || '', payment_terms: d.payment_terms || '',
+    warranty: d.warranty_text || '', inclusions: d.inclusions_text || '', exclusions: d.exclusions_text || '', notes: d.notes || '', fx_date: String(d.exchange_rate_date || f.fx_date || '').slice(0, 10),
+    usd_mxn: d.usd_mxn_rate ? n(d.usd_mxn_rate) : (f.usd_mxn || '1'), eur_mxn: d.eur_mxn_rate ? n(d.eur_mxn_rate) : (f.eur_mxn || '1'), fx_source: d.exchange_rate_source || '',
+    discount: n(d.discount_rate_pct) || '0', vat: n(d.tax_rate_pct) || '0', sf_enabled: Boolean(d.service_fee_enabled), sf_pct: n(d.service_fee_rate_pct) || '0.00', sf_comments: d.service_fee_comments || '' };
+  const lines = compLines.map(l => { const i = byLine[l.key]; return i ? { ...l, brand_model: i.brand_model || '', qty: n(i.quantity) || l.qty, handling: n(i.handling) || '0', margin: n(i.margin) } : l; });
+  return { form, lines };
+}
+
+/** Why the requisition cannot get a new draft here ('' = it can): it already has a client quote that is not a SupplyFlow draft. */
+export function cqExistingBlock(prior, en = false) {
+  if (!prior || prior.editable_draft) return '';
+  const m = (es, e) => (en ? e : es);
+  return m(`La requisición ya tiene la cotización ${t(prior.folio)} (Rev. ${prior.revision} · ${t(prior.legacy_status) || t(prior.document_status)}). No se crea otra: una nueva revisión se origina con «Solicitar modificación» (tarjetas 1 u 8); las importadas se conservan como expediente.`,
+    `The requisition already has quote ${t(prior.folio)} (Rev. ${prior.revision}). No other is created: a new revision starts with "Request modification" (cards 1 or 8).`);
+}
+
+export function cqSavedText(out, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const total = Number(out?.total || 0).toLocaleString(en ? 'en-US' : 'es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return out?.version > 1
+    ? m(`Borrador ${t(out.folio)} (Rev. ${out.revision}) actualizado en MariaDB: total $${total} ${out.currency}; versión ${out.version}. Sigue como borrador interno: no se envió a revisión ni al cliente.`, `Draft ${t(out.folio)} updated in MariaDB: total $${total} ${out.currency}; version ${out.version}. Still an internal draft.`)
+    : m(`Cotización al cliente ${t(out?.folio)} (Rev. ${out?.revision ?? 0}) guardada en MariaDB como borrador interno: ${out?.lines} partida(s), total $${total} ${out?.currency}. No se envió a revisión ni al cliente.`, `Client quote ${t(out?.folio)} saved to MariaDB as an internal draft: ${out?.lines} item(s), total $${total} ${out?.currency}. Not sent for review nor to the client.`);
+}
+
+const CQ_FIELD = { requisition_id: 'requisition', preparer_id: 'preparer', issue_date: 'issue_date', valid_until: 'valid_until', currency: 'currency', discount: 'discount', vat: 'vat', sf_pct: 'sf_pct', usd_mxn: 'usd_mxn', eur_mxn: 'eur_mxn' };
+const CQ_BLOCKING = ['QUOTE_WRITE_NOT_PROVISIONED', 'QUOTE_WRITE_ACCOUNT_REJECTED', 'QUOTE_WRITE_GRANTS_INCOMPLETE'];
+/** Server error → { kind: error|warn, text, field (form key or line:<id>), retry (reuse the Idempotency-Key) }. */
+export function cqSaveError(status, body, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const code = body?.error?.code; const message = body?.error?.message; const raw = body?.error?.field || '';
+  const field = /^line:/.test(raw) ? raw : CQ_FIELD[raw] || null;
+  if (!status) return { kind: 'error', text: m('No se confirmó el guardado (sin respuesta del servidor). Presiona Guardar otra vez: se repite la misma operación sin duplicarla.', 'The save was not confirmed. Press Save again: the same operation is repeated without duplicating it.'), retry: true };
+  if (status === 401) return { kind: 'error', text: m('Tu sesión expiró. Inicia sesión nuevamente; no se guardó nada.', 'Your session expired; nothing was saved.') };
+  if (status === 403) return { kind: 'error', text: code === 'CSRF_INVALID' ? m('La sesión de seguridad cambió. Vuelve a intentarlo.', 'The security token changed. Try again.') : m('Solo un Master Admin puede guardar cotizaciones al cliente.', 'Only a Master Admin can save client quotes.') };
+  if (CQ_BLOCKING.includes(code)) return { kind: 'warn', text: `${message || m('El guardado de Cotizaciones no está habilitado en este equipo.', 'Saving quotes is not enabled on this computer.')} ${m('Consulta «Activación en la PC» en docs/cotizaciones/REGISTRO_COTIZACION_PROVEEDOR.md.', 'See "Activación en la PC" in docs/cotizaciones/REGISTRO_COTIZACION_PROVEEDOR.md.')}` };
+  if (status === 412) return { kind: 'warn', text: m('Otra sesión modificó este borrador desde que se abrió; no se guardó tu cambio. Se cargó la versión vigente: revisa los datos y vuelve a guardar.', 'Another session changed this draft since it was opened; your change was not saved. The current version was loaded: review it and save again.') };
+  if (status === 422) return { kind: 'error', text: code === 'INVALID_CUSTOMER_QUOTE' ? m('Revisa el campo o la partida marcada: el servidor no lo aceptó.', 'Check the highlighted field or item: the server did not accept it.') : message || m('Revisa los datos capturados.', 'Check the entered data.'), field };
+  if (status === 404 || status === 409) return { kind: 'error', text: message || m('No se pudo guardar.', 'Could not save.'), field };
+  return { kind: 'error', text: m(`No se confirmó el guardado (${message || 'error del servidor'}). Presiona Guardar otra vez: se repite la misma operación sin duplicarla.`, `The save was not confirmed (${message || 'server error'}). Press Save again.`), retry: true };
 }

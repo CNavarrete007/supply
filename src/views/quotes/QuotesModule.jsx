@@ -37,7 +37,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const en = Boolean(isEnglish || lang === 'en' || language === 'en');
   const tx = (es, e) => (en ? e : es);
   const notify = (t, m, k = 'info') => { if (typeof onNotify === 'function') onNotify(t, m, k); };
-  const LOCK = tx('Modo consulta MariaDB: seleccionar, adjudicar, emitir la cotización al cliente y registrar su decisión son escrituras comerciales bloqueadas hasta su validación integral. Las RFQ (tarjeta 2) y las cotizaciones recibidas de proveedores (tarjeta 4) sí se registran; SupplyFlow no envía correos.', 'MariaDB read mode: selecting, awarding, issuing client quotes and recording decisions are commercial writes blocked until fully validated. RFQs (card 2) and supplier quotes (card 4) are recorded; SupplyFlow does not send e-mails.');
+  const LOCK = tx('Modo consulta MariaDB: seleccionar, adjudicar, enviar a revisión, autorizar o emitir la cotización al cliente y registrar su decisión son escrituras comerciales bloqueadas hasta su validación integral. Las RFQ (tarjeta 2), las cotizaciones recibidas de proveedores (tarjeta 4) y la cotización al cliente como borrador interno (tarjeta 6) sí se registran; SupplyFlow no envía correos.', 'MariaDB read mode: selecting, awarding, sending for review, authorizing or issuing client quotes and recording decisions are commercial writes blocked until fully validated. RFQs (card 2), supplier quotes (card 4) and the client quote as an internal draft (card 6) are recorded; SupplyFlow does not send e-mails.');
   const tabs = [
     [1, '🔄', tx('Revisiones/modificaciones', 'Revisions & Modifications'), tx('Historial de versiones de la cotización al cliente.', 'Client quote version history.')],
     [2, '📑', tx('Solicitud a proveedores (RFQ)', 'Supplier Request (RFQ)'), tx('Documento sin precios enviado a cada proveedor.', 'Document without prices sent to each supplier.')],
@@ -165,7 +165,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
     {tab === 5 && <ComparisonCard en={en} notify={notify} requisition={compReq} onRequisition={setCompReq} refresh={rev} onAddCompany={() => go(4)}
       onRegisterSupplier={() => onNavigate?.('suppliers')} onOpenOrders={() => onNavigate?.('purchase_orders')} />}
 
-    {tab === 6 && <CustomerQuoteCard en={en} notify={notify} lockText={LOCK} refresh={rev} onMatrix={() => go(8)} />}
+    {tab === 6 && <CustomerQuoteCard en={en} notify={notify} refresh={rev} onMatrix={() => go(8)} />}
 
     {tab === 7 && <ClientFormatCard en={en} notify={notify} selectedId={cqId} onSelect={setCqId} refresh={rev} />}
 

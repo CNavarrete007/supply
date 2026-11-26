@@ -105,7 +105,7 @@ if (Test-Path -LiteralPath (Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets
 if (Test-Path -LiteralPath (Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets\mgmtwrite-db-password.txt') -PathType Leaf) {
   $files += 'compose.supply-mgmtwrite.yml'
 }
-# Cotizaciones (cuenta quotewrite: registro de RFQ, tarjetas 2-3, y de la cotización del proveedor, tarjeta 4): igual, solo si existe su secreto.
+# Cotizaciones (cuenta quotewrite: registro de RFQ, tarjetas 2-3; cotización del proveedor, tarjeta 4; borrador de la cotización al cliente, tarjeta 6): igual, solo si existe su secreto.
 if (Test-Path -LiteralPath (Join-Path $env:SUPPLYFLOW_LOCAL_PRIVATE_DIR 'secrets\quotewrite-db-password.txt') -PathType Leaf) {
   $files += 'compose.supply-quotewrite.yml'
 }

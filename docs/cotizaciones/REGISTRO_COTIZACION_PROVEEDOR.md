@@ -1,4 +1,4 @@
-# Cotizaciones · Guardar RFQ y cotizaciones recibidas del proveedor (26 nov 2026)
+# Cotizaciones · Guardar RFQ, cotizaciones recibidas del proveedor y borrador al cliente (26 nov 2026)
 
 ## Qué se habilitó
 
@@ -8,6 +8,7 @@
 | 3 Matriz de RFQ | **Marcar enviada** | Un Borrador registrado en SupplyFlow pasa a **Enviada** (If-Match), cuando el comprador ya la mandó desde su correo |
 | 4 Registro de cotización | **💾 Guardar cotización** | La cotización que envió el proveedor contra una **RFQ existente** (`supplier_quotes` + `supplier_quote_items`) con folio automático **COT-AAAA-NNNN** (año de hoy, consecutivo) y estatus **«Recibida»**. Guarda referencia del proveedor, fechas, moneda, IVA, días de entrega, condiciones de pago, cumplimiento técnico y documental, comentarios, partidas ofertadas con cantidad y precio unitario, y el **PDF** opcional (privado). Al terminar, conserva comprador y requisición para registrar otra RFQ |
 | 4 en modo edición (EDITAR desde la Matriz interna de proveedores) | **💾 Guardar cambios** | Los cambios de una cotización **registrada en SupplyFlow, sin adjudicación vigente y en estatus «Recibida»**, con su versión (If-Match). Puede reemplazar el PDF; el anterior queda como historial |
+| 6 Cotización formal al cliente | **💾 Guardar cotización al cliente** | La cotización al cliente como **borrador interno** (`customer_quotes` + `customer_quote_versions` + `customer_quote_items`, folio **COT-AAAA-NNNN**, Rev. 0, estatus «Borrador»); si la requisición ya tiene su borrador de SupplyFlow, lo edita (If-Match). Detalle en `COTIZACION_CLIENTE.md` |
 
 - **Importes:** el navegador no los envía. El servidor los recalcula con la misma regla de la tarjeta: importe por partida =
   cantidad × precio, redondeado a centavos; IVA por partida redondeado; subtotal, IVA y total.
@@ -33,7 +34,8 @@
   registro interno» que elegiste. Si quieres habilitarla, debe ser un paso aparte, con su propia autorización.
 - **Envío automático por correo** de la RFQ (no hay servidor de correo configurado; se decidió solo registrar).
 - **Editar las partidas** de una RFQ registrada, **cancelar** o **eliminar** RFQ, y modificar RFQ importadas.
-- **Cotización al cliente**, **decisión del cliente**, **adjudicación definitiva** y **OC**.
+- De la **cotización al cliente**: enviar a revisión, autorizar, emitir/enviar al cliente, crear revisiones nuevas fuera de
+  R3A y editar cotizaciones importadas o ya enviadas. Además, **decisión del cliente**, **adjudicación definitiva** y **OC**.
 - **Eliminar cotizaciones** (tarjeta 11) y **editar cotizaciones importadas o adjudicadas.**
 
 ## Servidor
@@ -47,34 +49,44 @@
 | `PUT` | `/api/v1/quotes/supplier-quotes/{id}` | Edición. `If-Match: "<versión>"` (428 si falta, 412 si cambió); 409 `IMPORTED_READ_ONLY`, `AWARDED_READ_ONLY`, `STATUS_READ_ONLY` |
 | `GET` | `/api/v1/quotes/supplier-quotes/{id}/document` | PDF vigente (adjunto, `no-store`, `nosniff`, verificado por tamaño y SHA-256); 404 sin PDF, 409 si el archivo no está en este equipo |
 | `GET` | `/api/v1/quotes/supplier-quotes/{id}` | (ampliado) `version`, `editable`, `edit_block`, `rfq_id`, `requisition_id` y `document` |
+| `POST` | `/api/v1/quotes/customer-quotes` | Tarjeta 6 · alta de la cotización al cliente como **borrador interno** (201). Errores: 422 `INVALID_CUSTOMER_QUOTE` con `field` (o `line:<id>`), 422 `PREPARER_UNAVAILABLE`, `EXCHANGE_RATE_REQUIRED`; 404 requisición; 409 `DRAFT_EXISTS`, `CUSTOMER_QUOTE_EXISTS`, `LINES_CHANGED`, `COST_SOURCE_CHANGED`, `REQUISITION_ARCHIVED` |
+| `PUT` | `/api/v1/quotes/customer-quotes/{id}` | Tarjeta 6 · edición del borrador. `If-Match: "<versión>"` (428 si falta, 412 si cambió); 409 `IMPORTED_READ_ONLY`, `NOT_A_DRAFT` |
+| `GET` | `/api/v1/quotes/customer-quotes/{id}/draft` | Tarjeta 6 · datos internos del borrador de SupplyFlow para editarlo (cuenta de lectura; 404 para cualquier otra cotización) |
 
 - Escrituras solo para Master Admin, con CSRF, JSON e `Idempotency-Key`. Reintentar la misma operación con la misma clave
   devuelve la respuesta original sin duplicar.
 - Cada guardado escribe un **evento de flujo** en la requisición (`workflow_events`: `rfq` → `rfq.recorded` / `rfq.sent`;
-  `supplier_quote` → `quote.recorded` / `quote.updated`) y una entrada en la **bitácora** (módulo `quotes`: `rfq.create`,
-  `rfq.mark_sent`, `supplier_quote.create`, `supplier_quote.update`, con antes/después).
-- Clases: `SupplierQuoteWriteController` (las 5 rutas de escritura), `RfqInput`, `RfqWriteRepository`, `SupplierQuoteInput`,
-  `SupplierQuoteWriteRepository` y la base común `QuoteWriteBase` (conexión, permisos, idempotencia, eventos y bitácora). La
+  `supplier_quote` → `quote.recorded` / `quote.updated`; `customer_quote` → `cq.draft_saved` / `cq.draft_updated`) y una
+  entrada en la **bitácora** (módulo `quotes`: `rfq.create`, `rfq.mark_sent`, `supplier_quote.create`, `supplier_quote.update`,
+  `customer_quote.draft_create`, `customer_quote.draft_update`, con antes/después).
+- Clases: `SupplierQuoteWriteController` (las 7 rutas de escritura), `RfqInput`, `RfqWriteRepository`, `SupplierQuoteInput`,
+  `SupplierQuoteWriteRepository`, `CustomerQuoteInput`, `CustomerQuoteWriteRepository` y la base común `QuoteWriteBase`
+  (conexión, permisos, idempotencia, eventos y bitácora). La
   descarga del PDF está en `QuoteController` y `QuoteReadRepository` (cuenta de lectura).
 - Usa la cuenta **`supplyflow_quotewrite_local`** (overlay `compose.supply-quotewrite.yml`, secreto
   `quotewrite-db-password.txt`):
-  - **29 permisos de tabla y 23 de columna (52)**.
-  - Alta en `rfqs`/`rfq_items` y `supplier_quotes`/`supplier_quote_items`; lee la validación vigente y el contacto de compras
-    (`requisition_reviews`, `users`, `people`, `user_roles`, `roles`).
+  - **35 permisos de tabla y 76 de columna (111)** desde el 26 nov 2026 (antes 29 + 23 = 52).
+  - Alta en `rfqs`/`rfq_items`, `supplier_quotes`/`supplier_quote_items` y, para el borrador de la tarjeta 6, en
+    `customer_quotes`/`customer_quote_versions`/`customer_quote_items`; lee la validación vigente, el contacto de compras
+    (`requisition_reviews`, `users`, `people`, `user_roles`, `roles`) y las políticas de aprobación (`approval_policy_versions`).
   - `UPDATE` solo en `rfqs.status_code`/`legacy_status` (Borrador → Enviada), en las columnas editables de `supplier_quotes` y
-    `supplier_quote_items`, en `business_entities` (`updated_at`, `updated_by`, `row_version`) y en `entity_files.file_role`.
-  - Sin `DELETE`. No modifica partidas de RFQ ni escribe adjudicaciones, cotizaciones al cliente u OC.
+    `supplier_quote_items`, en `business_entities` (`updated_at`, `updated_by`, `row_version`), en `entity_files.file_role` y
+    en las 39 + 14 columnas de **datos e importes** del borrador al cliente (nunca estatus, emisión, bloqueo, aprobación,
+    folio ni versión).
+  - Sin `DELETE`. No modifica partidas de RFQ ni escribe adjudicaciones, aprobaciones, decisiones del cliente u OC; no
+    puede enviar a revisión, autorizar ni emitir una cotización al cliente.
   - El contrato 77/52, catalogwrite, useradmin y mgmtwrite no cambian.
 
 ## Activación en la PC (requiere tu autorización)
 
 Mismo procedimiento que usaste para mgmtwrite. En **PowerShell**, desde `C:\Dev\supply`, con la aplicación en marcha.
 Primero actualiza la rama (`git pull origin claude/sharp-hawking-rmk7kl`) y recarga con **Ctrl+F5**. Hasta activarla, las
-tarjetas 2 y 4 muestran el aviso «El guardado de Cotizaciones no está habilitado en este equipo».
+tarjetas 2, 4 y 6 muestran el aviso «El guardado de Cotizaciones no está habilitado en este equipo».
 
-> **Si ya habías aprovisionado la cuenta con 22 + 21 permisos** (antes del registro de RFQ): haz el paso 1 (respaldo); el
-> paso 2 no cambia nada porque el secreto ya existe; en el paso 3 `verify` responderá `PRIVILEGES_INCOMPLETE` (esperado) y los
-> pasos 4 a 6 agregan solo los 9 permisos que faltan.
+> **Si ya habías aprovisionado la cuenta** (con 22 + 21 o con 29 + 23 permisos): haz el paso 1 (respaldo); el paso 2 no
+> cambia nada porque el secreto ya existe; en el paso 3 `verify` responderá `PRIVILEGES_INCOMPLETE` (esperado: la API
+> también avisa `QUOTE_WRITE_GRANTS_INCOMPLETE` y no guarda) y los pasos 4 a 6 agregan **solo** los permisos que faltan
+> (59 si venías de 52). No se tocan datos ni otras cuentas.
 
 **Paso 1 · Variables, overlays y respaldo.**
 
@@ -122,8 +134,8 @@ $compose += @('-f', (Join-Path $root 'compose.supply-quotewrite.yml'))
 & docker.exe @compose --profile quotewrite-tools run --rm quotewrite-db-tools verify
 ```
 
-**Paso 4 · Crear la cuenta y sus permisos.** Ambos deben responder `"result": "PASS"`, `"grants": 29` y
-`"column_grants": 23`.
+**Paso 4 · Crear la cuenta y sus permisos.** Ambos deben responder `"result": "PASS"`, `"grants": 35` y
+`"column_grants": 76`.
 
 ```powershell
 & docker.exe @compose --profile quotewrite-tools run --rm quotewrite-db-tools provision
@@ -138,8 +150,8 @@ $compose += @('-f', (Join-Path $root 'compose.supply-quotewrite.yml'))
 ```
 
 **Paso 6 · Comprobar.** Con tu sesión de Master Admin abre `http://localhost:8080/api/v1/quotes/write-status`. Debe decir
-`"code":"OK"` y `"expected_grants":52`. Recarga Cotizaciones → Solicitud a proveedores y Cotizaciones recibidas: el aviso
-amarillo desaparece.
+`"code":"OK"` y `"expected_grants":111`. Recarga Cotizaciones → Solicitud a proveedores, Cotizaciones recibidas y
+Cotización al cliente: el aviso amarillo desaparece.
 
 Desde ahora el arranque normal (`CLAUDE.md`, `SupplyFlow-Restore-INT03.ps1`) agrega `compose.supply-quotewrite.yml`
 automáticamente si existe su secreto.
@@ -149,15 +161,17 @@ automáticamente si existe su secreto.
 | Prueba | Tipo | Resultado (sandbox sintético) |
 |---|---|---|
 | `tests/rfq_write_http_check.py` | HTTP, **escribe** (`SF_SYNTHETIC_WRITES=1`); crea sus requisiciones y validaciones por la API | 36/36 |
+| `tests/customer_quote_write_http_check.py` | HTTP, **escribe**: borrador de la cotización al cliente (fórmula, monedas, idempotencia, 409/412/428/422, sin rutas de emisión) | 34/34 |
+| `tests/frontend/customer_quote_write_ui_e2e.cjs` | Navegador, **escribe**: borrador desde la tarjeta 6 con fallo de red y reintento, edición con If-Match, 412 con recarga y tarjeta 8 | 26/26 |
 | `tests/frontend/rfq_write_ui_e2e.cjs` | Navegador, **escribe**: RFQ en Borrador con fallo de red y reintento con la misma clave, otra Enviada, Marcar enviada (If-Match) y disponibilidad en la tarjeta 4 | 19/19 |
 | `tests/supplier_quote_write_http_check.py` | HTTP, **escribe**; registra sus propias RFQ por la API | 41/41 |
 | `tests/frontend/supplier_quote_write_ui_e2e.cjs` | Navegador, **escribe**: alta con fallo de red y reintento, edición con If-Match, PDF reemplazado y descargado | 20/20 |
-| `tests/frontend/quotes_ui_e2e.cjs` | Navegador, solo lectura: los guardados se abortan y no se dan por guardados | 233/233 |
-| `tests/quotewrite_contract_check.py` | Contrato PHP = `provision.py` (29 + 23) | 9/9 |
+| `tests/frontend/quotes_ui_e2e.cjs` | Navegador, solo lectura: los guardados se abortan y no se dan por guardados | 237/237 |
+| `tests/quotewrite_contract_check.py` | Contrato PHP = `provision.py` (35 + 76) y columnas prohibidas del borrador al cliente | 11/11 |
 | `tests/frontend/rfq_model.test.mjs`, `supplier_quote.test.mjs` | Lógica pura | 13/13 y 11/11 |
 
-Las pruebas de escritura **no** deben ejecutarse contra tu base real: registran requisiciones, validaciones, RFQ y cotizaciones
-sintéticas que no se pueden eliminar.
+Las pruebas de escritura **no** deben ejecutarse contra tu base real: registran requisiciones, validaciones, RFQ, cotizaciones
+y borradores al cliente sintéticos que no se pueden eliminar.
 
 ## Limitaciones
 

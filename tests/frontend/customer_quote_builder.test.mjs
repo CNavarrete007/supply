@@ -1,7 +1,7 @@
 // Cotizaciones › Cotización formal al cliente · lógica pura. node --test tests/frontend/customer_quote_builder.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyCq, addDays, convert, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData, CQ_STATUSES, DEFAULT_PDF_NOTES } from '../../src/views/quotes/customerQuoteBuilder.mjs';
+import { emptyCq, addDays, convert, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData, CQ_STATUSES, DEFAULT_PDF_NOTES, CQ_SAVE_STATUS, cqPayload, cqFromDraft, cqExistingBlock, cqSavedText, cqSaveError } from '../../src/views/quotes/customerQuoteBuilder.mjs';
 import { customerQuoteHtml } from '../../src/views/quotes/model.mjs';
 
 const f0 = { ...emptyCq('2026-09-24'), buyer: 'b', requisition: 'r', preparer: 'u', currency: 'USD', usd_mxn: '17.25', eur_mxn: '18.9', sf_pct: '5' };
@@ -79,4 +79,54 @@ test('vista previa para el cliente: sin costos, manipulación ni margen y con co
   const html = customerQuoteHtml(d, false, { preview: true });
   assert.ok(html.includes('Rev. 2') && html.includes('$660.00 USD') && html.includes('$2,411.64 USD') && html.includes('VISTA PREVIA · NO REGISTRADA') && html.includes('Cliente &lt;b&gt;') && html.includes('ACME X'));
   assert.ok(!/500\.00|150\.00|margen de ganancia|cost/i.test(html.replace('costos internos', '')), 'no internal cost/handling/margin in the client document');
+});
+
+// ---- Borrador interno (POST/PUT /api/v1/quotes/customer-quotes) ----
+test('payload del borrador: sin precios ni totales (el servidor los recalcula), tipo de cambio solo si se usa', () => {
+  const l = linesFromComparison(cmpLines).map(x => ({ ...x, margin: '20', handling: ' 150 ', brand_model: ' ACME X ' }));
+  const p = cqPayload({ ...f0, lead_time: ' 5 días ' }, l);
+  assert.equal(p.requisition_id, 'r'); assert.equal(p.preparer_id, 'u'); assert.equal(p.lead_time, '5 días');
+  assert.equal(p.usd_mxn, '17.25'); assert.equal(p.eur_mxn, null, 'EUR no se usa: no se envía');
+  assert.deepEqual(p.lines[0], { line_id: 'l1', source: 'award', quote_id: 'A', qty: '3', handling: '150', margin: '20', brand_model: 'ACME X' });
+  assert.ok(!JSON.stringify(p).match(/unit_price|subtotal|total|status/), 'ni precios, ni totales, ni estatus');
+  const mxn = cqPayload({ ...f0, currency: 'MXN' }, l.slice(1, 2));
+  assert.deepEqual([mxn.usd_mxn, mxn.eur_mxn], [null, null]);
+  const noSf = cqPayload({ ...f0, sf_enabled: false, sf_pct: '5', sf_comments: 'x' }, l);
+  assert.deepEqual([noSf.sf_enabled, noSf.sf_pct, noSf.sf_comments], [false, '0', '']);
+  assert.equal('requisition_id' in cqPayload(f0, l, true), false, 'la edición no cambia la requisición');
+  assert.equal(CQ_SAVE_STATUS, 'Borrador');
+});
+
+test('abrir el borrador registrado: formulario y partidas sobre el comparativo vigente', () => {
+  const draft = { item: { id: 'q1', version: 3, folio: 'COT-2026-0007', revision: 0, requisition_id: 'r', quote_date: '2026-11-20', valid_until: '2026-12-20', currency: 'USD', exchange_rate_date: '2026-11-19',
+    usd_mxn_rate: '18.500000', eur_mxn_rate: null, exchange_rate_source: 'Banxico', preparer_id: 'u2', delivery_place: 'Planta', lead_time_text: '5 días', payment_terms: '30 días', warranty_text: '1 año',
+    inclusions_text: 'Flete', exclusions_text: '', notes: 'n', discount_rate_pct: '2.5000', tax_rate_pct: '16.0000', service_fee_enabled: true, service_fee_rate_pct: '5.0000', service_fee_comments: 'sf' },
+    items: [{ line_id: 'l1', brand_model: 'ACME', quantity: '2.000000', handling: '10.00', margin: '15.0000' }] };
+  const { form, lines } = cqFromDraft(draft, linesFromComparison(cmpLines), { ...f0, usd_mxn: '17' });
+  assert.deepEqual([form.revision, form.issue_date, form.currency, form.preparer, form.usd_mxn, form.eur_mxn, form.discount, form.vat, form.sf_pct, form.status, form.fx_source],
+    ['0', '2026-11-20', 'USD', 'u2', '18.5', '18.9', '2.5', '16', '5', 'Borrador', 'Banxico']);
+  assert.deepEqual([lines[0].qty, lines[0].handling, lines[0].margin, lines[0].brand_model, lines[0].source], ['2', '10', '15', 'ACME', 'award']);
+  assert.deepEqual([lines[1].qty, lines[1].margin], ['1', ''], 'partida sin dato en el borrador: queda como en el comparativo');
+});
+
+test('cotización existente: importada/enviada bloquea; borrador de SupplyFlow se edita', () => {
+  assert.equal(cqExistingBlock(null), ''); assert.equal(cqExistingBlock({ editable_draft: true, folio: 'COT-1', revision: 0 }), '');
+  const b = cqExistingBlock({ editable_draft: false, folio: 'COT-2025-0001', revision: 1, legacy_status: 'Enviada' });
+  assert.match(b, /COT-2025-0001 \(Rev\. 1 · Enviada\)/); assert.match(b, /Solicitar modificación/);
+  assert.match(cqExistingBlock({ folio: 'X', revision: 0 }, true), /Request modification/);
+});
+
+test('mensajes de resultado y errores del servidor', () => {
+  assert.match(cqSavedText({ folio: 'COT-2026-0009', revision: 0, version: 1, lines: 2, total: 1234.5, currency: 'MXN' }), /COT-2026-0009 \(Rev\. 0\) guardada en MariaDB como borrador interno: 2 partida\(s\), total \$1,234\.50 MXN/);
+  assert.match(cqSavedText({ folio: 'COT-2026-0009', revision: 0, version: 2, total: 10, currency: 'USD' }), /actualizado en MariaDB: total \$10\.00 USD; versión 2/);
+  assert.deepEqual(cqSaveError(0, {}).retry, true);
+  assert.equal(cqSaveError(500, { error: { message: 'x' } }).retry, true);
+  assert.equal(cqSaveError(401, {}).retry, undefined);
+  assert.match(cqSaveError(403, {}).text, /Master Admin/);
+  assert.equal(cqSaveError(503, { error: { code: 'QUOTE_WRITE_NOT_PROVISIONED', message: 'No habilitado.' } }).kind, 'warn');
+  assert.equal(cqSaveError(412, {}).kind, 'warn');
+  assert.deepEqual(cqSaveError(422, { error: { code: 'INVALID_CUSTOMER_QUOTE', field: 'preparer_id' } }).field, 'preparer');
+  assert.equal(cqSaveError(422, { error: { code: 'INVALID_CUSTOMER_QUOTE', field: 'line:abc' } }).field, 'line:abc');
+  assert.equal(cqSaveError(409, { error: { code: 'COST_SOURCE_CHANGED', message: 'Cambió el costo.', field: 'line:l2' } }).field, 'line:l2');
+  assert.equal(cqSaveError(409, { error: { code: 'DRAFT_EXISTS', message: 'Ya existe.' } }).text, 'Ya existe.');
 });

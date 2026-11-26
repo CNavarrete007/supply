@@ -35,6 +35,12 @@
 > **Actualización del 26 nov, tarde.** Registro de RFQ: `POST /api/v1/quotes/rfqs` y `POST /api/v1/quotes/rfqs/{id}/mark-sent`
 > (`SupplierQuoteWriteController`, `RfqInput`, `RfqWriteRepository`; base común nueva `QuoteWriteBase`; cuenta `quotewrite`
 > ampliada a 29 + 23 permisos). Mapa: **135 rutas, 100 clases PHP, 144 archivos de interfaz, 0 problemas.**
+>
+> **Actualización del 26 nov, noche.** Cotización al cliente como **borrador interno** (tarjeta 6):
+> `POST /api/v1/quotes/customer-quotes`, `PUT /api/v1/quotes/customer-quotes/{id}` (`SupplierQuoteWriteController`;
+> clases nuevas `CustomerQuoteInput` y `CustomerQuoteWriteRepository`, sobre `QuoteWriteBase`) y la lectura
+> `GET /api/v1/quotes/customer-quotes/{id}/draft` (`QuoteController` → `QuoteReadRepository`). Cuenta `quotewrite` ampliada a
+> 35 + 76 permisos (111). Mapa: **138 rutas, 102 clases PHP, 144 archivos de interfaz, 0 problemas.**
 
 ## Conclusión
 

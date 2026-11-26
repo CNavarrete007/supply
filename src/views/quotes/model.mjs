@@ -9,6 +9,8 @@ const LABELS = {
   approved: ['Aprobada', 'Approved'], rejected: ['Rechazada', 'Rejected'], change_requested: ['Cambios solicitados', 'Changes requested'], superseded: ['Sustituida', 'Superseded'],
   awarded: ['Adjudicada', 'Awarded'], selected: ['Seleccionada', 'Selected'], preselected: ['Preseleccionada', 'Preselected'], cancelled: ['Cancelada', 'Cancelled'], expired: ['Vencida', 'Expired'],
   active: ['Vigente', 'Current'], closed: ['Cerrada', 'Closed'],
+  // Borrador interno de la tarjeta 6: aún sin solicitar aprobación ni registrar decisión del cliente.
+  not_recorded: ['Sin registrar', 'Not recorded'], not_requested: ['Sin solicitar', 'Not requested'],
 };
 export const label = (code, en = false) => (code ? LABELS[code]?.[en ? 1 : 0] ?? String(code) : '—');
 export const tone = code => {

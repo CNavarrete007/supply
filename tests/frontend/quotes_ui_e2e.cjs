@@ -48,7 +48,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('sin aviso de "pendiente de integración"', await page.getByText('Módulo pendiente de integración').count() === 0);
     for (const t of ['Revisiones/modificaciones', 'Solicitud a proveedores (RFQ)', 'Matriz de RFQ', 'Cotizaciones recibidas', 'Comparativo y selección preliminar', 'Cotización al cliente', 'Formato para el cliente', 'Matriz de cotizaciones al cliente', 'Decisión del cliente', 'Adjudicación definitiva', 'Matriz interna de proveedores'])
       check(`tarjeta "${t}" visible`, await page.getByRole('button', { name: new RegExp(t.replace(/[()]/g, '\\$&')) }).first().isVisible());
-    check('aviso de modo consulta visible (qué sigue bloqueado y qué se registra)', await page.getByText(/Modo consulta MariaDB: seleccionar, adjudicar/).isVisible() && await page.getByText(/Las RFQ \(tarjeta 2\) y las cotizaciones recibidas/).isVisible());
+    check('aviso de modo consulta visible (qué sigue bloqueado y qué se registra)', await page.getByText(/Modo consulta MariaDB: seleccionar, adjudicar/).isVisible() && await page.getByText(/Las RFQ \(tarjeta 2\), las cotizaciones recibidas de proveedores \(tarjeta 4\) y la cotización al cliente como borrador interno/).isVisible());
     const rc = await api('/api/v1/quotes/rfq-contacts');
     await page.getByTestId('rfq-contact').first().waitFor();
     check('una tarjeta por contacto de compras más "Todas las RFQ"', await page.getByTestId('rfq-contact').count() === rc.contacts.length && await page.getByTestId('rfq-contact-all').isVisible());
@@ -263,8 +263,11 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
 
     // 11 · Cotizaciones recibidas: tarjetas por proveedor y filtro en el servidor
     await page.getByRole('button', { name: 'Abrir todas: Todas las cotizaciones' }).click();
+    // Las pruebas de escritura agregan cotizaciones sintéticas: se busca por folio para no depender de la página 1.
+    await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill('COT-QA-0004');
     await page.locator('[data-testid="sqm-row"][data-folio="COT-QA-0004"]').waitFor();
     const r4 = flat(await page.locator('[data-testid="sqm-row"][data-folio="COT-QA-0004"]').innerText());
+    await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill('');
     const q4 = sqs.items.find(x => x.folio === 'COT-QA-0004');
     check('cotización adjudicada: proveedor, total y estatus', [q4.supplier_name.toUpperCase(), usd(q4.total_amount), 'Adjudicada'].every(x => r4.includes(x)), r4);
     const sup = sqs.summary.suppliers.find(s => s.total > 1) || sqs.summary.suppliers[0];
@@ -272,7 +275,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('button', { name: `Abrir proveedor: ${sup.name}` }).click();
     check('filtro por proveedor en el servidor (200)', (await bySup).status() === 200);
     await page.getByText(`${sup.total} registro(s)`).waitFor();
-    check('solo cotizaciones del proveedor', (await page.getByTestId('sqm-row').count()) === sup.total);
+    check('solo cotizaciones del proveedor', (await page.getByTestId('sqm-row').count()) === Math.min(sup.total, 25));
     await shot(page, 'cot_11_recibidas');
 
 
@@ -343,27 +346,46 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.locator('nav button').filter({ hasText: /Cotizaciones y Comparativo$/ }).click();
     await page.getByTestId('rfq-matrix-card').waitFor();
 
-    // 6 · Cotización formal al cliente: costos reales → precio de venta, IVA, Service Fee, nivel de aprobación; guardar bloqueado
+    // 6 · Cotización formal al cliente: costos reales → precio de venta, IVA, Service Fee, nivel de aprobación. Guardar registra un
+    // BORRADOR INTERNO; esta prueba es de solo lectura: el POST se corta en el navegador y se comprueba que no se da por guardado.
     const cqModel = await import(require('url').pathToFileURL(require('path').join(__dirname, '../../src/views/quotes/customerQuoteBuilder.mjs')).href);
-    const cur = cqCur.items[0];
+    // Familia sintética sembrada (no un borrador «sf:» creado por las pruebas de escritura de la tarjeta 6).
+    const cur = cqCur.items.find(x => !String(x.series).startsWith('sf:'));
     await page.getByRole('button', { name: /^6.*Cotización al cliente/ }).click();
     await page.getByTestId('cq-card').waitFor();
     check('cotización al cliente: estado inicial', flat(await page.getByTestId('cq-status').innerText()).startsWith('Selecciona una requisición para cargar cliente') && await page.getByRole('button', { name: 'Vista previa' }).isDisabled());
     const cqSetup = await api('/api/v1/quotes/customer-quote-setup'); const st6 = await api('/api/v1/quotes/rfq-setup');
-    let buyer6 = null; let reqs6 = null;
-    for (const b of st6.buyers) { const l = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&rfq=quoted&buyer=${b.key}`); if (l.total) { buyer6 = b; reqs6 = l; break; } }
+    // Una requisición sin cotización al cliente (captura nueva) y, si existe, otra con una cotización que no es borrador de SupplyFlow (bloqueo).
+    let buyer6 = null; let reqs6 = null; let req6 = null; let cmp6 = null; let blocked6 = null;
+    for (const b of st6.buyers) {
+      const l = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&rfq=quoted&buyer=${b.key}`);
+      for (const r of l.items.slice(0, 40)) {
+        if (req6 && blocked6) break;
+        const c = await api(`/api/v1/quotes/comparison?requisition=${r.id}`);
+        if (!req6 && !c.customer_quote && c.lines.length) { buyer6 = b; reqs6 = l; req6 = r; cmp6 = c; }
+        else if (!blocked6 && c.customer_quote && !c.customer_quote.editable_draft) blocked6 = { buyer: b, list: l, req: r, cmp: c };
+      }
+      if (req6 && blocked6) break;
+    }
     check('cotización al cliente: requisiciones del comprador con cotizaciones de proveedor', reqs6 && reqs6.items.every(r => r.quote_count > 0));
+    if (blocked6) {
+      await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(blocked6.buyer.key);
+      await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Requisición del cliente"] option').length === n + 1, blocked6.list.items.length);
+      await page.getByRole('combobox', { name: 'Requisición del cliente' }).selectOption(blocked6.req.id);
+      await page.getByTestId('cq-block').waitFor();
+      const b6 = flat(await page.getByTestId('cq-block').innerText());
+      check('requisición con cotización existente (importada/enviada): no se crea otra; nueva revisión con «Solicitar modificación»', b6.includes(`ya tiene la cotización ${blocked6.cmp.customer_quote.folio}`) && b6.includes('Solicitar modificación')
+        && await page.getByRole('button', { name: /Guardar cotización al cliente/ }).isDisabled() && (await page.getByRole('textbox', { name: 'Revisión' }).inputValue()) === String(blocked6.cmp.customer_quote.revision + 1), b6);
+    }
     await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer6.key);
     await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Requisición del cliente"] option').length === n + 1, reqs6.items.length);
-    const req6 = reqs6.items[0];
-    const cmp6 = await api(`/api/v1/quotes/comparison?requisition=${req6.id}`);
     await page.getByRole('combobox', { name: 'Requisición del cliente' }).selectOption(req6.id);
     await page.getByTestId('cq-line').first().waitFor();
     const lines6 = cqModel.linesFromComparison(cmp6.lines);
     check('partidas vigentes con costo de adjudicación o mejor oferta', await page.getByTestId('cq-line').count() === lines6.length && flat(await page.getByTestId('cq-line-count').innerText()).startsWith(`${lines6.length} partida(s)`));
     check('moneda, lugar de entrega y revisión propuestos desde MariaDB', (await page.getByRole('combobox', { name: 'Moneda de cotización / cliente' }).inputValue()) === (['MXN', 'USD', 'EUR'].includes(cmp6.requisition.currency) ? cmp6.requisition.currency : 'MXN')
-      && (await page.getByRole('textbox', { name: 'Lugar de entrega' }).inputValue()) === (cmp6.requisition.delivery_place || '') && (await page.getByRole('textbox', { name: 'Revisión' }).inputValue()) === String(cmp6.customer_quote ? cmp6.customer_quote.revision + 1 : 0));
-    if (cmp6.customer_quote) check('aviso de la cotización vigente de la requisición', flat(await page.getByTestId('cq-status').innerText()).includes(`Ya existe ${cmp6.customer_quote.folio}`));
+      && (await page.getByRole('textbox', { name: 'Lugar de entrega' }).inputValue()) === (cmp6.requisition.delivery_place || '') && (await page.getByRole('textbox', { name: 'Revisión' }).inputValue()) === '0');
+    check('captura nueva: sin bloqueo ni modo edición, estatus fijo Borrador', await page.getByTestId('cq-block').count() === 0 && await page.getByTestId('cq-edit-banner').count() === 0 && await page.getByRole('combobox', { name: 'Estatus' }).isDisabled());
     await page.getByRole('button', { name: /Actualizar tipo de cambio/ }).click();
     check('Actualizar tipo de cambio usa el último registrado en MariaDB', !cqSetup.fx || (await page.getByRole('textbox', { name: '1 USD = MXN' }).inputValue()) === String(Number(cqSetup.fx.usd_mxn)));
     await page.getByRole('button', { name: /Guardar cotización al cliente/ }).click();
@@ -380,9 +402,14 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const pol6 = (cqSetup.policies || []).find(p => /customer|client|cotiz/i.test(p.applies_to));
     const lv6 = cqModel.approvalLevel(pol6, priced6, f6, t6); const lvText = flat(await page.getByTestId('cq-level').innerText());
     check('nivel de aprobación según la política vigente', lv6.status === 'within' ? lvText.startsWith('Nivel 1 · Solo Comprador') : lv6.status === 'exceeds' ? lvText.startsWith('Requiere autorización interna adicional') : lvText.includes('Sin política de aprobación vigente'), lvText);
+    check('lista para guardarse como borrador interno', flat(await page.getByTestId('cq-status').innerText()).includes('Lista para guardarse como borrador interno'));
+    // Solo lectura: el POST del borrador se corta en el navegador (ruta del contexto); la tarjeta no lo da por guardado y MariaDB no cambia.
     await page.getByRole('button', { name: /Guardar cotización al cliente/ }).click();
-    const st6msg = flat(await page.getByTestId('cq-status').innerText());
-    check('Guardar completo: valida y avisa que NO se guardó', st6msg.startsWith('Cotización validada') && st6msg.includes('No se guardó') && writes.length === 0, st6msg);
+    await page.locator('[data-testid="cq-result"][data-kind="error"]').waitFor();
+    const st6msg = flat(await page.getByTestId('cq-result').innerText());
+    check('Guardar completo: envía el borrador (POST) y, sin respuesta, avisa que NO se confirmó', st6msg.startsWith('No se confirmó el guardado') && writes.length === 1 && writes[0] === 'POST /api/v1/quotes/customer-quotes' && (await page.getByRole('textbox', { name: 'Folio de cotización' }).inputValue()) === '', `${st6msg} | ${writes.join(',')}`);
+    writes.splice(0);
+    check('MariaDB sin cambios (la requisición sigue sin cotización al cliente)', (await api(`/api/v1/quotes/comparison?requisition=${req6.id}`)).customer_quote === null);
     await page.getByRole('button', { name: 'Vista previa' }).click();
     const pv6 = flat(await page.getByTestId('cq-preview').frameLocator('iframe').locator('body').innerText());
     check('vista previa para el cliente: precio de venta y total, sin costos ni margen', pv6.includes(cmp6.requisition.client_name) && pv6.includes('VISTA PREVIA') && pv6.includes(`${f6.currency} ${t6.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) && !pv6.includes(`${f6.currency} ${Number(priced6[0].cost_unit).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) && !/margen de ganancia|manipulación|costo del producto/i.test(pv6), pv6.slice(0, 300));
@@ -497,7 +524,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('ELIMINAR en cotización aprobada: no se elimina, usar Rev. N', /no se elimina ni se sobrescribe.*MODIFICAR DESDE REQ\./.test(flat(await page.getByTestId('cqm-delete').innerText())) && await page.getByTestId('cqm-delete').getByRole('button', { name: 'Sí, eliminar' }).count() === 0);
     await page.getByTestId('cqm-delete').getByRole('button', { name: 'Entendido' }).click();
     check('VALIDAR COMPRADOR solo en borradores/revisión interna', await row8.getByRole('button', { name: /VALIDAR COMPRADOR/ }).count() === 0);
-    const draft8 = m8.items.find(x => x.status_key === 'draft' && x.versions === 1);
+    const draft8 = m8.items.find(x => x.status_key === 'draft' && x.versions === 1 && !String(x.series).startsWith('sf:'));
     if (draft8) {
       const dRow = rowOf(draft8.folio);
       check('borrador: estatus "Borrador" y aprobación interna pendiente', flat(await dRow.innerText()).includes('Borrador') && flat(await dRow.innerText()).includes('Aprob. interna: Pendiente'));
@@ -796,6 +823,8 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const r11 = f => page.locator(`[data-testid="sqm-row"][data-folio="${f}"]`);
     const x4 = m11.items.find(x => x.id === q4.id);
     const cmp4 = await api(`/api/v1/quotes/comparison?requisition=${x4.requisition_id}`);
+    // Las pruebas de escritura agregan cotizaciones sintéticas: la fila se busca por folio (no se asume la página 1).
+    await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(q4.folio);
     await r11(q4.folio).getByText(/^\d+\.\d/).first().waitFor({ timeout: 15000 });
     const row4 = flat(await r11(q4.folio).innerText());
     check('fila: folio, requisición, proveedor, partidas, total y estatus de adjudicación', [q4.folio, x4.requisition, q4.supplier_name.toUpperCase(), `${x4.offered_count} partida(s)`, usd(q4.total_amount)].every(x => row4.includes(x))
@@ -812,12 +841,14 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByTestId('sqm-detail').getByRole('button', { name: 'Cerrar' }).click();
     const aw11 = m11.items.find(x => x.awarded);
     if (aw11) {
+      await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(aw11.folio);
       await r11(aw11.folio).getByRole('button', { name: 'ELIMINAR' }).click();
       check('ELIMINAR con adjudicación vigente: se conserva', /tiene adjudicación vigente: se conserva/.test(await page.getByTestId('sqm-delete').innerText()) && await page.getByTestId('sqm-delete').getByRole('button', { name: 'Sí, eliminar' }).count() === 0);
       await page.getByTestId('sqm-delete').getByRole('button', { name: 'Entendido' }).click();
     }
     const fr11 = m11.items.find(x => !x.awarded);
     if (fr11) {
+      await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(fr11.folio);
       await r11(fr11.folio).getByRole('button', { name: 'ELIMINAR' }).click();
       const dl11 = page.getByTestId('sqm-delete');
       check('ELIMINAR: confirmar exige el folio exacto', await dl11.getByRole('button', { name: 'Sí, eliminar' }).isDisabled());
@@ -826,6 +857,8 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
       check('ELIMINAR: escritura bloqueada, no se eliminó nada', (await dl11.getByRole('alert').innerText()).includes(`No se eliminó ${fr11.folio}`) && writes.length === 0);
       await dl11.getByRole('button', { name: 'Cancelar' }).click();
     }
+    await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill('');
+    await page.waitForResponse(r => /\/supplier-quotes\?/.test(r.url()) && !/[?&]q=/.test(r.url()));
     const byS11 = page.waitForResponse(r => r.url().includes(`supplier=${sp11.id}`));
     await page.getByRole('button', { name: `Abrir proveedor: ${sp11.name}` }).click();
     const sp11r = await (await byS11).json(); await page.waitForTimeout(300);
@@ -837,6 +870,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('button', { name: '← Volver a tarjetas' }).click();
     check('"Volver a tarjetas" cierra la matriz', await page.getByTestId('sqm-matrix').count() === 0);
     await page.getByRole('button', { name: 'Abrir todas: Todas las cotizaciones' }).click();
+    await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(q4.folio);
     await r11(q4.folio).waitFor();
     const cmpGo = page.waitForResponse(r => r.url().includes(`/quotes/comparison?requisition=${x4.requisition_id}`));
     await r11(q4.folio).getByRole('button', { name: 'ADJUDICAR' }).click();

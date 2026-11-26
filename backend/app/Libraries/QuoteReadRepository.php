@@ -419,10 +419,14 @@ final class QuoteReadRepository
             'item_count' => count(array_filter($map, static fn ($l) => $l['line_status'] === 'active'))];
         // Latest client quote of the requisition (tarjeta 6 proposes the next revision). Read-only.
         $cqv = $this->rows("SELECT ve.public_id AS id,v.folio,v.version_number,COALESCE(v.legacy_revision_number,v.version_number-1) AS revision,v.document_status,v.client_decision_status,v.legacy_status,v.currency_code AS currency,v.total_amount,
+              v.internal_approval_status,ve.row_version AS row_version,(ve.imported_at IS NOT NULL OR ve.legacy_id IS NOT NULL) AS imported,
               (SELECT COUNT(*) FROM customer_quote_versions x WHERE x.organization_id=v.organization_id AND x.customer_quote_id=v.customer_quote_id) AS versions
             FROM customer_quote_versions v JOIN business_entities ve ON ve.id=v.id AND ve.organization_id=v.organization_id
             WHERE v.organization_id=? AND v.requisition_id=? ORDER BY v.version_number DESC,v.id DESC LIMIT 1", [$org, $rid]);
-        $customerQuote = $cqv ? ['revision' => (int) $cqv[0]['revision'], 'version_number' => (int) $cqv[0]['version_number'], 'versions' => (int) $cqv[0]['versions']] + $cqv[0] : null;
+        $customerQuote = $cqv ? ['revision' => (int) $cqv[0]['revision'], 'version_number' => (int) $cqv[0]['version_number'], 'versions' => (int) $cqv[0]['versions'], 'row_version' => (int) $cqv[0]['row_version'],
+            'imported' => (bool) $cqv[0]['imported'],
+            // Tarjeta 6: borrador interno registrado en SupplyFlow que aún no se envía a revisión, autoriza ni envía (se puede editar).
+            'editable_draft' => ! $cqv[0]['imported'] && $cqv[0]['document_status'] === 'draft' && $cqv[0]['internal_approval_status'] === 'not_requested' && $cqv[0]['client_decision_status'] === 'not_recorded'] + $cqv[0] : null;
         return ['requisition' => $requisitionInfo, 'lines' => array_values($map), 'quotes' => $quotes, 'orders' => $orders, 'customer_quote' => $customerQuote];
     }
 
@@ -525,6 +529,29 @@ final class QuoteReadRepository
         // Issuer block ("COTIZA") from the organization record; additive and read-only.
         $issuer = $this->rows('SELECT legal_name,tax_identifier,phone,email,postal_address FROM organizations WHERE id=? LIMIT 1', [$org])[0] ?? null;
         return ['item' => $v, 'items' => $items, 'decisions' => $decisions, 'versions' => $versions, 'issuer' => $issuer];
+    }
+
+    /** Tarjeta 6: internal data of a SupplyFlow client-quote draft (costs, handling, margin) to keep editing it; null if not a draft. */
+    public function customerQuoteDraft(int $org, string $id): ?array
+    {
+        $h = $this->rows("SELECT ve.public_id AS id,v.id AS db_id,ve.row_version AS version,v.folio,COALESCE(v.legacy_revision_number,v.version_number-1) AS revision,re.public_id AS requisition_id,
+              v.quote_date,v.valid_until,v.currency_code AS currency,v.exchange_rate_date,v.usd_mxn_rate,v.eur_mxn_rate,v.exchange_rate_source,
+              (SELECT u.public_id FROM users u WHERE u.id=v.prepared_by AND u.organization_id=v.organization_id) AS preparer_id,v.delivery_place,v.lead_time_text,v.payment_terms,v.warranty_text,
+              v.inclusions_text,v.exclusions_text,v.notes,v.discount_rate_pct,v.tax_rate_pct,v.service_fee_enabled,v.service_fee_rate_pct,v.service_fee_comments,v.total_amount,v.approval_evaluation_snapshot
+            FROM customer_quote_versions v JOIN business_entities ve ON ve.id=v.id AND ve.organization_id=v.organization_id JOIN business_entities re ON re.id=v.requisition_id AND re.organization_id=v.organization_id
+            WHERE v.organization_id=? AND ve.public_id=? AND ve.imported_at IS NULL AND ve.legacy_id IS NULL AND v.document_status='draft' AND v.internal_approval_status='not_requested'
+              AND v.client_decision_status='not_recorded' LIMIT 1", [$org, $id]);
+        if (! $h) {
+            return null;
+        }
+        $d = $h[0];
+        $items = $this->rows('SELECT li.public_id AS line_id,i.line_number,i.brand_model,i.quantity,i.extra_amount AS handling,i.charge_pct AS margin,i.cost_source_text,i.original_cost_amount,i.original_cost_currency,i.unit_price,i.line_subtotal
+            FROM customer_quote_items i JOIN requisition_items li ON li.id=i.requisition_item_id AND li.organization_id=i.organization_id WHERE i.organization_id=? AND i.customer_quote_version_id=? ORDER BY i.line_number,i.id', [$org, (int) $d['db_id']]);
+        unset($d['db_id']);
+        $d['version'] = (int) $d['version']; $d['revision'] = (int) $d['revision']; $d['service_fee_enabled'] = (bool) $d['service_fee_enabled'];
+        $d['approval_evaluation'] = $d['approval_evaluation_snapshot'] === null ? null : json_decode((string) $d['approval_evaluation_snapshot'], true);
+        unset($d['approval_evaluation_snapshot']);
+        return ['item' => $d, 'items' => $items];
     }
 
     /** Spanish status label of a client quote version: the original (imported) label wins; otherwise derived from codes. */

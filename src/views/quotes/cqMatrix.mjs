@@ -62,7 +62,7 @@ export function decisionText(row, en = false) {
   if (row?.last_decision) return { text: label(row.last_decision, en), at: clean(row.last_decision_at).slice(0, 16), pending: false };
   if (clean(row?.legacy_client_decision)) return { text: clean(row.legacy_client_decision), at: '', pending: false };
   const code = row?.client_decision_status || 'pending';
-  return { text: label(code, en), at: '', pending: code === 'pending' };
+  return { text: label(code, en), at: '', pending: code === 'pending' || code === 'not_recorded' };
 }
 
 /** VALIDAR COMPRADOR solo aplica a cotizaciones que aún esperan la validación interna. */

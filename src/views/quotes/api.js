@@ -55,3 +55,7 @@ export function quoteWriteStatus(now = Date.now()) {
 // Tarjeta 2 · registro de la RFQ (Borrador o Enviada) y tarjeta 3 · Borrador → Enviada (If-Match). SupplyFlow no envía correos.
 export const createRfq = op => write('POST', '/api/v1/quotes/rfqs', op);
 export const markRfqSent = op => (uuid(op.id) ? write('POST', `/api/v1/quotes/rfqs/${encodeURIComponent(op.id)}/mark-sent`, { ...op, data: {} }) : Promise.reject(new Error('Identificador inválido.')));
+// Tarjeta 6 · cotización al cliente como BORRADOR INTERNO (alta, edición con If-Match y datos internos para seguir editando).
+export const createCustomerQuote = op => write('POST', '/api/v1/quotes/customer-quotes', op);
+export const updateCustomerQuote = op => (uuid(op.id) ? write('PUT', `/api/v1/quotes/customer-quotes/${encodeURIComponent(op.id)}`, op) : Promise.reject(new Error('Identificador inválido.')));
+export const getCustomerQuoteDraft = (id, s) => (uuid(id) ? getJson(`/api/v1/quotes/customer-quotes/${encodeURIComponent(id)}/draft`, s) : Promise.reject(new Error('Identificador inválido.')));

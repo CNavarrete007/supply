@@ -8,7 +8,10 @@ grants (26 nov 2026):
 - Supplier quote (card 4): record the quote a supplier sent against a sent RFQ (supplier_quotes + supplier_quote_items, folio
   COT-AAAA-NNNN) with its private PDF, and correct a quote recorded in SupplyFlow while it is not awarded (column-level UPDATE on the
   editable columns, business_entities version columns and entity_files.file_role for the replaced PDF).
-No DELETE. It cannot change RFQ lines, issue client quotes, register client decisions, award or create POs, and it does not modify
+- Client quote (card 6): record the client quote as an INTERNAL DRAFT (customer_quotes + customer_quote_versions + customer_quote_items)
+  and edit that draft (column-level UPDATE on its data/amount columns only: no document/approval/decision status, issued_at or
+  locked_at, so it cannot issue, authorize, lock or send a client quote).
+No DELETE. It cannot change RFQ lines, issue or authorize client quotes, register client decisions, award or create POs, and it does not modify
 the schema, business records or any other account (77/52, catalogwrite, useradmin and mgmtwrite keep their own).
 Usage (profile quotewrite-tools): provision | verify
 """
@@ -29,9 +32,9 @@ LOCK_NAME = 'supplyflow_quotewrite_provision_v1'
 TABLES_EXPECTED = 77
 SELECT_TABLES = {'business_entities', 'requisitions', 'requisition_items', 'requisition_reviews', 'rfqs', 'rfq_items', 'suppliers',
                  'supplier_quotes', 'supplier_quote_items', 'awards', 'currencies', 'files', 'entity_files', 'idempotency_keys',
-                 'users', 'people', 'user_roles', 'roles'}
+                 'users', 'people', 'user_roles', 'roles', 'customer_quote_versions', 'customer_quote_items', 'approval_policy_versions'}
 INSERT_TABLES = {'business_entities', 'rfqs', 'rfq_items', 'supplier_quotes', 'supplier_quote_items', 'files', 'entity_files',
-                 'workflow_events', 'audit_events', 'idempotency_keys'}
+                 'workflow_events', 'audit_events', 'idempotency_keys', 'customer_quotes', 'customer_quote_versions', 'customer_quote_items'}
 UPDATE_TABLES = {'idempotency_keys'}
 DELETE_TABLES = set()
 UPDATE_COLUMNS = {
@@ -41,6 +44,9 @@ UPDATE_COLUMNS = {
     'business_entities': {'updated_at', 'updated_by', 'row_version'},
     'entity_files': {'file_role'},
     'rfqs': {'status_code', 'legacy_status'},
+    # Card 6 internal draft of the client quote: data and amounts only; never status, issue, lock or authorization columns.
+    'customer_quote_versions': {'approval_evaluation_snapshot', 'approval_policy_snapshot', 'approval_policy_version_id', 'currency_code', 'delivery_place', 'discount_amount', 'discount_kind', 'discount_rate_pct', 'eur_mxn_rate', 'exchange_rate_date', 'exchange_rate_label_snapshot', 'exchange_rate_source', 'exclusions_text', 'inclusions_text', 'lead_time_text', 'notes', 'payment_terms', 'people_snapshots', 'prepared_by', 'quote_date', 'service_fee_base_amount', 'service_fee_comments', 'service_fee_enabled', 'service_fee_rate_pct', 'service_fee_subtotal_amount', 'service_fee_tax_amount', 'service_fee_tax_rate_pct', 'service_fee_total_amount', 'service_fee_unit_price', 'subtotal_amount', 'tax_amount', 'tax_rate_pct', 'third_party_tax_amount', 'third_party_taxable_amount', 'third_party_total_amount', 'total_amount', 'usd_mxn_rate', 'valid_until', 'warranty_text'},
+    'customer_quote_items': {'award_id', 'brand_model', 'charge_pct', 'cost_amount', 'cost_source_text', 'exchange_rate', 'exchange_rate_date', 'exchange_rate_source', 'extra_amount', 'line_subtotal', 'original_cost_amount', 'original_cost_currency', 'quantity', 'unit_price'},
 }
 EXPECTED = {(table, privilege) for privilege, tables in
             [('SELECT', SELECT_TABLES), ('INSERT', INSERT_TABLES), ('UPDATE', UPDATE_TABLES), ('DELETE', DELETE_TABLES)] for table in tables}
