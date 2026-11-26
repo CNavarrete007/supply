@@ -31,6 +31,10 @@
 > `SupplierQuoteInput`, `SupplierQuoteWriteRepository`; cuenta nueva `quotewrite`, 22 + 21 permisos) y
 > `GET /api/v1/quotes/supplier-quotes/{id}/document` (`QuoteController`, cuenta de lectura). El mapa verifica también los
 > permisos de `quotewrite`: **133 rutas, 97 clases PHP, 144 archivos de interfaz, 0 problemas.**
+>
+> **Actualización del 26 nov, tarde.** Registro de RFQ: `POST /api/v1/quotes/rfqs` y `POST /api/v1/quotes/rfqs/{id}/mark-sent`
+> (`SupplierQuoteWriteController`, `RfqInput`, `RfqWriteRepository`; base común nueva `QuoteWriteBase`; cuenta `quotewrite`
+> ampliada a 29 + 23 permisos). Mapa: **135 rutas, 100 clases PHP, 144 archivos de interfaz, 0 problemas.**
 
 ## Conclusión
 

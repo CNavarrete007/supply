@@ -1,7 +1,10 @@
 # Cotizaciones › Matriz de RFQ por contacto de compras (13 nov 2026)
 
 Tarjeta 3 de **Cotizaciones y Comparativo** con el diseño de la imagen de referencia. Componente
-`src/views/quotes/RfqMatrixCard.jsx`; ayudas puras en `src/views/quotes/rfq.mjs`. Solo lectura.
+`src/views/quotes/RfqMatrixCard.jsx`; ayudas puras en `src/views/quotes/rfq.mjs`. Consulta, más **Marcar enviada** (26 nov 2026):
+una RFQ en **Borrador registrada en SupplyFlow** muestra «Por enviar» y el botón **Marcar enviada**; al confirmar que ya se
+mandó desde el correo del comprador pasa a **Enviada** (`POST /api/v1/quotes/rfqs/{id}/mark-sent`, If-Match, bitácora). Las
+RFQ importadas se conservan como expediente. SupplyFlow no envía correos.
 
 ## Qué muestra
 

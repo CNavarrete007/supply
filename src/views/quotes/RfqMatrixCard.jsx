@@ -1,12 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Loader2, AlertCircle, Printer, X, ChevronLeft, ChevronRight, Globe, Plus } from 'lucide-react';
-import { getRfqContacts, listRfqs, getRfq } from './api';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Search, Loader2, AlertCircle, Printer, X, ChevronLeft, ChevronRight, Globe, Plus, Send } from 'lucide-react';
+import { getRfqContacts, listRfqs, getRfq, markRfqSent } from './api';
 import { label, tone, rfqState } from './model.mjs';
-import { initials, responseRate, filterContacts, rfqReference, registeredDoc, rfqDocHtml } from './rfq.mjs';
+import { initials, responseRate, filterContacts, rfqReference, registeredDoc, rfqDocHtml, canMarkSent, rfqSaveError } from './rfq.mjs';
 
 // Tarjeta 3 · Matriz de solicitudes de cotización (RFQ), diseño Grupo Gerez: primero las RFQ por contacto de compras
-// (tarjetas con métricas reales) y después la matriz paginada del contacto elegido. Solo lectura: "Nueva RFQ" lleva a la
-// tarjeta 2 y "Ver" abre el formato registrado en el idioma de RFQ seleccionado.
+// (tarjetas con métricas reales) y después la matriz paginada del contacto elegido. "Nueva RFQ" lleva a la tarjeta 2,
+// "Ver" abre el formato registrado (para imprimirlo y enviarlo desde el correo del comprador) y "Marcar enviada" pasa un
+// Borrador registrado en SupplyFlow a Enviada (cuenta quotewrite, If-Match). SupplyFlow no envía correos.
+const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
+  : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 const DASH = '—';
 const ymd = v => (v ? String(v).slice(0, 10) : DASH);
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -30,10 +33,12 @@ export function RfqMatrixCard({ en = false, notify, onNewRfq, docLang = 'es', on
   const [page, setPage] = useState(1);
   const [input, setInput] = useState(''); const [q, setQ] = useState('');
   const [rfqId, setRfqId] = useState('');
+  const [mark, setMark] = useState(null); const [marking, setMarking] = useState(false); const [markMsg, setMarkMsg] = useState(''); const [rev, setRev] = useState(0);
+  const pendingMark = useRef(null); // { sig, key }: retrying the SAME mark reuses its Idempotency-Key
   useEffect(() => { const t = setTimeout(() => { const n = input.trim(); if (n !== q) { setQ(n); setPage(1); } }, 300); return () => clearTimeout(t); }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const contacts = useLoad(s => getRfqContacts(s), [refresh]);
-  const list = useLoad(s => listRfqs({ page, q, contact: open || 'all' }, s), [open, page, q, refresh], open !== null);
+  const contacts = useLoad(s => getRfqContacts(s), [refresh, rev]);
+  const list = useLoad(s => listRfqs({ page, q, contact: open || 'all' }, s), [open, page, q, refresh, rev], open !== null);
   const rfq = useLoad(s => getRfq(rfqId, s), [rfqId], !!rfqId);
   const all = contacts.data?.all;
   const cards = useMemo(() => filterContacts(contacts.data?.contacts || [], cq), [contacts.data, cq]);
@@ -51,6 +56,25 @@ export function RfqMatrixCard({ en = false, notify, onNewRfq, docLang = 'es', on
     w.document.write(html); w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250);
   };
   const last = Math.max(1, Math.ceil((list.data?.total || 0) / (list.data?.page_size || 25)));
+  // «Marcar enviada»: Borrador → Enviada (el comprador ya la mandó desde su correo). If-Match = versión de la fila.
+  const confirmMark = async () => {
+    if (!mark || marking) return;
+    const sig = `${mark.id}:${mark.version}`;
+    if (!pendingMark.current || pendingMark.current.sig !== sig) pendingMark.current = { sig, key: newKey() };
+    setMarking(true); setMarkMsg('');
+    let r;
+    try { r = await markRfqSent({ id: mark.id, version: mark.version, key: pendingMark.current.key }); } catch { r = { ok: false, status: 0, data: {} }; } finally { setMarking(false); }
+    if (r.ok) {
+      pendingMark.current = null;
+      notify?.(tx('RFQ enviada', 'RFQ sent'), tx(`${mark.folio} quedó registrada como Enviada.`, `${mark.folio} is now recorded as Sent.`), 'success');
+      setMark(null); setRev(x => x + 1);
+      return;
+    }
+    const e = rfqSaveError(r.status, r.data, en);
+    if (!e.retry) pendingMark.current = null;
+    setMarkMsg(e.text);
+    if (r.status === 409 || r.status === 412) setRev(x => x + 1);
+  };
 
   const card = (c, isAll = false) => {
     const on = isAll ? open === 'all' : open === c.key;
@@ -127,9 +151,10 @@ export function RfqMatrixCard({ en = false, notify, onNewRfq, docLang = 'es', on
               <td className={`py-2.5 px-3.5 whitespace-nowrap ${st === 'overdue' ? 'text-rose-600 font-bold' : ''}`}>{ymd(r.deadline)}</td>
               <td className="py-2.5 px-3.5">{r.currency}</td>
               <td className="py-2.5 px-3.5"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${tone(r.status)}`}>{r.legacy_status || label(r.status, en)}</span>
-                <div className={`text-[10px] mt-1 font-bold ${st === 'answered' ? 'text-emerald-700' : st === 'overdue' ? 'text-rose-600' : 'text-amber-700'}`}>{st === 'answered' ? `${tx('Respondida', 'Answered')} · ${r.quote_folio}` : st === 'overdue' ? tx('Vencida', 'Overdue') : tx('En espera', 'Waiting')}</div></td>
+                <div className={`text-[10px] mt-1 font-bold ${st === 'answered' ? 'text-emerald-700' : st === 'overdue' ? 'text-rose-600' : 'text-amber-700'}`}>{st === 'answered' ? `${tx('Respondida', 'Answered')} · ${r.quote_folio}` : ['draft', 'borrador'].includes(String(r.status).toLowerCase()) ? tx('Por enviar', 'Not sent yet') : st === 'overdue' ? tx('Vencida', 'Overdue') : tx('En espera', 'Waiting')}</div></td>
               <td className="py-2.5 px-3.5 text-slate-400" title={tx('MariaDB no registra la fecha de envío de la RFQ.', 'MariaDB does not store the RFQ send date.')}>{DASH}</td>
-              <td className="py-2.5 px-3.5 text-center text-[11px] font-bold"><button type="button" onClick={() => setRfqId(r.id)} aria-label={`${tx('Ver formato', 'View format')} ${r.folio}`} className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">{tx('Ver', 'View')}</button></td>
+              <td className="py-2.5 px-3.5 text-center text-[11px] font-bold"><div className="flex items-center justify-center gap-1.5"><button type="button" onClick={() => setRfqId(r.id)} aria-label={`${tx('Ver formato', 'View format')} ${r.folio}`} className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">{tx('Ver', 'View')}</button>
+                {canMarkSent(r) && <button type="button" onClick={() => { setMark(r); setMarkMsg(''); }} aria-label={`${tx('Marcar enviada', 'Mark as sent')} ${r.folio}`} className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg whitespace-nowrap">{tx('Marcar enviada', 'Mark sent')}</button>}</div></td>
             </tr>; })}
             {list.status === 'ready' && !(list.data?.items || []).length && <tr><td colSpan={11} className="py-12 text-center text-slate-400 text-xs">{q ? tx('Ninguna RFQ coincide con la búsqueda.', 'No RFQ matches the search.') : tx('No hay solicitudes registradas aún.', 'There are no requests registered yet.')}</td></tr>}
           </tbody>
@@ -137,6 +162,21 @@ export function RfqMatrixCard({ en = false, notify, onNewRfq, docLang = 'es', on
       </div>
       <div className="flex justify-between items-center text-xs text-slate-600"><span>{list.data?.total ?? 0} {tx('registros', 'records')} · {tx('Página', 'Page')} {page} / {last}</span>
         <div className="flex gap-1"><button type="button" aria-label={tx('Página anterior', 'Previous page')} disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="p-1.5 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button><button type="button" aria-label={tx('Página siguiente', 'Next page')} disabled={page >= last} onClick={() => setPage(p => p + 1)} className="p-1.5 rounded-lg border border-slate-200 disabled:opacity-40"><ChevronRight className="w-4 h-4" /></button></div></div>
+    </div>}
+
+    {mark && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onMouseDown={e => { if (e.target === e.currentTarget && !marking) setMark(null); }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="sf-rfq-mark" data-testid="rfq-mark" className="bg-white w-full max-w-md rounded-xl shadow-2xl overflow-hidden">
+        <div className="bg-emerald-600 px-5 py-3"><h2 id="sf-rfq-mark" className="text-white font-black text-sm">{tx('Marcar RFQ como enviada', 'Mark RFQ as sent')} · {mark.folio}</h2></div>
+        <div className="p-5 space-y-3 text-xs text-slate-700">
+          <p className="font-bold text-slate-900">{mark.folio} · {mark.supplier_name} · {mark.requisition}</p>
+          <p className="p-3 rounded-lg bg-slate-50 border border-slate-200">{tx('Confirma que ya enviaste esta RFQ al proveedor desde tu correo. SupplyFlow no envía correos: solo registra el estatus «Enviada» (con bitácora). Después ya podrás registrar su cotización en «Cotizaciones recibidas».', 'Confirm you already e-mailed this RFQ to the supplier. SupplyFlow does not send e-mails: it only records the "Sent" status (audited). Then you can record its quote in "Received quotes".')}</p>
+          {markMsg && <p role="alert" className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-900">{markMsg}</p>}
+          <div className="flex justify-end gap-2 text-xs font-bold">
+            <button type="button" disabled={marking} onClick={() => setMark(null)} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-200">{tx('Cancelar', 'Cancel')}</button>
+            <button type="button" disabled={marking} onClick={confirmMark} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-1.5 disabled:opacity-60">{marking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}{tx('Sí, ya la envié', 'Yes, I sent it')}</button>
+          </div>
+        </div>
+      </div>
     </div>}
 
     {rfqId && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onMouseDown={e => { if (e.target === e.currentTarget) setRfqId(''); }}>

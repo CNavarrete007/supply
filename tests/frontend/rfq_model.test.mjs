@@ -79,3 +79,42 @@ test('matriz por contacto: iniciales, % de respuesta, búsqueda y referencia', a
   assert.equal(m.rfqReference({ internal_reference: 'OCE0001-26', project: 'TRION', requisition: 'REQ-1' }), 'OCE0001-26 · TRION');
   assert.equal(m.rfqReference({ internal_reference: null, project: null, requisition: 'REQ-1' }), 'REQ-1');
 });
+
+// ---- Registro de la RFQ en MariaDB (tarjeta 2) y Borrador → Enviada (tarjeta 3) ----
+import { SAVE_STATUSES, rfqPayload, canMarkSent, rfqSavedText, rfqSaveError, reviewAllowsQuoting } from '../../src/views/quotes/rfq.mjs';
+
+test('registro: solo Borrador o Enviada; cuerpo con las partidas elegidas y sin precios', () => {
+  assert.deepEqual(SAVE_STATUSES.map(s => s[0]), ['draft', 'sent']);
+  const f = { requisition: 'r', supplier: 's', contact: 'c', issue_date: '2026-11-26', deadline: '2026-12-01', required_date: '', currency: 'USD', delivery_place: ' Planta ', docs: ' Ficha ', conditions: ' Pago ', status: 'sent' };
+  const p = rfqPayload(f, ['i1', 'i3']);
+  assert.deepEqual(p, { requisition_id: 'r', supplier_id: 's', contact_id: 'c', issue_date: '2026-11-26', deadline: '2026-12-01', required_date: null, currency: 'USD', delivery_place: 'Planta', docs: 'Ficha', conditions: 'Pago', status: 'sent', items: ['i1', 'i3'] });
+  assert.equal(rfqPayload({ ...f, status: 'answered' }, []).status, 'draft');
+  assert.ok(!JSON.stringify(p).match(/price|precio/i));
+});
+
+test('validación vigente que permite cotizar (misma regla que el servidor)', () => {
+  assert.equal(reviewAllowsQuoting({ technical_result: 'Conforme', contract_result: 'Con observaciones', budget_result: 'Parcial' }), true);
+  assert.equal(reviewAllowsQuoting({ technical_result: 'No conforme', contract_result: 'Conforme', budget_result: 'Disponible' }), false);
+  assert.equal(reviewAllowsQuoting({ technical_result: 'Conforme', contract_result: 'Conforme', budget_result: 'No disponible' }), false);
+  assert.equal(reviewAllowsQuoting(null), true);
+});
+
+test('marcar enviada: solo borradores registrados en SupplyFlow', () => {
+  assert.equal(canMarkSent({ status: 'borrador', imported: false }), true);
+  assert.equal(canMarkSent({ status: 'draft', imported: false }), true);
+  assert.equal(canMarkSent({ status: 'borrador', imported: true }), false);
+  assert.equal(canMarkSent({ status: 'enviada', imported: false }), false);
+});
+
+test('mensajes: RFQ registrada y errores del servidor', () => {
+  assert.match(rfqSavedText({ folio: 'RFQ-2026-0001', supplier_name: 'Prov', status: 'borrador', items: 2 }), /RFQ-2026-0001 a Prov registrada en MariaDB \(Borrador, 2 partida\(s\)\)\. Cuando la envíes al proveedor, márcala como enviada/);
+  assert.match(rfqSavedText({ folio: 'RFQ-2026-0002', supplier_name: 'Prov', status: 'enviada', items: 3 }), /\(Enviada, 3 partida\(s\)\)\. Imprímela desde la Matriz de RFQ/);
+  assert.equal(rfqSaveError(0, {}).retry, true);
+  assert.equal(rfqSaveError(422, { error: { code: 'INVALID_RFQ', field: 'supplier_id' } }).field, 'supplier');
+  assert.equal(rfqSaveError(422, { error: { code: 'INVALID_RFQ', field: 'docs' } }).field, 'conditions');
+  assert.equal(rfqSaveError(422, { error: { code: 'CONTACT_UNAVAILABLE', field: 'contact_id', message: 'Contacto inválido.' } }).text, 'Contacto inválido.');
+  assert.match(rfqSaveError(409, { error: { code: 'REVIEW_BLOCKS_QUOTING', message: 'La validación vigente SCI-1 no permite pasar a cotización' } }).text, /SCI-1/);
+  const nf = rfqSaveError(503, { error: { code: 'QUOTE_WRITE_NOT_PROVISIONED', message: 'No habilitado.' } });
+  assert.equal(nf.kind, 'warn'); assert.ok(!nf.retry);
+  assert.match(rfqSaveError(412, {}).text, /cambió/); assert.match(rfqSaveError(403, { error: { code: 'FORBIDDEN' } }).text, /Master Admin/);
+});

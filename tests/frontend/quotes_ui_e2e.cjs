@@ -48,7 +48,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('sin aviso de "pendiente de integración"', await page.getByText('Módulo pendiente de integración').count() === 0);
     for (const t of ['Revisiones/modificaciones', 'Solicitud a proveedores (RFQ)', 'Matriz de RFQ', 'Cotizaciones recibidas', 'Comparativo y selección preliminar', 'Cotización al cliente', 'Formato para el cliente', 'Matriz de cotizaciones al cliente', 'Decisión del cliente', 'Adjudicación definitiva', 'Matriz interna de proveedores'])
       check(`tarjeta "${t}" visible`, await page.getByRole('button', { name: new RegExp(t.replace(/[()]/g, '\\$&')) }).first().isVisible());
-    check('aviso de modo consulta visible', await page.getByText(/Modo consulta MariaDB: enviar RFQ/).isVisible());
+    check('aviso de modo consulta visible (qué sigue bloqueado y qué se registra)', await page.getByText(/Modo consulta MariaDB: seleccionar, adjudicar/).isVisible() && await page.getByText(/Las RFQ \(tarjeta 2\) y las cotizaciones recibidas/).isVisible());
     const rc = await api('/api/v1/quotes/rfq-contacts');
     await page.getByTestId('rfq-contact').first().waitFor();
     check('una tarjeta por contacto de compras más "Todas las RFQ"', await page.getByTestId('rfq-contact').count() === rc.contacts.length && await page.getByTestId('rfq-contact-all').isVisible());
@@ -159,7 +159,16 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('checkbox', { name: `Incluir partida ${det.items[0].line_number}` }).uncheck();
     check('excluir una partida actualiza el contador y la vista previa', flat(await page.getByTestId('rfq-items').innerText()).includes(`${det.items.length - 1} seleccionada(s) de ${det.items.length}`) && (det.items.length > 1 || flat(await pv.locator('body').innerText()).includes('No hay partidas seleccionadas')));
     await page.getByRole('button', { name: 'Seleccionar todas' }).click();
-    check('"Guardar y siguiente RFQ" bloqueado (escritura comercial)', await page.getByRole('button', { name: /Guardar y siguiente RFQ/ }).isDisabled());
+    // Guardar envía el POST real; aquí la escritura está abortada (prueba de solo lectura): no se da por guardada.
+    if (await page.getByTestId('rfq-review-block').count()) {
+      check('"Guardar y siguiente RFQ": deshabilitado con el motivo (la validación vigente no permite cotizar)', await page.getByRole('button', { name: /Guardar y siguiente RFQ/ }).isDisabled());
+    } else {
+      await page.getByRole('button', { name: /Guardar y siguiente RFQ/ }).click();
+      await page.getByTestId('rfq-result').filter({ hasText: 'No se confirmó' }).waitFor({ timeout: 15000 });
+      check('"Guardar y siguiente RFQ": envía el POST real; abortado, NO se da por guardada', JSON.stringify(writes) === JSON.stringify(['POST /api/v1/quotes/rfqs']) && await page.getByTestId('rfq-items').isVisible(), writes.join(','));
+      writes.splice(0);
+    }
+    check('nota: SupplyFlow no envía correos (imprimir desde la Matriz de RFQ)', /no envía correos/.test(await page.getByTestId('rfq-save-note').innerText()));
     await shot(page, 'cot_2_rfq');
     await page.getByRole('button', { name: 'Ver matriz' }).click();
     check('"Ver matriz" vuelve a la matriz de RFQ', (await page.getByRole('button', { name: /Matriz de RFQ/ }).getAttribute('aria-pressed')) === 'true');

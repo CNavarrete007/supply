@@ -23,8 +23,20 @@ MariaDB. Componente `src/views/quotes/RfqRequestCard.jsx`, lógica pura `src/vie
      *VISTA PREVIA · NO REGISTRADA*; **Imprimir vista previa**.
    - **Ver matriz** vuelve a la tarjeta 3.
 
-**Guardar y siguiente RFQ** permanece **bloqueado**: crear o enviar una RFQ es una escritura comercial que todavía no ha
-superado pruebas integrales. Nada de esta tarjeta escribe en MariaDB.
+**Guardar y siguiente RFQ** (26 nov 2026) **registra la RFQ en MariaDB**:
+- folio definitivo **RFQ-AAAA-NNNN** (año de la emisión, consecutivo), proveedor, contacto de compras, fechas, moneda, lugar de
+  entrega, documentación, condiciones y las **partidas elegidas** (numeradas 1..n en el orden de la requisición, como en tus
+  datos; sin precios);
+- estatus **Borrador** o **Enviada** (Respondida la marca la cotización registrada en la tarjeta 4);
+- exige que la **validación vigente** del contratista permita cotizar, un proveedor invitable y un contacto con usuario
+  Comprador o Master Admin;
+- al terminar conserva comprador, requisición, fechas, contacto y la selección de partidas, y limpia el proveedor para la
+  siguiente RFQ.
+
+**SupplyFlow no envía correos.** El formato registrado se imprime desde la Matriz de RFQ (**Ver**) y se manda desde el correo
+del comprador. Una RFQ guardada como Borrador se pasa a Enviada con **Marcar enviada** en la Matriz de RFQ; solo las RFQ
+enviadas pueden recibir cotización. Las partidas de una RFQ registrada no se modifican (si cambian, se registra otra RFQ).
+Endpoints, permisos y activación en la PC: [REGISTRO_COTIZACION_PROVEEDOR.md](REGISTRO_COTIZACION_PROVEEDOR.md).
 
 En la tarjeta 3, **Ver** abre el formato de una RFQ ya registrada (mismo formato, sin marca de vista previa, imprimible) y
 **Nueva RFQ** lleva a la tarjeta 2.
@@ -45,7 +57,8 @@ El detalle del proveedor del formato (contacto principal, correo y teléfono) us
 
 - "Disponible para RFQ": hoy se listan **todas** las requisiciones con validación del comprador, primero las que no tienen
   orden de compra (las que sí la tienen llevan el aviso "Con OC").
-- Formato del folio de RFQ del sistema original y si existe una secuencia propia (`document_sequences`).
+- Folio: se usa RFQ-AAAA-NNNN (43 de tus 50 RFQ). 7 de tus RFQ importadas usan RFQ-AAAA-NNNN-N; si el sistema original
+  agregaba ese sufijo (p. ej. por proveedor), envíame esa parte del Apps Script.
 - Si una RFQ puede dirigirse a un proveedor suspendido (hoy no se permite).
 
 ## Pruebas (sandbox sintético)

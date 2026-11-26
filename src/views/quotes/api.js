@@ -1,5 +1,5 @@
-// Cotizaciones y Comparativo · cliente HTTP (GET con la sesión del servidor; sin datos de demostración). La única escritura
-// es el registro interno de la cotización del proveedor (tarjeta 4; cuenta quotewrite; CSRF + Idempotency-Key + If-Match).
+// Cotizaciones y Comparativo · cliente HTTP (GET con la sesión del servidor; sin datos de demostración). Escrituras: registro
+// de la RFQ (tarjetas 2 y 3) y de la cotización del proveedor (tarjeta 4); cuenta quotewrite; CSRF + Idempotency-Key + If-Match.
 import { getCsrf } from '../../apiAuth';
 async function getJson(path, signal) {
   const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' }, signal });
@@ -52,3 +52,6 @@ export function quoteWriteStatus(now = Date.now()) {
   statusCache = { at: now, promise };
   return promise;
 }
+// Tarjeta 2 · registro de la RFQ (Borrador o Enviada) y tarjeta 3 · Borrador → Enviada (If-Match). SupplyFlow no envía correos.
+export const createRfq = op => write('POST', '/api/v1/quotes/rfqs', op);
+export const markRfqSent = op => (uuid(op.id) ? write('POST', `/api/v1/quotes/rfqs/${encodeURIComponent(op.id)}/mark-sent`, { ...op, data: {} }) : Promise.reject(new Error('Identificador inválido.')));

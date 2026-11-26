@@ -109,9 +109,10 @@ final class QuoteReadRepository
             r.folio AS requisition,c.legal_name AS client_name,se.public_id AS supplier_id,s.legal_name AS supplier_name,
             (SELECT COUNT(*) FROM rfq_items it WHERE it.organization_id=f.organization_id AND it.rfq_id=f.id) AS item_count,
             {$responded} AS responded,(SELECT q.folio FROM supplier_quotes q WHERE q.organization_id=f.organization_id AND q.rfq_id=f.id ORDER BY q.id LIMIT 1) AS quote_folio,
-            {$ct['name']} AS contact_name,{$ct['key']} AS contact_key,r.internal_reference,r.project_reference_snapshot AS project,{$buyer} AS buyer_name",
+            {$ct['name']} AS contact_name,{$ct['key']} AS contact_key,r.internal_reference,r.project_reference_snapshot AS project,{$buyer} AS buyer_name,
+            e.row_version AS version,(e.imported_at IS NOT NULL OR e.legacy_id IS NOT NULL) AS imported",
             $from, $where . $sq, [...$binds, ...$sb], 'COALESCE(f.request_date,DATE(e.created_at)) DESC,f.id DESC', $f);
-        foreach ($res['items'] as &$i) { $i['item_count'] = (int) $i['item_count']; $i['responded'] = (bool) $i['responded']; }
+        foreach ($res['items'] as &$i) { $i['item_count'] = (int) $i['item_count']; $i['responded'] = (bool) $i['responded']; $i['version'] = (int) $i['version']; $i['imported'] = (bool) $i['imported']; }
         unset($i);
         $s = $this->rows("SELECT COUNT(*) AS total,COALESCE(SUM({$responded}),0) AS responded,COALESCE(SUM(f.deadline<CURDATE() AND NOT {$responded}),0) AS overdue FROM rfqs f WHERE f.organization_id=?", [$org])[0] ?? [];
         $res['summary'] = array_map('intval', $s) + ['statuses' => $this->facet('SELECT f.status_code AS code,COUNT(*) AS count FROM rfqs f WHERE f.organization_id=? GROUP BY f.status_code ORDER BY count DESC', $org)];
@@ -120,7 +121,7 @@ final class QuoteReadRepository
 
     public function rfq(int $org, string $id): ?array
     {
-        $h = $this->rows('SELECT e.public_id AS id,f.id AS db_id,f.folio,f.request_date,f.deadline,f.required_date,f.currency_code AS currency,f.status_code AS status,f.legacy_status,f.delivery_place,f.requested_documents_text,f.terms_text,
+        $h = $this->rows('SELECT e.public_id AS id,f.id AS db_id,e.row_version AS version,(e.imported_at IS NOT NULL OR e.legacy_id IS NOT NULL) AS imported,f.folio,f.request_date,f.deadline,f.required_date,f.currency_code AS currency,f.status_code AS status,f.legacy_status,f.delivery_place,f.requested_documents_text,f.terms_text,
             r.folio AS requisition,c.legal_name AS client_name,s.legal_name AS supplier_name,s.code AS supplier_code,s.tax_identifier AS supplier_tax_id,
             r.internal_reference,r.project_reference_snapshot AS project,r.contract_reference_snapshot AS contract,
             COALESCE((SELECT p.display_name FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=f.internal_contact_user_id AND u.organization_id=f.organization_id),' . self::snapName('f.contact_snapshot') . ') AS contact_name,
@@ -131,6 +132,7 @@ final class QuoteReadRepository
             return null;
         }
         $rfq = $h[0];
+        $rfq['version'] = (int) $rfq['version']; $rfq['imported'] = (bool) $rfq['imported'];
         $items = $this->rows('SELECT line_number,description,specification,category_snapshot AS category,unit_label,quantity FROM rfq_items WHERE organization_id=? AND rfq_id=? ORDER BY line_number,id', [$org, (int) $rfq['db_id']]);
         unset($rfq['db_id']);
         return ['item' => $rfq, 'items' => $items];

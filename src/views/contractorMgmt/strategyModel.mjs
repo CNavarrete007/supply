@@ -229,6 +229,6 @@ export function nextRfq(state, key, { detail = null, suppliers = [] } = {}, en =
 export function nextRfqText(n, folio, en = false) {
   const parts = n.lines.map(i => `#${i.line_number}`).join(', ');
   return en
-    ? `Next RFQ of lot "${clean(n.lot.name)}" for ${clean(folio)}: ${clean(n.supplier.name)} with ${n.lines.length} line(s) (${parts}). It was not opened: creating RFQs from here is a write blocked until authorized; RFQs are issued in Quotes → Supplier request (RFQ).`
-    : `Siguiente RFQ del lote «${clean(n.lot.name)}» de ${clean(folio)}: ${clean(n.supplier.name)} con ${n.lines.length} partida(s) (${parts}). No se abrió: crear RFQ desde aquí es una escritura bloqueada hasta su autorización; las RFQ se emiten en Cotizaciones → Solicitud a proveedores (RFQ).`;
+    ? `Next RFQ of lot "${clean(n.lot.name)}" for ${clean(folio)}: ${clean(n.supplier.name)} with ${n.lines.length} line(s) (${parts}). It was not opened here: RFQs are recorded in Quotes → Supplier request (RFQ), with their folio and items.`
+    : `Siguiente RFQ del lote «${clean(n.lot.name)}» de ${clean(folio)}: ${clean(n.supplier.name)} con ${n.lines.length} partida(s) (${parts}). No se abrió aquí: las RFQ se registran en Cotizaciones → Solicitud a proveedores (RFQ), con su folio y partidas.`;
 }

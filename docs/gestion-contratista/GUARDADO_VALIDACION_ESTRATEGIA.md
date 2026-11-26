@@ -23,8 +23,9 @@
 
 ## Qué sigue bloqueado
 
-- **Abrir siguiente RFQ:** las RFQ se emiten en Cotizaciones → Solicitud a proveedores (RFQ). Emitir RFQ, cotizaciones u OC
-  sigue bloqueado.
+- **Abrir siguiente RFQ:** indica el siguiente proveedor del lote, pero no crea la RFQ aquí. Desde el 26 nov 2026 las RFQ
+  se registran en Cotizaciones → Solicitud a proveedores (RFQ) (`docs/cotizaciones/SOLICITUD_RFQ.md`); SupplyFlow no envía
+  correos. Adjudicar, cotizar al cliente y emitir OC siguen bloqueados.
 - **Eliminar validaciones** y **Registrar fuente de costo** (Matriz).
 - **Editar validaciones importadas.**
 - **Editar los parámetros de Reglas inteligentes:** depende de Configuración.

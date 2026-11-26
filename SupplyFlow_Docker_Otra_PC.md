@@ -33,7 +33,7 @@ if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\catalogwrit
 # Gestión de acceso (segundo Master Admin y cambio de contraseña): solo si existe su secreto.
 if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\useradmin-db-password.txt"){ $files+='compose.supply-useradmin.yml' }
 if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\mgmtwrite-db-password.txt"){ $files+='compose.supply-mgmtwrite.yml' }
-# Registro de cotizaciones de proveedor (cuenta quotewrite): solo si existe su secreto.
+# Registro de RFQ y cotizaciones de proveedor (cuenta quotewrite): solo si existe su secreto.
 if(Test-Path -LiteralPath "$env:SUPPLYFLOW_LOCAL_PRIVATE_DIR\secrets\quotewrite-db-password.txt"){ $files+='compose.supply-quotewrite.yml' }
 $compose=@('compose','-p','supply','--project-directory',$root)
 foreach($f in $files) {

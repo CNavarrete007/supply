@@ -2,9 +2,8 @@
 """Cotizaciones › Registro de cotización (tarjeta 4) · contrato HTTP de las escrituras (cuenta supplyflow_quotewrite_local):
 GET write-status, POST /supplier-quotes, PUT /supplier-quotes/{id} y GET /supplier-quotes/{id}/document.
 ESCRIBE en la base: úsese SOLO contra la base sintética/desechable (registra cotizaciones de proveedor que no se pueden eliminar).
-Exige SF_SYNTHETIC_WRITES=1 y al menos 2 RFQ sintéticas enviadas y sin cotización (la emisión de RFQ sigue bloqueada en la
-aplicación; en el sandbox se siembran por SQL) cuyo folio empiece con SF_RFQ_FOLIO_PREFIX (por omisión RFQ-QW-, para no consumir
-las RFQ que usan las pruebas de solo lectura) y, si existe, una RFQ en borrador con ese prefijo.
+Exige SF_SYNTHETIC_WRITES=1. Crea por la API su propia requisición sintética (Registro RF1), su validación (Gestión del
+Contratista) y sus RFQ (2 enviadas y 1 en borrador, tarjeta 2), para no consumir las RFQ de las pruebas de solo lectura.
 Verifica 401/403/CSRF/415/413/422 por campo/404/409/428/412, idempotencia, folio COT-AAAA-NNNN consecutivo, importes calculados
 en el servidor, una cotización por RFQ, PDF privado (descarga con huella), edición con versión y reemplazo del PDF, cotizaciones
 importadas/sin RFQ que se conservan, lecturas (matriz, comparativo, RFQ respondida), bitácora y que no existan rutas para eliminar,
@@ -18,7 +17,7 @@ PASSWORD = os.environ.get('SF_QA_PASSWORD', ''); NONADMIN = os.environ.get('SF_N
 if not re.match(r'^http://(127\.0\.0\.1|localhost)(:\d+)?$', API) or not PASSWORD or os.environ.get('SF_SYNTHETIC_WRITES') != '1':
     print('BLOCKED: solo API local con base sintética, SF_QA_PASSWORD y SF_SYNTHETIC_WRITES=1.'); sys.exit(2)
 B = '/api/v1/quotes'; Q = f'{B}/supplier-quotes'; results = []; check = lambda n, ok, d='': results.append((n, bool(ok), d))
-RUN = uuid.uuid4().hex[:6].upper(); ZERO = '00000000-0000-4000-8000-000000000000'; PREFIX = os.environ.get('SF_RFQ_FOLIO_PREFIX', 'RFQ-QW-')
+RUN = uuid.uuid4().hex[:6].upper(); ZERO = '00000000-0000-4000-8000-000000000000'
 
 class S:
     def __init__(self, email=None):
@@ -53,25 +52,43 @@ def pdf(label):
     return {'name': f'Cotizacion {label}.pdf', 'data': base64.b64encode(body).decode()}, body
 
 def fixtures(op):
-    """RFQ sintéticas: enviadas sin cotización, en borrador, y una cotización importada o sin RFQ (se conserva)."""
-    free, draft = [], None
-    page = op.get('/api/v1/quotes/rfq-requisitions?rfq=with&page=1&page_size=50')
-    for r in page['items']:
-        det = op.get(f"/api/v1/quotes/rfq-requisitions/{r['id']}")
-        for f in det['rfqs']:
-            if f.get('quote_folios') or not f['folio'].startswith(PREFIX): continue
-            if f['status'] in ('draft', 'borrador'): draft = draft or f
-            elif f['status'] in ('sent', 'enviada'): free.append((det['item'], f))
-    return free, draft
+    """Requisición sintética validada con 2 partidas y sus RFQ propias: 2 enviadas (proveedores distintos) y 1 en borrador."""
+    today = date.today().isoformat()
+    cat = op.get('/api/v1/recovery/catalogs')
+    client = next(c for c in cat['clients'] if c['status'] == 'active' and c.get('code'))
+    cats = [c['name'] for c in cat['categories'] if c['active']]
+    folio = op.get(f"/api/v1/recovery/folio?client_id={client['id']}&date={today}&mode=formal")['folio']
+    st, req = op.call('POST', '/api/v1/recovery/requisitions', {'folio': folio, 'client_id': client['id'], 'request_date': today, 'need_date': f'{date.today().year + 1}-03-01',
+        'project': f'PRY-COT-{RUN}', 'contract': 'CTO-QA', 'client_reference': f'COT-{RUN}', 'priority': 'normal', 'delivery_place': 'Almacén sintético', 'requester_name': 'Solicitante QA',
+        'requester_email': 'qa@cliente.invalid', 'budget': '', 'currency': 'MXN', 'description': f'Requisición sintética cotizaciones {RUN}', 'notes': None,
+        'source': {'type': 'Requisición formal del cliente', 'date': today, 'reference': None, 'notes': None, 'requirement': 'formal', 'due_date': None, 'owner': None},
+        'items': [{'id': None, 'description': f'Guantes sintéticos {RUN}', 'quantity': '10', 'unit': 'par', 'category': cats[0]},
+                  {'id': None, 'description': f'Casco sintético {RUN}', 'quantity': '2', 'unit': 'pza', 'category': cats[-1]}], 'document': None})
+    if st != 201: raise SystemExit(f'BLOCKED: no se pudo crear la requisición sintética ({st} {req})')
+    setup = op.get('/api/v1/contractor-management/validation-setup'); buyer = next(b for b in setup['buyers'] if b['has_user'] and b['with_access'])
+    st, r = op.call('POST', '/api/v1/contractor-management/validations', {'requisition_id': req['id'], 'buyer_id': buyer['id'], 'technical': 'Conforme', 'contract': 'Conforme',
+        'budget': 'Disponible', 'strategy': 'Competencia abierta', 'min_quotes': '2', 'deadline': f'{date.today().year + 1}-01-15', 'criteria': 'Precio y plazo', 'notes': f'Validación sintética {RUN}'})
+    if st != 201: raise SystemExit(f'BLOCKED: no se pudo registrar la validación ({st} {r})')
+    rs = op.get('/api/v1/quotes/rfq-setup'); sups = [x for x in rs['suppliers'] if x['status'] in ('authorized', 'active')]
+    lines = [i['id'] for i in op.get(f"/api/v1/quotes/rfq-requisitions/{req['id']}")['items']]
+    made = []
+    for n, status in enumerate(['sent', 'sent', 'draft']):
+        st, f = op.call('POST', '/api/v1/quotes/rfqs', {'requisition_id': req['id'], 'supplier_id': sups[n]['id'], 'contact_id': rs['contacts'][0]['id'], 'issue_date': today,
+            'deadline': (date.today() + timedelta(days=10)).isoformat(), 'required_date': None, 'currency': 'MXN', 'delivery_place': '', 'docs': '', 'conditions': '', 'status': status, 'items': lines})
+        if st != 201: raise SystemExit(f'BLOCKED: no se pudo registrar la RFQ sintética ({st} {f})')
+        made.append(f)
+    det = op.get(f"/api/v1/quotes/rfq-requisitions/{req['id']}")
+    by = {x['id']: x for x in det['rfqs']}
+    return [(det['item'], by[made[0]['id']]), (det['item'], by[made[1]['id']])], by[made[2]['id']]
 
 adm = S(USER)
 try:
     st = adm.get(f'{B}/write-status')
-    check('write-status: OK, 43 permisos, sin faltantes, sin secretos', st.get('code') == 'OK' and st.get('enabled') is True and st.get('expected_grants') == 43 and st.get('missing_grants') == []
+    check('write-status: OK, 52 permisos, sin faltantes, sin secretos', st.get('code') == 'OK' and st.get('enabled') is True and st.get('expected_grants') == 52 and st.get('missing_grants') == []
           and not re.search(r'(?i)password|secret|/run/|[0-9a-f]{64}', json.dumps(st)), json.dumps(st))
     free, draft = fixtures(adm)
     if len(free) < 2:
-        print('BLOCKED: se necesitan al menos 2 RFQ sintéticas enviadas y sin cotización (siembra por SQL en el sandbox).'); sys.exit(2)
+        print('BLOCKED: no se pudieron preparar las RFQ sintéticas.'); sys.exit(2)
     (req, rfq), (req2, rfq2) = free[0], free[1]
     lines = adm.get(f"{B}/rfqs/{rfq['id']}")['items']
     today = date.today()

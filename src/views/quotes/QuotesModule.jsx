@@ -17,9 +17,9 @@ import { docModel, quoteDocHtml } from './quoteDocument.mjs';
 import { changeBlockMessage } from '../recovery/changeForm.mjs';
 
 // Cotizaciones y Comparativo · diseño Grupo Gerez (11 tarjetas) conectado a MariaDB.
-// GET /api/v1/quotes/* (Master Admin). La tarjeta 4 registra y edita la cotización recibida del proveedor (registro interno;
-// cuenta quotewrite). Enviar RFQ, seleccionar/adjudicar, emitir la cotización al cliente y registrar su decisión son
-// escrituras comerciales que siguen bloqueadas hasta su validación integral.
+// GET /api/v1/quotes/* (Master Admin). La tarjeta 2 registra la RFQ (la 3 marca un borrador como enviada) y la tarjeta 4
+// registra y edita la cotización recibida del proveedor (registro interno; cuenta quotewrite; sin envío de correos).
+// Seleccionar/adjudicar, emitir la cotización al cliente y registrar su decisión siguen bloqueadas hasta su validación integral.
 
 function useLoad(fn, deps, enabled = true) {
   const [st, setSt] = useState({ status: 'idle', data: null, error: null });
@@ -37,7 +37,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
   const en = Boolean(isEnglish || lang === 'en' || language === 'en');
   const tx = (es, e) => (en ? e : es);
   const notify = (t, m, k = 'info') => { if (typeof onNotify === 'function') onNotify(t, m, k); };
-  const LOCK = tx('Modo consulta MariaDB: enviar RFQ, seleccionar, adjudicar, emitir la cotización al cliente y registrar su decisión son escrituras comerciales bloqueadas hasta su validación integral. Las cotizaciones recibidas de proveedores sí se registran (tarjeta 4).', 'MariaDB read mode: sending RFQs, selecting, awarding, issuing client quotes and recording decisions are commercial writes blocked until fully validated. Quotes received from suppliers are recorded (card 4).');
+  const LOCK = tx('Modo consulta MariaDB: seleccionar, adjudicar, emitir la cotización al cliente y registrar su decisión son escrituras comerciales bloqueadas hasta su validación integral. Las RFQ (tarjeta 2) y las cotizaciones recibidas de proveedores (tarjeta 4) sí se registran; SupplyFlow no envía correos.', 'MariaDB read mode: selecting, awarding, issuing client quotes and recording decisions are commercial writes blocked until fully validated. RFQs (card 2) and supplier quotes (card 4) are recorded; SupplyFlow does not send e-mails.');
   const tabs = [
     [1, '🔄', tx('Revisiones/modificaciones', 'Revisions & Modifications'), tx('Historial de versiones de la cotización al cliente.', 'Client quote version history.')],
     [2, '📑', tx('Solicitud a proveedores (RFQ)', 'Supplier Request (RFQ)'), tx('Documento sin precios enviado a cada proveedor.', 'Document without prices sent to each supplier.')],
@@ -153,7 +153,7 @@ export function QuotesModule({ lang = 'es', language, isEnglish, onNotify, onNav
     {changeFor && <ChangeRequestModal requisitionId={changeFor.requisition_id} en={en} context={{ requisition: changeFor.requisition, client: changeFor.client_name, quoteFolio: changeFor.current_folio, currentRev: changeFor.current_rev }}
       onClose={() => setChangeFor(null)} onCreated={() => setRev(n => n + 1)} onNotify={notify} />}
 
-    {tab === 2 && <RfqRequestCard en={en} notify={notify} onOpenMatrix={() => go(3)} lockText={LOCK} refresh={rev} docLang={rfqLang} />}
+    {tab === 2 && <RfqRequestCard en={en} notify={notify} onOpenMatrix={() => go(3)} refresh={rev} docLang={rfqLang} />}
 
     {tab === 3 && <RfqMatrixCard en={en} notify={notify} onNewRfq={() => go(2)} docLang={rfqLang} onDocLang={setRfqLang} refresh={rev} />}
 

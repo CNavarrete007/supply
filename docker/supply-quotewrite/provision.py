@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""SupplyFlow · Cotizaciones: provision a least-privilege account to RECORD SUPPLIER QUOTES (internal capture, nothing is issued
-or authorized) on the local MariaDB socket. Creates/verifies ONLY the SQL login supplyflow_quotewrite_local and its grants
-(26 nov 2026): record the quote a supplier sent against an existing RFQ (supplier_quotes + supplier_quote_items, folio
-COT-AAAA-NNNN) with its private PDF, and correct a quote recorded in SupplyFlow while it is not awarded. Column-level UPDATE only
-on the editable columns of supplier_quotes/supplier_quote_items, on business_entities (updated_at, updated_by, row_version) and on
-entity_files.file_role (the replaced PDF becomes history). No DELETE. It cannot issue RFQs or client quotes, register client decisions, award or create POs, and it
-does not modify the schema, business records or any other account (77/52, catalogwrite, useradmin and mgmtwrite keep their own).
+"""SupplyFlow · Cotizaciones: provision a least-privilege account to RECORD RFQs AND SUPPLIER QUOTES (internal record; nothing is
+e-mailed, authorized or awarded) on the local MariaDB socket. Creates/verifies ONLY the SQL login supplyflow_quotewrite_local and its
+grants (26 nov 2026):
+- RFQ (card 2): record the RFQ (rfqs + rfq_items, folio RFQ-AAAA-NNNN, Borrador or Enviada) for a validated requisition, and mark
+  a draft recorded in SupplyFlow as sent (column-level UPDATE only on rfqs.status_code and rfqs.legacy_status). Reads the latest
+  contractor validation, suppliers and the purchasing contact (users/people/user_roles/roles).
+- Supplier quote (card 4): record the quote a supplier sent against a sent RFQ (supplier_quotes + supplier_quote_items, folio
+  COT-AAAA-NNNN) with its private PDF, and correct a quote recorded in SupplyFlow while it is not awarded (column-level UPDATE on the
+  editable columns, business_entities version columns and entity_files.file_role for the replaced PDF).
+No DELETE. It cannot change RFQ lines, issue client quotes, register client decisions, award or create POs, and it does not modify
+the schema, business records or any other account (77/52, catalogwrite, useradmin and mgmtwrite keep their own).
 Usage (profile quotewrite-tools): provision | verify
 """
 from __future__ import annotations
@@ -23,10 +27,11 @@ SECRETS = Path('/run/supply-secrets')
 SECRET_FILE = 'quotewrite-db-password.txt'
 LOCK_NAME = 'supplyflow_quotewrite_provision_v1'
 TABLES_EXPECTED = 77
-SELECT_TABLES = {'business_entities', 'requisitions', 'requisition_items', 'rfqs', 'rfq_items', 'suppliers', 'supplier_quotes',
-                 'supplier_quote_items', 'awards', 'currencies', 'files', 'entity_files', 'idempotency_keys'}
-INSERT_TABLES = {'business_entities', 'supplier_quotes', 'supplier_quote_items', 'files', 'entity_files', 'workflow_events',
-                 'audit_events', 'idempotency_keys'}
+SELECT_TABLES = {'business_entities', 'requisitions', 'requisition_items', 'requisition_reviews', 'rfqs', 'rfq_items', 'suppliers',
+                 'supplier_quotes', 'supplier_quote_items', 'awards', 'currencies', 'files', 'entity_files', 'idempotency_keys',
+                 'users', 'people', 'user_roles', 'roles'}
+INSERT_TABLES = {'business_entities', 'rfqs', 'rfq_items', 'supplier_quotes', 'supplier_quote_items', 'files', 'entity_files',
+                 'workflow_events', 'audit_events', 'idempotency_keys'}
 UPDATE_TABLES = {'idempotency_keys'}
 DELETE_TABLES = set()
 UPDATE_COLUMNS = {
@@ -35,6 +40,7 @@ UPDATE_COLUMNS = {
     'supplier_quote_items': {'offered', 'quantity', 'unit_price', 'line_subtotal'},
     'business_entities': {'updated_at', 'updated_by', 'row_version'},
     'entity_files': {'file_role'},
+    'rfqs': {'status_code', 'legacy_status'},
 }
 EXPECTED = {(table, privilege) for privilege, tables in
             [('SELECT', SELECT_TABLES), ('INSERT', INSERT_TABLES), ('UPDATE', UPDATE_TABLES), ('DELETE', DELETE_TABLES)] for table in tables}

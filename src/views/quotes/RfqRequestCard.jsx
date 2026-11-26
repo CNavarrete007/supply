@@ -1,13 +1,19 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Lock, Search, Loader2, AlertCircle, Printer, Zap, ClipboardList, Eraser } from 'lucide-react';
-import { getRfqSetup, listRfqRequisitions, getRfqRequisition } from './api';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Lock, Search, Loader2, AlertCircle, Printer, Zap, ClipboardList, Eraser, CheckCircle2, Save } from 'lucide-react';
+import { getRfqSetup, listRfqRequisitions, getRfqRequisition, createRfq } from './api';
 import { getCatalogRecord } from '../../catalogApi';
 import { RequisitionPickerModal } from './RequisitionPickerModal';
-import { RFQ_STATUSES, CURRENCY_NAMES, BLOCKED_SUPPLIER, emptyRfq, nextRfqFolio, internalReference, fromRequisition, currencyFor, validateRfq, sentToSupplier, previewDoc, rfqDocHtml } from './rfq.mjs';
+import { SAVE_STATUSES, CURRENCY_NAMES, BLOCKED_SUPPLIER, emptyRfq, nextRfqFolio, internalReference, fromRequisition, currencyFor, validateRfq, sentToSupplier, previewDoc, rfqDocHtml,
+  rfqPayload, rfqSavedText, rfqSaveError, reviewAllowsQuoting } from './rfq.mjs';
+import { QuoteWriteStatus } from './QuoteWriteStatus.jsx';
 
 // Tarjeta 2 · Solicitud de cotización a proveedores (RFQ), diseño Grupo Gerez. Todo el formulario se alimenta de MariaDB
 // (validaciones del contratista, requisiciones validadas y sus partidas, proveedores, contactos de compras) y genera la
-// vista previa del formato SIN precios. Guardar/enviar la RFQ es una escritura comercial bloqueada: nada se registra.
+// vista previa del formato SIN precios. «Guardar y siguiente RFQ» la registra en MariaDB (folio definitivo, Borrador o
+// Enviada; cuenta quotewrite, CSRF + Idempotency-Key) y deja la requisición lista para el siguiente proveedor.
+// SupplyFlow NO envía correos: el formato se imprime desde la Matriz de RFQ y se manda desde el correo del comprador.
+const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
+  : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 function useLoad(fn, deps, enabled = true) {
   const [st, setSt] = useState({ status: 'idle', data: null, error: null });
@@ -22,7 +28,7 @@ function useLoad(fn, deps, enabled = true) {
 }
 const qty = v => (Number.isFinite(Number(v)) ? Number(v).toLocaleString('es-MX', { maximumFractionDigits: 6 }) : String(v ?? '—'));
 
-export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, refresh = 0, docLang }) {
+export function RfqRequestCard({ en = false, notify, onOpenMatrix, refresh = 0, docLang, onSaved }) {
   const tx = (es, e) => (en ? e : es);
   const docEn = docLang ? docLang === 'en' : en; // "Idioma de RFQ" (tarjeta 3) rige el formato
   const [form, setForm] = useState(() => emptyRfq(localToday(), en));
@@ -31,11 +37,13 @@ export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, ref
   const [selected, setSelected] = useState([]);
   const [modal, setModal] = useState(false);
   const [mInput, setMInput] = useState(''); const [mq, setMq] = useState('');
+  const [saving, setSaving] = useState(false); const [msg, setMsg] = useState(null); const [rev, setRev] = useState(0);
+  const pending = useRef(null); // { sig, key }: retrying the SAME save reuses its Idempotency-Key
   useEffect(() => { const t = setTimeout(() => setMq(mInput.trim()), 300); return () => clearTimeout(t); }, [mInput]);
 
-  const setup = useLoad(s => getRfqSetup(s), [refresh]);
-  const reqs = useLoad(s => listRfqRequisitions({ buyer: form.buyer, q: mq }, s), [form.buyer, mq, refresh], !!form.buyer);
-  const req = useLoad(s => getRfqRequisition(form.requisition, s), [form.requisition, refresh], !!form.requisition);
+  const setup = useLoad(s => getRfqSetup(s), [refresh, rev]);
+  const reqs = useLoad(s => listRfqRequisitions({ buyer: form.buyer, q: mq }, s), [form.buyer, mq, refresh, rev], !!form.buyer);
+  const req = useLoad(s => getRfqRequisition(form.requisition, s), [form.requisition, refresh, rev], !!form.requisition);
   const sup = useLoad(s => getCatalogRecord('suppliers', form.supplier, s), [form.supplier], !!form.supplier);
 
   const S = setup.data || {};
@@ -48,7 +56,37 @@ export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, ref
   // A newly loaded requisition fills delivery place / required date and includes all its lines (as in the design).
   useEffect(() => { if (!R) return; setForm(f => fromRequisition(f, R)); setSelected(items.map(i => i.id)); }, [R?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setErrors(x => ({ ...x, [k]: undefined })); };
+  const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setErrors(x => ({ ...x, [k]: undefined })); setMsg(m => (m?.kind === 'ok' ? m : null)); };
+  const reviewBlock = R && !reviewAllowsQuoting(R) ? tx(`La validación vigente ${R.review_folio} no permite cotizar (técnica ${R.technical_result}, contractual ${R.contract_result}, presupuesto ${R.budget_result}): actualízala en Gestión del Contratista antes de registrar la RFQ.`,
+    `The current validation ${R.review_folio} does not allow quoting: update it in Contractor Management before recording the RFQ.`) : '';
+  // The result of a save is shown at the top of the card: bring it into view.
+  useEffect(() => { if (msg && msg.kind !== 'info') setTimeout(() => document.querySelector('[data-testid="rfq-result"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0); }, [msg]);
+  // «Guardar y siguiente RFQ»: registra esta RFQ en MariaDB y deja la requisición lista para el siguiente proveedor.
+  const save = async () => {
+    if (saving) return;
+    const v = validateRfq(form, { supplier: supplierOpt }, en);
+    setErrors(v.errors);
+    if (!v.ok) { setMsg({ kind: 'error', text: v.first }); return; }
+    if (reviewBlock) { setMsg({ kind: 'error', text: reviewBlock }); return; }
+    if (!selected.length) { setMsg({ kind: 'error', text: tx('Selecciona al menos una partida para este proveedor.', 'Select at least one item for this supplier.') }); return; }
+    const data = rfqPayload(form, items.filter(i => selected.includes(i.id)).map(i => i.id));
+    const sig = JSON.stringify(data);
+    if (!pending.current || pending.current.sig !== sig) pending.current = { sig, key: newKey() };
+    setSaving(true); setMsg({ kind: 'info', text: tx('Guardando en MariaDB…', 'Saving to MariaDB…') });
+    let r;
+    try { r = await createRfq({ data, key: pending.current.key }); } catch { r = { ok: false, status: 0, data: {} }; } finally { setSaving(false); }
+    if (r.ok) {
+      pending.current = null;
+      const text = rfqSavedText(r.data, en);
+      setMsg({ kind: 'ok', text, folio: r.data.folio }); notify?.(tx('RFQ registrada', 'RFQ recorded'), text, 'success');
+      setForm(f => ({ ...f, supplier: '' })); setGenerated(false); setRev(x => x + 1); onSaved?.(r.data);
+      return;
+    }
+    const e = rfqSaveError(r.status, r.data, en);
+    if (!e.retry) pending.current = null;
+    if (e.field) setErrors(x => ({ ...x, [e.field]: e.text }));
+    setMsg({ kind: e.kind, text: e.text }); notify?.(tx('RFQ no guardada', 'RFQ not saved'), e.text, 'warning');
+  };
   const pickBuyer = v => {
     const isContact = (S.contacts || []).some(c => c.id === v);
     setForm(f => ({ ...f, buyer: v, requisition: '', contact: isContact ? v : f.contact }));
@@ -91,7 +129,12 @@ export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, ref
       <span className="px-3 py-1 bg-purple-50 text-purple-700 font-bold text-[10px] rounded-full border border-purple-100 shrink-0">{tx('Etapa de abastecimiento', 'Sourcing stage')}</span>
     </div>
     <div className="p-3 bg-emerald-50/40 border-l-4 border-l-emerald-500 border border-emerald-100 rounded-xl text-xs text-slate-700 font-medium"><span className="font-bold text-slate-800">{tx('Paso 1:', 'Step 1:')} </span>{tx('Completa los datos de la solicitud y haz clic en', 'Complete the request details and click')} <strong className="text-purple-700">"{tx('Generar', 'Generate')}"</strong> {tx('para habilitar la selección de partidas y visualizar la vista previa del documento.', 'to enable item selection and see the document preview.')}</div>
+    <QuoteWriteStatus en={en} />
     {setup.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando MariaDB…', 'Loading from MariaDB…')}</p>}{loadErr(setup)}
+    {msg && <div role="status" data-testid="rfq-result" data-kind={msg.kind} className={`p-3 rounded-xl border text-[11px] flex items-start gap-2 ${msg.kind === 'ok' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : msg.kind === 'info' ? 'bg-slate-50 border-slate-200 text-slate-700' : msg.kind === 'warn' ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-rose-50 border-rose-300 text-rose-900'}`}>
+      {msg.kind === 'ok' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : msg.kind === 'info' ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <AlertCircle className="w-4 h-4 shrink-0" />}<span className="flex-1">{msg.text}</span>
+      {msg.kind === 'ok' && <button type="button" onClick={() => onOpenMatrix?.()} className="px-2.5 py-1 bg-white border border-emerald-300 rounded-lg font-bold shrink-0">{tx('Ver en la matriz', 'View in matrix')}</button>}
+    </div>}
 
     <form onSubmit={generate} noValidate className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
@@ -120,7 +163,7 @@ export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, ref
           <select aria-label={tx('Contacto de compras', 'Purchasing contact')} value={form.contact} onChange={e => set('contact', e.target.value)} className={ctl('contact')}><option value="">{tx('Seleccionar contacto...', 'Select contact...')}</option>{(S.contacts || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>)}</div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-        <div className="md:col-span-3">{lbl(tx('Estatus', 'Status'), false, null, null, <select aria-label={tx('Estatus', 'Status')} value={form.status} onChange={e => set('status', e.target.value)} className={ctl('')}>{RFQ_STATUSES.map(([v, es, e2]) => <option key={v} value={v}>{en ? e2 : es}</option>)}</select>)}</div>
+        <div className="md:col-span-3">{lbl(tx('Estatus', 'Status'), false, null, null, <select aria-label={tx('Estatus', 'Status')} value={form.status} onChange={e => set('status', e.target.value)} className={ctl('status')}>{SAVE_STATUSES.map(([v, es, e2]) => <option key={v} value={v}>{en ? e2 : es}</option>)}</select>)}</div>
         <div className="md:col-span-9">{lbl(tx('Documentación solicitada', 'Requested documentation'), false, null, null, <textarea aria-label={tx('Documentación solicitada', 'Requested documentation')} rows={2} maxLength={4000} value={form.docs} onChange={e => set('docs', e.target.value)} placeholder={tx('Ficha técnica, certificados, permisos, garantía, tiempos de entrega...', 'Datasheet, certificates, permits, warranty, lead times...')} className={ctl('', 'resize-y')} />)}</div>
       </div>
       {lbl(tx('Condiciones e instrucciones', 'Conditions and instructions'), false, null, 'conditions', <textarea aria-label={tx('Condiciones e instrucciones', 'Conditions and instructions')} rows={3} maxLength={4000} value={form.conditions} onChange={e => set('conditions', e.target.value)} placeholder={tx('Indicar vigencia, impuestos, condiciones de pago, plazo, alcance y exclusiones.', 'Indicate validity, taxes, payment terms, lead time, scope and exclusions.')} className={ctl('conditions', 'resize-y')} />)}
@@ -141,6 +184,8 @@ export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, ref
         <div className="p-3 bg-emerald-50/60 border-l-4 border-l-emerald-500 border border-emerald-100 rounded-xl text-xs text-slate-700"><span className="font-bold text-slate-800">{tx('Flujo recomendado:', 'Recommended flow:')}</span> {tx('usa una sola requisición y genera varias RFQ independientes —una por proveedor— con las partidas que correspondan.', 'use a single requisition and generate several independent RFQs —one per supplier— with the corresponding items.')}{R ? ` ${tx('Validación', 'Validation')} ${R.review_folio}: ${R.strategy} · ${tx('mínimo', 'minimum')} ${R.min_quotes} ${tx('cotización(es)', 'quote(s)')}.` : ''}</div>
         {req.status === 'loading' && <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" />{tx('Consultando partidas…', 'Loading items…')}</p>}{loadErr(req)}
         {R?.has_po && <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{tx('Esta requisición ya tiene orden de compra registrada.', 'This requisition already has a purchase order.')}</p>}
+        {reviewBlock && <p role="alert" data-testid="rfq-review-block" className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{reviewBlock}</p>}
+        {errors.items && <p role="alert" className="text-[11px] text-rose-700">{errors.items}</p>}
         {sentSame.length > 0 && <p role="alert" className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{tx(`${sentSame.length} partida(s) seleccionada(s) ya se enviaron a este proveedor (${[...new Set(sentSame.flatMap(i => sentToSupplier(i, supplierOpt?.name).map(x => x.rfq)))].join(', ')}).`, `${sentSame.length} selected item(s) were already sent to this supplier (${[...new Set(sentSame.flatMap(i => sentToSupplier(i, supplierOpt?.name).map(x => x.rfq)))].join(', ')}).`)}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold"><button type="button" onClick={() => setSelected(items.map(i => i.id))} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-2xs">{tx('Seleccionar todas', 'Select all')}</button><span className="text-[10.5px] font-normal text-slate-400">{tx('Modo manual: una misma partida puede enviarse a varios proveedores para comparar ofertas.', 'Manual mode: the same item can be sent to several suppliers to compare offers.')}</span></div>
         <div className="overflow-x-auto rounded-xl border border-slate-200/80 bg-white shadow-2xs">
@@ -159,12 +204,12 @@ export function RfqRequestCard({ en = false, notify, onOpenMatrix, lockText, ref
         </div>
         {(req.data?.rfqs || []).length > 0 && <p className="text-[10.5px] text-slate-500">{tx('RFQ registradas de esta requisición:', 'RFQs recorded for this requisition:')} {req.data.rfqs.map(r => `${r.folio} · ${r.supplier_name}`).join(' | ')}</p>}
         <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-slate-200/60 text-xs font-bold">
-          <button type="button" disabled title={lockText} className="px-3.5 py-2 bg-slate-200 text-slate-500 rounded-xl flex items-center gap-1.5 cursor-not-allowed"><Lock className="w-3.5 h-3.5" />{tx('Guardar y siguiente RFQ →', 'Save and next RFQ →')}</button>
+          <button type="button" onClick={save} disabled={saving || !selected.length || !!reviewBlock} className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl shadow-xs flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}{tx('Guardar y siguiente RFQ →', 'Save and next RFQ →')}</button>
           <button type="button" onClick={() => setSelected([])} className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl flex items-center gap-1.5"><Eraser className="w-3.5 h-3.5" />{tx('Limpiar selección', 'Clear selection')}</button>
           <button type="button" onClick={() => onOpenMatrix?.()} className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-800 rounded-xl border border-slate-200 shadow-2xs flex items-center gap-1.5"><ClipboardList className="w-3.5 h-3.5" />{tx('Ver matriz', 'View matrix')}</button>
           <button type="button" onClick={print} disabled={!selected.length} className="px-3.5 py-2 bg-white hover:bg-slate-50 text-blue-700 rounded-xl border border-blue-200 shadow-2xs flex items-center gap-1.5 disabled:opacity-50"><Printer className="w-3.5 h-3.5" />{tx('Imprimir vista previa', 'Print preview')}</button>
         </div>
-        <p className="text-[10.5px] text-amber-800 flex items-start gap-1.5"><Lock className="w-3.5 h-3.5 shrink-0 mt-0.5" />{tx('Guardar o enviar la RFQ registra una escritura comercial que sigue bloqueada hasta su validación integral: esta vista previa no se guarda en MariaDB ni se envía al proveedor.', 'Saving or sending the RFQ is a commercial write that stays blocked until its integral validation: this preview is not stored in MariaDB nor sent to the supplier.')}</p>
+        <p data-testid="rfq-save-note" className="text-[10.5px] text-slate-600 flex items-start gap-1.5"><Lock className="w-3.5 h-3.5 shrink-0 mt-0.5 text-slate-400" />{tx('«Guardar y siguiente RFQ» registra esta RFQ en MariaDB con su folio definitivo y el estatus elegido (Borrador o Enviada). SupplyFlow no envía correos: imprime el formato desde la Matriz de RFQ (Ver) y envíalo al proveedor desde tu correo; si la guardas como Borrador, márcala como enviada en la Matriz de RFQ cuando la mandes.', '"Save and next RFQ" records this RFQ in MariaDB with its final folio and the chosen status (Draft or Sent). SupplyFlow does not send e-mails: print the form from the RFQ Matrix (View) and e-mail it to the supplier; if you save it as Draft, mark it as sent in the RFQ Matrix when you send it.')}</p>
       </div>
 
       <div className="p-4 sm:p-6 bg-slate-100/70 border border-slate-200/80 rounded-2xl space-y-4 shadow-2xs">

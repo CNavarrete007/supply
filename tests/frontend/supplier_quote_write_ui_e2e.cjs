@@ -1,7 +1,6 @@
 // Cotizaciones › Registro de cotización (tarjeta 4) · E2E de interfaz (Chromium) de los GUARDADOS REALES contra Vite + API +
-// MariaDB SINTÉTICAS. ESCRIBE: registra una cotización contra una RFQ sintética enviada y sin cotización (folio con prefijo
-// SF_RFQ_FOLIO_PREFIX, por omisión RFQ-QW-; la emisión de RFQ sigue bloqueada y en el sandbox se siembran por SQL), la edita
-// desde la matriz interna y descarga su PDF. Exige SF_SYNTHETIC_WRITES=1. Comprueba CSRF, Idempotency-Key, que un fallo de red
+// MariaDB SINTÉTICAS. ESCRIBE: crea por la API su requisición sintética, su validación y dos RFQ enviadas (tarjeta 2), registra
+// una cotización contra una de ellas desde la tarjeta 4, la edita desde la matriz interna y descarga su PDF. Exige SF_SYNTHETIC_WRITES=1. Comprueba CSRF, Idempotency-Key, que un fallo de red
 // no se da por guardado y que el reintento usa la MISMA clave, que el navegador no envía importes, If-Match en la edición, que
 // las importadas/sin RFQ no se editan y que nunca se escribe una RFQ, una adjudicación ni una OC.
 // Uso: SF_UI=http://127.0.0.1:5173 SF_QA_PASSWORD=... SF_SYNTHETIC_WRITES=1 [SF_SHOTS=<dir>] node tests/frontend/supplier_quote_write_ui_e2e.cjs
@@ -10,7 +9,6 @@ const { chromium } = require('playwright');
 const UI = (process.env.SF_UI || 'http://127.0.0.1:5173').replace(/\/$/, '');
 const PASSWORD = process.env.SF_QA_PASSWORD || '';
 const SHOTS = process.env.SF_SHOTS || '';
-const PREFIX = process.env.SF_RFQ_FOLIO_PREFIX || 'RFQ-QW-';
 if (!/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(UI) || !PASSWORD || process.env.SF_SYNTHETIC_WRITES !== '1') { console.error('BLOCKED: solo UI local sintética, SF_QA_PASSWORD y SF_SYNTHETIC_WRITES=1.'); process.exit(2); }
 const results = [];
 const check = (name, ok, detail = '') => results.push([name, !!ok, detail]);
@@ -33,15 +31,30 @@ const pdfBytes = label => Buffer.from(`%PDF-1.4\n% SupplyFlow UI ${label}\n1 0 o
     await page.locator('nav button').first().waitFor({ timeout: 20000 });
     const api = async p => (await page.request.get(UI + p)).json();
     const ws = await api('/api/v1/quotes/write-status');
-    check('guardado habilitado (write-status OK, 43 permisos)', ws.code === 'OK' && ws.expected_grants === 43, JSON.stringify(ws));
-    // RFQ sintética enviada y sin cotización (con su requisición validada y su comprador).
-    let fx = null;
-    for (const r of (await api('/api/v1/quotes/rfq-requisitions?rfq=with&page=1&page_size=50')).items) {
-      const det = await api(`/api/v1/quotes/rfq-requisitions/${r.id}`);
-      const f = det.rfqs.find(x => x.folio.startsWith(PREFIX) && !x.quote_folios && ['sent', 'enviada'].includes(x.status));
-      if (f) { fx = { req: r, det, rfq: f }; break; }
+    check('guardado habilitado (write-status OK, 52 permisos)', ws.code === 'OK' && ws.expected_grants === 52, JSON.stringify(ws));
+    // Requisición sintética propia (Registro RF1) validada, con dos RFQ enviadas registradas por la API (tarjeta 2).
+    const post = async (path, data) => { const csrf = (await api('/api/v1/auth/csrf')).csrf_token; const r = await page.request.post(UI + path, { headers: { 'X-SF-CSRF': csrf, 'Idempotency-Key': require('crypto').randomUUID() }, data }); return [r.status(), await r.json()]; };
+    const day = new Date().toISOString().slice(0, 10); const year = new Date().getFullYear();
+    const cat = await api('/api/v1/recovery/catalogs'); const client = cat.clients.find(c => c.status === 'active' && c.code); const cats = cat.categories.filter(c => c.active).map(c => c.name);
+    const rfolio = (await api(`/api/v1/recovery/folio?client_id=${client.id}&date=${day}&mode=formal`)).folio;
+    const [rs, req] = await post('/api/v1/recovery/requisitions', { folio: rfolio, client_id: client.id, request_date: day, need_date: `${year + 1}-04-01`, project: `PRY-COTUI-${RUN}`, contract: 'CTO-QA',
+      client_reference: `COTUI-${RUN}`, priority: 'normal', delivery_place: 'Almacén sintético', requester_name: 'Solicitante QA', requester_email: 'qa@cliente.invalid', budget: '', currency: 'MXN',
+      description: `Requisición sintética cotización UI ${RUN}`, notes: null, source: { type: 'Requisición formal del cliente', date: day, reference: null, notes: null, requirement: 'formal', due_date: null, owner: null },
+      items: [{ id: null, description: `Guantes UI ${RUN}`, quantity: '6', unit: 'par', category: cats[0] }, { id: null, description: `Lentes UI ${RUN}`, quantity: '4', unit: 'pza', category: cats[0] }], document: null });
+    if (rs !== 201) throw new Error(`no se pudo crear la requisición sintética: ${rs} ${JSON.stringify(req)}`);
+    const vbuyer = (await api('/api/v1/contractor-management/validation-setup')).buyers.find(b => b.has_user && b.with_access);
+    const [vs, vr] = await post('/api/v1/contractor-management/validations', { requisition_id: req.id, buyer_id: vbuyer.id, technical: 'Conforme', contract: 'Conforme', budget: 'Disponible',
+      strategy: 'Competencia abierta', min_quotes: '2', deadline: `${year + 1}-01-15`, criteria: 'Precio y plazo', notes: `Validación sintética UI ${RUN}` });
+    if (vs !== 201) throw new Error(`no se pudo registrar la validación: ${vs} ${JSON.stringify(vr)}`);
+    const rsetup = await api('/api/v1/quotes/rfq-setup'); const sups = rsetup.suppliers.filter(x => ['authorized', 'active'].includes(x.status));
+    const reqLines = (await api(`/api/v1/quotes/rfq-requisitions/${req.id}`)).items.map(i => i.id);
+    for (const n of [0, 1]) {
+      const [fs, fr] = await post('/api/v1/quotes/rfqs', { requisition_id: req.id, supplier_id: sups[n].id, contact_id: rsetup.contacts[0].id, issue_date: day, deadline: day, required_date: null,
+        currency: 'MXN', delivery_place: '', docs: '', conditions: '', status: 'sent', items: reqLines });
+      if (fs !== 201) throw new Error(`no se pudo registrar la RFQ sintética: ${fs} ${JSON.stringify(fr)}`);
     }
-    if (!fx) throw new Error(`BLOCKED: no hay RFQ sintética ${PREFIX}* enviada y sin cotización (siembra por SQL en el sandbox).`);
+    const det0 = await api(`/api/v1/quotes/rfq-requisitions/${req.id}`);
+    const fx = { req: det0.item, det: det0, rfq: det0.rfqs[0] };
     const items = (await api(`/api/v1/quotes/rfqs/${fx.rfq.id}`)).items;
 
     await page.locator('nav button').filter({ hasText: /Cotizaciones y Comparativo$/ }).click();

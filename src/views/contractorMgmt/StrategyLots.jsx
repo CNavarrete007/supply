@@ -9,7 +9,7 @@ import { useLoad } from '../reception/useLoad.js';
 // Gestión del Contratista · tarjeta 2 "Estrategia y lotificación de abastecimiento" (diseño Grupo Gerez), conectada a
 // MariaDB en modo lectura: requisiciones con validación vigente, partidas, plan de lotificación registrado, RFQ por lote y
 // catálogo de proveedores (sugerencias por categoría y suministros). «Guardar estrategia» guarda el plan como versión nueva
-// (cuenta mgmtwrite; CSRF, Idempotency-Key e If-Match = versión vigente). «Abrir siguiente RFQ» sigue sin escribir.
+// (cuenta mgmtwrite; CSRF, Idempotency-Key e If-Match = versión vigente). «Abrir siguiente RFQ» no escribe aquí: las RFQ se registran en Cotizaciones › Solicitud a proveedores.
 const newKey = () => (typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
   : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 const DASH = '—';

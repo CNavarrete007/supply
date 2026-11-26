@@ -1,6 +1,6 @@
 // Cotizaciones › Solicitud a proveedores (RFQ) · lógica pura (sin red). La RFQ nunca lleva precios.
-// Preparar la solicitud y su vista previa usa datos reales de MariaDB; GUARDAR o ENVIAR la RFQ es una escritura comercial
-// que sigue bloqueada hasta su validación integral, por eso el folio que se muestra es solo el previsto.
+// Preparar la solicitud y su vista previa usa datos reales de MariaDB. «Guardar y siguiente RFQ» la registra en MariaDB
+// (POST /api/v1/quotes/rfqs, cuenta quotewrite; folio definitivo, Borrador o Enviada). SupplyFlow no envía correos.
 import { escapeHtml } from '../generalMatrix/model.mjs';
 
 export const RFQ_STATUSES = [['draft', 'Borrador', 'Draft'], ['sent', 'Enviada', 'Sent'], ['answered', 'Respondida', 'Answered'], ['cancelled', 'Cancelada', 'Cancelled'], ['expired', 'Vencida', 'Expired']];
@@ -136,3 +136,48 @@ export function filterContacts(list = [], q = '') {
 }
 /** Reference column: internal reference (or requisition folio) · project. */
 export const rfqReference = r => [r.internal_reference || r.requisition, r.project].filter(Boolean).join(' · ');
+
+// ---- Registro en MariaDB (tarjeta 2) y Borrador → Enviada (tarjeta 3) ----
+const clean = v => String(v ?? '').trim();
+/** Estatus con los que se registra una RFQ (Respondida la marca la cotización; Cancelada/Vencida no aplican al registrar). */
+export const SAVE_STATUSES = RFQ_STATUSES.filter(([v]) => v === 'draft' || v === 'sent');
+
+/** La validación vigente permite cotizar (técnica y contractual conformes o con observaciones; presupuesto disponible o parcial). */
+export function reviewAllowsQuoting(req) {
+  if (!req) return true;
+  const ok = x => ['conforme', 'con observaciones', 'compliant', 'with observations'].includes(clean(x).toLowerCase());
+  return ok(req.technical_result) && ok(req.contract_result) && ['disponible', 'parcial', 'available', 'partial'].includes(clean(req.budget_result).toLowerCase());
+}
+
+/** Body of POST /api/v1/quotes/rfqs: the selected requisition lines (the server numbers them 1..n in the requisition order). */
+export function rfqPayload(f, selected = []) {
+  return { requisition_id: f.requisition, supplier_id: f.supplier, contact_id: f.contact, issue_date: f.issue_date, deadline: f.deadline, required_date: f.required_date || null,
+    currency: f.currency, delivery_place: clean(f.delivery_place), docs: clean(f.docs), conditions: clean(f.conditions), status: f.status === 'sent' ? 'sent' : 'draft', items: [...selected] };
+}
+
+/** Borrador registrado en SupplyFlow (las importadas se conservan como expediente). */
+export const canMarkSent = r => !!r && !r.imported && ['draft', 'borrador'].includes(clean(r.status).toLowerCase());
+
+export function rfqSavedText(out, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const sent = out?.status === 'enviada' || out?.status === 'sent';
+  return m(`RFQ ${clean(out?.folio)} a ${clean(out?.supplier_name)} registrada en MariaDB (${sent ? 'Enviada' : 'Borrador'}, ${out?.items} partida(s)). ${sent ? 'Imprímela desde la Matriz de RFQ (Ver) y envíala al proveedor desde tu correo.' : 'Cuando la envíes al proveedor, márcala como enviada en la Matriz de RFQ.'} Elige el siguiente proveedor para otra RFQ.`,
+    `RFQ ${clean(out?.folio)} to ${clean(out?.supplier_name)} recorded in MariaDB (${sent ? 'Sent' : 'Draft'}, ${out?.items} item(s)). ${sent ? 'Print it from the RFQ Matrix (View) and e-mail it to the supplier.' : 'When you send it, mark it as sent in the RFQ Matrix.'} Choose the next supplier for another RFQ.`);
+}
+
+const RFQ_FIELD = { requisition_id: 'requisition', supplier_id: 'supplier', contact_id: 'contact', issue_date: 'issue_date', deadline: 'deadline', required_date: 'required_date',
+  currency: 'currency', delivery_place: 'delivery_place', docs: 'conditions', conditions: 'conditions', status: 'status', items: 'items' };
+const RFQ_BLOCKING = ['QUOTE_WRITE_NOT_PROVISIONED', 'QUOTE_WRITE_ACCOUNT_REJECTED', 'QUOTE_WRITE_GRANTS_INCOMPLETE'];
+/** Server error → { kind: error|warn, text, field (form key), retry (reuse the Idempotency-Key) }. Shared by save and mark-sent. */
+export function rfqSaveError(status, body, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const code = body?.error?.code; const message = body?.error?.message; const field = RFQ_FIELD[body?.error?.field] || null;
+  if (!status) return { kind: 'error', text: m('No se confirmó el guardado (sin respuesta del servidor). Presiona otra vez: se repite la misma operación sin duplicarla.', 'The save was not confirmed (no server response). Press again: the same operation is repeated without duplicating it.'), retry: true };
+  if (status === 401) return { kind: 'error', text: m('Tu sesión expiró. Inicia sesión nuevamente; no se guardó nada.', 'Your session expired; nothing was saved.') };
+  if (status === 403) return { kind: 'error', text: code === 'CSRF_INVALID' ? m('La sesión de seguridad cambió. Vuelve a intentarlo.', 'The security token changed. Try again.') : m('Solo un Master Admin puede registrar RFQ.', 'Only a Master Admin can record RFQs.') };
+  if (RFQ_BLOCKING.includes(code)) return { kind: 'warn', text: `${message || m('El guardado de Cotizaciones no está habilitado en este equipo.', 'Saving quotes is not enabled on this computer.')} ${m('Consulta «Activación en la PC» en docs/cotizaciones/REGISTRO_COTIZACION_PROVEEDOR.md.', 'See "Activación en la PC" in docs/cotizaciones/REGISTRO_COTIZACION_PROVEEDOR.md.')}` };
+  if (status === 412) return { kind: 'warn', text: m('La RFQ cambió desde que se abrió. Actualiza la matriz de RFQ.', 'The RFQ changed since it was opened. Refresh the RFQ matrix.') };
+  if (status === 422) return { kind: 'error', text: code === 'INVALID_RFQ' ? (field === 'items' ? m('Revisa las partidas elegidas.', 'Check the selected items.') : m('Revisa el campo marcado: el servidor no lo aceptó.', 'Check the highlighted field: the server did not accept it.')) : message || m('Revisa los datos capturados.', 'Check the entered data.'), field };
+  if (status === 404 || status === 409) return { kind: 'error', text: message || m('No se pudo guardar.', 'Could not save.') };
+  return { kind: 'error', text: m(`No se confirmó el guardado (${message || 'error del servidor'}). Presiona otra vez: se repite la misma operación sin duplicarla.`, `The save was not confirmed (${message || 'server error'}). Press again: the same operation is repeated without duplicating it.`), retry: true };
+}
