@@ -92,6 +92,11 @@ const fmt = n => Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, m
     await page.getByLabel('% margen partida 1').fill('20'); await page.getByLabel('Entrega / manipulación partida 1').fill('150'); await page.getByLabel('Marca / modelo partida 1').fill(`ACME UI ${RUN}`);
     await page.getByLabel('% margen partida 2').fill('10');
     await page.getByRole('combobox', { name: 'Comprador', exact: true }).selectOption({ index: 1 });
+    // Revisó y Autorizó: obligatorios y distintos del Comprador y entre sí (segregación de funciones).
+    const prepVal = await page.getByRole('combobox', { name: 'Comprador', exact: true }).inputValue();
+    const pplVals = (await page.getByRole('combobox', { name: 'Revisó' }).locator('option').evaluateAll(os => os.map(o => o.value))).filter(v => v && v !== prepVal);
+    await page.getByRole('combobox', { name: 'Revisó' }).selectOption(pplVals[0]);
+    await page.getByRole('combobox', { name: 'Autorizó' }).selectOption(pplVals[1]);
     await page.getByRole('textbox', { name: '1 USD = MXN' }).fill('18.5');
     await page.getByLabel('Service Fee %').fill('5');
     await page.getByLabel('Tiempo de entrega ofrecido').fill(`5 días hábiles ${RUN}`);
@@ -124,6 +129,9 @@ const fmt = n => Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, m
     check('se abre en modo edición: folio, Rev. 0, versión 1', flat(await page.getByTestId('cq-edit-banner').innerText()).startsWith(`Editando el borrador ${out.folio} · Rev. 0 · versión 1`) && (await page.getByRole('textbox', { name: 'Folio de cotización' }).inputValue()) === out.folio);
     check('el borrador conserva lo capturado (margen, manipulación, marca, entrega)', (await page.getByLabel('% margen partida 1').inputValue()) === '20' && (await page.getByLabel('Entrega / manipulación partida 1').inputValue()) === '150'
       && (await page.getByLabel('Marca / modelo partida 1').inputValue()) === `ACME UI ${RUN}` && (await page.getByLabel('Tiempo de entrega ofrecido').inputValue()) === `5 días hábiles ${RUN}`);
+    const dr1 = await api(`/api/v1/quotes/customer-quotes/${out.id}/draft`);
+    check('Revisó y Autorizó asignados: se guardan y se reabren en el formulario', dr1.item.reviewer_id === pplVals[0] && dr1.item.approver_id === pplVals[1]
+      && (await page.getByRole('combobox', { name: 'Revisó' }).inputValue()) === pplVals[0] && (await page.getByRole('combobox', { name: 'Autorizó' }).inputValue()) === pplVals[1]);
     const cmp2 = await api(`/api/v1/quotes/comparison?requisition=${req.id}`);
     check('comparativo: la requisición tiene su borrador editable (no importado, sin aprobación)', cmp2.customer_quote && cmp2.customer_quote.editable_draft === true && cmp2.customer_quote.internal_approval_status === 'not_requested' && cmp2.customer_quote.imported === false);
     await shot(page, 'cot_6_borrador_guardado');

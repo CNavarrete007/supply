@@ -93,9 +93,12 @@ try:
     req, lines, quotes, buyer = fixtures(adm)
     qa, qb = quotes
     setup = adm.get(f'{B}/rfq-setup'); prep = setup['contacts'][0]
+    people = adm.get(f'{B}/customer-quote-setup')['people']; others = [x for x in people if x['id'] != prep['id']]
+    if len(others) < 2: raise SystemExit('BLOCKED: se necesitan 3 usuarios activos (comprador, revisó, autorizó) en la base sintética')
+    rev, apr = others[0], others[1]
     L = [{'line_id': lines[0]['id'], 'source': 'offer', 'quote_id': qb['id'], 'qty': '10', 'handling': '50', 'margin': '20', 'brand_model': f'Marca X {RUN}'},
          {'line_id': lines[1]['id'], 'source': 'offer', 'quote_id': qa['id'], 'qty': '2', 'handling': '0', 'margin': '10', 'brand_model': ''}]
-    OK = {'requisition_id': req['id'], 'issue_date': TODAY.isoformat(), 'valid_until': (TODAY + timedelta(days=30)).isoformat(), 'currency': 'MXN', 'preparer_id': prep['id'],
+    OK = {'requisition_id': req['id'], 'issue_date': TODAY.isoformat(), 'valid_until': (TODAY + timedelta(days=30)).isoformat(), 'currency': 'MXN', 'preparer_id': prep['id'], 'reviewer_id': rev['id'], 'approver_id': apr['id'],
           'lead_time': '10 días hábiles', 'delivery_place': 'Planta sintética', 'payment_terms': 'Crédito 30 días', 'warranty': '12 meses', 'inclusions': 'Flete', 'exclusions': 'Maniobras',
           'notes': f'Notas sintéticas {RUN}', 'fx_date': TODAY.isoformat(), 'usd_mxn': '18.5', 'eur_mxn': '20.1', 'fx_source': 'Manual QA', 'discount': '5', 'vat': '16',
           'sf_enabled': True, 'sf_pct': '3', 'sf_comments': 'Service fee QA', 'lines': L}
@@ -122,6 +125,17 @@ try:
     check('moneda fuera del catálogo: 422 CURRENCY_UNAVAILABLE', s == 422 and r['error']['code'] == 'CURRENCY_UNAVAILABLE', f'{s} {r}')
     s, r = adm.call('POST', C, {**OK, 'preparer_id': ZERO})
     check('comprador que elabora sin usuario activo Comprador/Master Admin: 422 PREPARER_UNAVAILABLE', s == 422 and r['error']['code'] == 'PREPARER_UNAVAILABLE', f'{s} {r}')
+    check('Revisó/Autorizó: lista de usuarios activos con nombre y puesto, sin datos de acceso', len(people) >= 3 and all(set(x) == {'id', 'name', 'position'} for x in people), json.dumps(people[:2])[:200])
+    s, r = adm.call('POST', C, {k: v for k, v in OK.items() if k != 'reviewer_id'})
+    check('sin «Revisó»: 422 con campo reviewer_id', s == 422 and r['error'].get('field') == 'reviewer_id', f'{s} {r}')
+    s, r = adm.call('POST', C, {**OK, 'approver_id': 'x'})
+    check('«Autorizó» inválido: 422 con campo approver_id', s == 422 and r['error'].get('field') == 'approver_id', f'{s} {r}')
+    s, r = adm.call('POST', C, {**OK, 'reviewer_id': ZERO})
+    check('«Revisó» que no es usuario activo: 422 REVIEWER_UNAVAILABLE', s == 422 and r['error']['code'] == 'REVIEWER_UNAVAILABLE' and r['error'].get('field') == 'reviewer_id', f'{s} {r}')
+    s, r = adm.call('POST', C, {**OK, 'reviewer_id': prep['id']})
+    check('segregación: el comprador no puede ser quien revisa (422 SEGREGATION_REQUIRED)', s == 422 and r['error']['code'] == 'SEGREGATION_REQUIRED' and r['error'].get('field') == 'reviewer_id', f'{s} {r}')
+    s, r = adm.call('POST', C, {**OK, 'approver_id': rev['id']})
+    check('segregación: quien autoriza debe ser distinto de quien revisa (422 SEGREGATION_REQUIRED)', s == 422 and r['error']['code'] == 'SEGREGATION_REQUIRED' and r['error'].get('field') == 'approver_id', f'{s} {r}')
     s, r = adm.call('POST', C, {**OK, 'lines': [L[0]]})
     check('partidas distintas a las vigentes de la requisición: 409 LINES_CHANGED', s == 409 and r['error']['code'] == 'LINES_CHANGED', f'{s} {r}')
     s, r = adm.call('POST', C, {**OK, 'lines': [{**L[0], 'quote_id': ZERO}, L[1]]})
@@ -151,6 +165,9 @@ try:
     check('borrador interno: costo de la oferta (USD 6 de B), gasto, margen, tipo de cambio y versión', di.get('version') == 1 and di.get('preparer_id') == prep['id'] and float(di['usd_mxn_rate']) == 18.5
           and dr['items'][0]['original_cost_currency'] == 'USD' and float(dr['items'][0]['original_cost_amount']) == 6 and qb['supplier'] in dr['items'][0]['cost_source_text']
           and float(dr['items'][0]['handling']) == 50 and float(dr['items'][0]['margin']) == 20 and dr['items'][0]['brand_model'] == f'Marca X {RUN}', json.dumps(dr, ensure_ascii=False)[:400])
+    check('borrador: Revisó y Autorizó asignados se guardan y se reabren', di.get('reviewer_id') == rev['id'] and di.get('approver_id') == apr['id'], json.dumps({k: di.get(k) for k in ('reviewer_id', 'approver_id')}))
+    check('formato: Revisó/Autorizó asignados con nombre y puesto, SIN firma registrada (reviewed_by/approved_by vacíos)', it.get('reviewer_assigned') == rev['name'] and it.get('approver_assigned') == apr['name']
+          and it.get('reviewer_assigned_position') == rev['position'] and not it.get('reviewed_by') and not it.get('approved_by'), json.dumps({k: it.get(k) for k in ('reviewer_assigned', 'approver_assigned', 'reviewed_by', 'approved_by')}, ensure_ascii=False))
     cmp = adm.get(f"{B}/comparison?requisition={req['id']}")['customer_quote']
     l2 = lrow().get('customer_quote') or {}
     check('lista de la tarjeta 6: muestra el borrador editable (folio, no importado)', l2.get('folio') == a['folio'] and l2.get('editable_draft') is True and l2.get('imported') is False, json.dumps(l2))

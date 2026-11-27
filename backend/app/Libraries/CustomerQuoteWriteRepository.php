@@ -115,6 +115,31 @@ final class CustomerQuoteWriteRepository extends QuoteWriteBase
         return $u;
     }
 
+    /**
+     * Revisó y Autorizó: usuarios activos con acceso (cualquier rol; en los datos originales son admin/compras/consulta).
+     * Segregación de funciones: Comprador, Revisó y Autorizó deben ser tres personas distintas (nadie se revisa ni autoriza a sí mismo).
+     * Se guardan como ASIGNADOS en people_snapshots; reviewed_by/approved_by (la firma electrónica) no se tocan.
+     */
+    private function assignees(int $org, array $p, array $prep): array
+    {
+        $out = [];
+        foreach (['reviewer' => 'Revisó', 'approver' => 'Autorizó'] as $k => $label) {
+            $u = $this->one("SELECT u.id,u.public_id,p.display_name AS name,p.position_title AS position FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id
+                WHERE u.organization_id=? AND u.public_id=? AND u.access_enabled=1 AND u.status_code='active' LIMIT 1", [$org, $p[$k . '_id']]);
+            if (! $u) {
+                throw new QuoteConflict(strtoupper($k) . '_UNAVAILABLE', "«{$label}» debe ser un usuario activo con acceso.", 422, $k . '_id');
+            }
+            $out[$k] = $u;
+        }
+        if ($out['reviewer']['public_id'] === $prep['public_id']) {
+            throw new QuoteConflict('SEGREGATION_REQUIRED', 'Quien revisa no puede ser el mismo comprador que elabora la cotización.', 422, 'reviewer_id');
+        }
+        if ($out['approver']['public_id'] === $prep['public_id'] || $out['approver']['public_id'] === $out['reviewer']['public_id']) {
+            throw new QuoteConflict('SEGREGATION_REQUIRED', 'Quien autoriza debe ser distinto del comprador y de quien revisa.', 422, 'approver_id');
+        }
+        return $out;
+    }
+
     /** Next client-quote folio COT-AAAA-NNNN (its own series; revision suffixes -N are ignored), as in the original data. */
     private function nextFolio(int $org, string $issue): string
     {
@@ -129,7 +154,7 @@ final class CustomerQuoteWriteRepository extends QuoteWriteBase
     }
 
     /** Version columns computed from the payload (amounts from the server calculation). */
-    private static function versionValues(array $p, array $lines, array $t, array $prep, ?array $pol, array $eval): array
+    private static function versionValues(array $p, array $lines, array $t, array $prep, array $who, ?array $pol, array $eval): array
     {
         $fxLabel = 'Moneda ' . $p['currency'] . ($p['usd_mxn'] !== null ? ' · 1 USD = ' . $p['usd_mxn'] . ' MXN' : '') . ($p['eur_mxn'] !== null ? ' · 1 EUR = ' . $p['eur_mxn'] . ' MXN' : '');
         $nul = static fn (string $v) => $v === '' ? null : $v;
@@ -137,7 +162,10 @@ final class CustomerQuoteWriteRepository extends QuoteWriteBase
             'quote_date' => $p['issue_date'], 'valid_until' => $p['valid_until'], 'currency_code' => $p['currency'], 'exchange_rate_date' => $p['fx_date'], 'usd_mxn_rate' => $p['usd_mxn'],
             'eur_mxn_rate' => $p['eur_mxn'], 'exchange_rate_source' => $nul($p['fx_source']), 'exchange_rate_label_snapshot' => mb_substr($fxLabel, 0, 500), 'prepared_by' => $prep['id'],
             'people_snapshots' => self::json(['prepared' => $prep['name'], 'preparedId' => $prep['public_id'], 'preparedPosition' => $prep['position'], 'reviewed' => null, 'reviewedId' => null,
-                'reviewedPosition' => null, 'approved' => null, 'approvedId' => null, 'approvedPosition' => null, 'peopleRoleOrderVersion' => 1]),
+                'reviewedPosition' => null, 'approved' => null, 'approvedId' => null, 'approvedPosition' => null, 'peopleRoleOrderVersion' => 1,
+                // Asignados en la tarjeta 6 (pendientes): «reviewed»/«approved» quedan vacíos hasta que la revisión y la autorización existan.
+                'reviewerAssigned' => $who['reviewer']['name'], 'reviewerAssignedId' => $who['reviewer']['public_id'], 'reviewerAssignedPosition' => $who['reviewer']['position'],
+                'approverAssigned' => $who['approver']['name'], 'approverAssignedId' => $who['approver']['public_id'], 'approverAssignedPosition' => $who['approver']['position']]),
             'delivery_place' => $nul($p['delivery_place']), 'lead_time_text' => $nul($p['lead_time']), 'payment_terms' => $nul($p['payment_terms']), 'warranty_text' => $nul($p['warranty']),
             'inclusions_text' => $nul($p['inclusions']), 'exclusions_text' => $nul($p['exclusions']), 'notes' => $nul($p['notes']),
             'subtotal_amount' => $t['third'], 'discount_kind' => 'percentage', 'discount_rate_pct' => $p['discount'], 'discount_amount' => $t['discount'], 'tax_rate_pct' => $p['vat'],
@@ -160,7 +188,8 @@ final class CustomerQuoteWriteRepository extends QuoteWriteBase
     private static function summary(array $p, array $t, array $eval, string $folio): array
     {
         return ['folio' => $folio, 'currency' => $p['currency'], 'issue_date' => $p['issue_date'], 'valid_until' => $p['valid_until'], 'third' => $t['third'], 'discount' => $t['discount'],
-            'taxable' => $t['taxable'], 'tax' => $t['tax'], 'service_fee' => $t['sfTotal'], 'total' => $t['total'], 'approval' => $eval['status'] . (isset($eval['level']) && $eval['level'] ? ' (nivel 1)' : '')];
+            'taxable' => $t['taxable'], 'tax' => $t['tax'], 'service_fee' => $t['sfTotal'], 'total' => $t['total'], 'approval' => $eval['status'] . (isset($eval['level']) && $eval['level'] ? ' (nivel 1)' : ''),
+            'preparer' => $p['preparer_id'], 'reviewer_assigned' => $p['reviewer_id'], 'approver_assigned' => $p['approver_id']];
     }
 
     public function createDraft(int $org, int $actor, array $p, string $key): array
@@ -199,6 +228,7 @@ final class CustomerQuoteWriteRepository extends QuoteWriteBase
             }
             $this->currency($p['currency']);
             $prep = $this->preparer($org, $p['preparer_id']);
+            $who = $this->assignees($org, $p, $prep);
             $lines = $this->lines($org, $rid, $p);
             $t = CustomerQuoteInput::totals(array_map(static fn ($l) => $l['price']['subtotal'], $lines), $p);
             if ($t['total'] >= 1e14) {
@@ -216,7 +246,7 @@ final class CustomerQuoteWriteRepository extends QuoteWriteBase
             $this->insert('customer_quote_versions', ['id' => $vId, 'organization_id' => $org, 'customer_quote_id' => $cqId, 'requisition_id' => $rid, 'version_number' => 1, 'folio' => $folio,
                 'document_status' => 'draft', 'internal_approval_status' => 'not_requested', 'client_decision_status' => 'not_recorded', 'legacy_status' => 'Borrador',
                 'client_snapshot' => self::json(['clientId' => $req['client_public']]), 'financial_breakdown_provenance' => 'calculated', 'calculation_version' => self::CALCULATION,
-                'reconciliation_status' => 'not_required'] + self::versionValues($p, $lines, $t, $prep, $pol, $eval));
+                'reconciliation_status' => 'not_required'] + self::versionValues($p, $lines, $t, $prep, $who, $pol, $eval));
             foreach ($lines as $l) {
                 $this->insert('customer_quote_items', ['organization_id' => $org, 'requisition_id' => $rid, 'customer_quote_version_id' => $vId, 'requisition_item_id' => $l['db'], 'line_number' => $l['line_number'],
                     'resolution_status' => 'resolved', 'description' => $l['description'], 'unit_label' => $l['unit_label'], 'pricing_formula_code' => self::CALCULATION, 'cost_is_manual' => 0] + self::itemValues($l, $p));
@@ -269,6 +299,7 @@ final class CustomerQuoteWriteRepository extends QuoteWriteBase
             }
             $this->currency($p['currency']);
             $prep = $this->preparer($org, $p['preparer_id']);
+            $who = $this->assignees($org, $p, $prep);
             $lines = $this->lines($org, (int) $v['requisition_id'], $p);
             $items = [];
             foreach ($this->rows('SELECT id,requisition_item_id FROM customer_quote_items WHERE organization_id=? AND customer_quote_version_id=?', [$org, $v['id']]) as $i) {
@@ -283,7 +314,7 @@ final class CustomerQuoteWriteRepository extends QuoteWriteBase
             }
             $pol = $this->policy($org);
             $eval = self::evaluate($pol, $lines, $t, $p);
-            $vals = self::versionValues($p, $lines, $t, $prep, $pol, $eval);
+            $vals = self::versionValues($p, $lines, $t, $prep, $who, $pol, $eval);
             $before = ['total' => (float) $v['total_amount'], 'currency' => $v['currency_code'], 'valid_until' => $v['valid_until']];
             $this->exec('UPDATE customer_quote_versions SET `' . implode('`=?,`', array_keys($vals)) . '`=? WHERE organization_id=? AND id=?', [...array_values($vals), $org, $v['id']]);
             foreach ($lines as $l) {

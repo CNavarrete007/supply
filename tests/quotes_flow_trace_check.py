@@ -130,7 +130,8 @@ try:
     row6 = find(adm.get(f"{B}/rfq-requisitions?page=1&page_size=50&rfq=quoted&q={req['folio']}")['items'], 'id', req['id']) or {}
     check('T6 · el selector la ofrece para guardar (sin cotización al cliente, todas las partidas con costo)', row6.get('customer_quote', 'x') is None and row6.get('unquoted_items') == 0, json.dumps(row6)[:200])
     best = lambda lid: min((o for o in lines5[lid]['offers'] if o['offered'] and o['unit_price'] is not None), key=lambda o: float(o['unit_price']))  # misma regla de la tarjeta
-    CQ = {'requisition_id': req['id'], 'issue_date': T, 'valid_until': (TODAY + timedelta(days=30)).isoformat(), 'currency': 'MXN', 'preparer_id': contact['id'], 'lead_time': '8 días',
+    ppl = [x for x in adm.get(f'{B}/customer-quote-setup')['people'] if x['id'] != contact['id']]
+    CQ = {'requisition_id': req['id'], 'issue_date': T, 'valid_until': (TODAY + timedelta(days=30)).isoformat(), 'currency': 'MXN', 'preparer_id': contact['id'], 'reviewer_id': ppl[0]['id'], 'approver_id': ppl[1]['id'], 'lead_time': '8 días',
           'delivery_place': 'Almacén de trazado', 'payment_terms': 'Crédito 30 días', 'warranty': '12 meses', 'inclusions': '', 'exclusions': '', 'notes': f'Trazado {RUN}', 'fx_date': T,
           'usd_mxn': '18', 'eur_mxn': None, 'fx_source': 'Manual QA', 'discount': '0', 'vat': '16', 'sf_enabled': True, 'sf_pct': '4', 'sf_comments': '',
           'lines': [{'line_id': lid, 'source': 'offer', 'quote_id': best(lid)['quote_id'], 'qty': str(int(float(x['quantity']))), 'handling': '0', 'margin': '15', 'brand_model': ''}
@@ -146,6 +147,8 @@ try:
 
     # ---------- Tarjetas 7, 8, 1, 9 y 10 (lecturas) ----------
     d7 = adm.get(f"{B}/customer-quotes/{cq['id']}")
+    check('T7 · formato: Revisó/Autorizó asignados (pendientes, sin firma registrada)', d7['item'].get('reviewer_assigned') == ppl[0]['name'] and d7['item'].get('approver_assigned') == ppl[1]['name']
+          and not d7['item'].get('reviewed_by') and not d7['item'].get('approved_by'))
     check('T7 · formato para el cliente: 3 partidas con precio de venta, sin costos internos ni margen', len(d7['items']) == 3 and not re.search(r'cost|margin|charge_pct|extra_amount|supplier', json.dumps(d7['items']), re.I)
           and abs(float(d7['item']['total_amount']) - float(cq['total'])) < 0.005 and [round(float(x['unit_price']), 2) for x in d7['items']] == units, json.dumps(d7['items'])[:300])
     r8 = find(adm.get(f"{B}/customer-quotes?page=1&page_size=10&scope=all&q={cq['folio']}")['items'], 'id', cq['id']) or {}

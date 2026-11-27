@@ -21,7 +21,7 @@ export function addDays(day, n) { const [y, m, d] = String(day).split('-').map(N
 export const normQty = v => { const s = t(v); return /^\d+\.\d+$/.test(s) ? (s.replace(/0+$/, '').replace(/\.$/, '') || '0') : s; };
 
 export function emptyCq(today) {
-  return { buyer: '', requisition: '', revision: '0', issue_date: today, valid_until: addDays(today, 30), currency: 'MXN', status: 'Borrador', preparer: '', lead_time: '', delivery_place: '',
+  return { buyer: '', requisition: '', revision: '0', issue_date: today, valid_until: addDays(today, 30), currency: 'MXN', status: 'Borrador', preparer: '', reviewer: '', approver: '', lead_time: '', delivery_place: '',
     payment_terms: '', warranty: '', inclusions: '', exclusions: '', notes: '', fx_date: today, usd_mxn: '1', eur_mxn: '1', fx_source: 'Manual', discount: '0', vat: '16',
     sf_enabled: true, sf_pct: '0.00', sf_comments: '' };
 }
@@ -104,6 +104,11 @@ export function validateCq(f, lines = [], en = false) {
   else if (f.issue_date && f.valid_until < f.issue_date) errors.valid_until = m('La vigencia no puede ser anterior a la emisión.', 'Validity cannot be before the issue date.');
   if (!CURRENCIES.some(c => c[0] === f.currency)) errors.currency = m('Selecciona la moneda de cotización.', 'Select the quote currency.');
   if (!f.preparer) errors.preparer = m('Selecciona el comprador que elabora la cotización.', 'Select the buyer preparing the quote.');
+  // Revisó y Autorizó: obligatorios y con segregación de funciones (tres personas distintas; nadie se revisa ni autoriza a sí mismo).
+  if (!f.reviewer) errors.reviewer = m('Selecciona quién revisa.', 'Select the reviewer.');
+  else if (f.reviewer === f.preparer) errors.reviewer = m('Quien revisa no puede ser el mismo comprador.', 'The reviewer cannot be the buyer.');
+  if (!f.approver) errors.approver = m('Selecciona quién autoriza.', 'Select the approver.');
+  else if (f.approver === f.preparer || f.approver === f.reviewer) errors.approver = m('Quien autoriza debe ser distinto del comprador y de quien revisa.', 'The approver must differ from the buyer and the reviewer.');
   const needs = new Set([f.currency, ...lines.map(l => l.cost_currency).filter(Boolean)]);
   if (needs.has('USD') && !pos(f.usd_mxn)) errors.usd_mxn = m('Captura el tipo de cambio USD.', 'Enter the USD exchange rate.');
   if (needs.has('EUR') && !pos(f.eur_mxn)) errors.eur_mxn = m('Captura el tipo de cambio EUR.', 'Enter the EUR exchange rate.');
@@ -125,7 +130,7 @@ export function validateCq(f, lines = [], en = false) {
 }
 
 /** Client-facing document data for customerQuoteHtml (no internal cost, handling or margin). */
-export function previewData({ form, lines, totals, req, preparerName, preparerPosition = '', issuer = null, en = false }) {
+export function previewData({ form, lines, totals, req, preparerName, preparerPosition = '', reviewer = null, approver = null, issuer = null, en = false }) {
   return {
     issuer,
     item: { folio: en ? 'To be assigned' : 'Por asignar', version_number: (num(form.revision) ?? 0) + 1, revision: num(form.revision) ?? 0, quote_date: form.issue_date, valid_until: form.valid_until, currency: form.currency,
@@ -134,7 +139,8 @@ export function previewData({ form, lines, totals, req, preparerName, preparerPo
       tax_amount: r2(totals.tax + totals.sfTax), service_fee_enabled: Boolean(form.sf_enabled) && totals.sfSubtotal > 0, service_fee_rate_pct: num(form.sf_pct), service_fee_subtotal_amount: totals.sfSubtotal, service_fee_tax_amount: totals.sfTax, service_fee_total_amount: totals.sfSubtotal, total_amount: totals.total,
       prepared_by_position: preparerPosition, internal_approval_status: 'pending',
       delivery_place: form.delivery_place, lead_time_text: form.lead_time, payment_terms: form.payment_terms, warranty_text: form.warranty, inclusions_text: form.inclusions, exclusions_text: form.exclusions,
-      notes: t(form.notes) || DEFAULT_PDF_NOTES[en ? 1 : 0], prepared_by: preparerName || '', reviewed_by: '', approved_by: '' },
+      notes: t(form.notes) || DEFAULT_PDF_NOTES[en ? 1 : 0], prepared_by: preparerName || '', reviewed_by: '', approved_by: '',
+      reviewer_assigned: reviewer?.name || '', reviewer_assigned_position: reviewer?.position || '', approver_assigned: approver?.name || '', approver_assigned_position: approver?.position || '' },
     items: lines.map(l => { const p = priceLine(l, form); return { line_number: l.line_number, description: l.description, brand_model: t(l.brand_model), quantity: l.qty, unit_label: l.unit, unit_price: p.unit, line_subtotal: p.subtotal }; }),
   };
 }
@@ -146,7 +152,7 @@ export const CQ_SAVE_STATUS = 'Borrador';
 /** Body: the server takes each cost from the award/registered offer and recomputes prices and totals (none are sent). */
 export function cqPayload(f, lines = [], edit = false) {
   const needs = new Set([f.currency, ...lines.map(l => l.cost_currency).filter(Boolean)]);
-  const p = { issue_date: f.issue_date, valid_until: f.valid_until, currency: f.currency, preparer_id: f.preparer, lead_time: t(f.lead_time), delivery_place: t(f.delivery_place),
+  const p = { issue_date: f.issue_date, valid_until: f.valid_until, currency: f.currency, preparer_id: f.preparer, reviewer_id: f.reviewer, approver_id: f.approver, lead_time: t(f.lead_time), delivery_place: t(f.delivery_place),
     payment_terms: t(f.payment_terms), warranty: t(f.warranty), inclusions: t(f.inclusions), exclusions: t(f.exclusions), notes: t(f.notes), fx_date: f.fx_date || null,
     usd_mxn: needs.has('USD') ? t(f.usd_mxn) : null, eur_mxn: needs.has('EUR') ? t(f.eur_mxn) : null, fx_source: t(f.fx_source), discount: t(f.discount), vat: t(f.vat),
     sf_enabled: Boolean(f.sf_enabled), sf_pct: f.sf_enabled ? t(f.sf_pct) : '0', sf_comments: f.sf_enabled ? t(f.sf_comments) : '',
@@ -159,7 +165,7 @@ export function cqFromDraft(draft, compLines = [], f = {}) {
   const d = draft?.item || {}; const byLine = Object.fromEntries((draft?.items || []).map(i => [i.line_id, i]));
   const n = v => (v === null || v === undefined || v === '' ? '' : normQty(String(v)));
   const form = { ...f, requisition: d.requisition_id || f.requisition, revision: String(d.revision ?? 0), issue_date: String(d.quote_date || '').slice(0, 10), valid_until: String(d.valid_until || '').slice(0, 10),
-    currency: d.currency || f.currency, status: CQ_SAVE_STATUS, preparer: d.preparer_id || '', lead_time: d.lead_time_text || '', delivery_place: d.delivery_place || '', payment_terms: d.payment_terms || '',
+    currency: d.currency || f.currency, status: CQ_SAVE_STATUS, preparer: d.preparer_id || '', reviewer: d.reviewer_id || '', approver: d.approver_id || '', lead_time: d.lead_time_text || '', delivery_place: d.delivery_place || '', payment_terms: d.payment_terms || '',
     warranty: d.warranty_text || '', inclusions: d.inclusions_text || '', exclusions: d.exclusions_text || '', notes: d.notes || '', fx_date: String(d.exchange_rate_date || f.fx_date || '').slice(0, 10),
     usd_mxn: d.usd_mxn_rate ? n(d.usd_mxn_rate) : (f.usd_mxn || '1'), eur_mxn: d.eur_mxn_rate ? n(d.eur_mxn_rate) : (f.eur_mxn || '1'), fx_source: d.exchange_rate_source || '',
     discount: n(d.discount_rate_pct) || '0', vat: n(d.tax_rate_pct) || '0', sf_enabled: Boolean(d.service_fee_enabled), sf_pct: n(d.service_fee_rate_pct) || '0.00', sf_comments: d.service_fee_comments || '' };
@@ -221,7 +227,7 @@ export function cqSavedText(out, en = false) {
     : m(`Cotización al cliente ${t(out?.folio)} (Rev. ${out?.revision ?? 0}) guardada en MariaDB como borrador interno: ${out?.lines} partida(s), total $${total} ${out?.currency}. No se envió a revisión ni al cliente.`, `Client quote ${t(out?.folio)} saved to MariaDB as an internal draft: ${out?.lines} item(s), total $${total} ${out?.currency}. Not sent for review nor to the client.`);
 }
 
-const CQ_FIELD = { requisition_id: 'requisition', preparer_id: 'preparer', issue_date: 'issue_date', valid_until: 'valid_until', currency: 'currency', discount: 'discount', vat: 'vat', sf_pct: 'sf_pct', usd_mxn: 'usd_mxn', eur_mxn: 'eur_mxn' };
+const CQ_FIELD = { requisition_id: 'requisition', preparer_id: 'preparer', reviewer_id: 'reviewer', approver_id: 'approver', issue_date: 'issue_date', valid_until: 'valid_until', currency: 'currency', discount: 'discount', vat: 'vat', sf_pct: 'sf_pct', usd_mxn: 'usd_mxn', eur_mxn: 'eur_mxn' };
 const CQ_BLOCKING = ['QUOTE_WRITE_NOT_PROVISIONED', 'QUOTE_WRITE_ACCOUNT_REJECTED', 'QUOTE_WRITE_GRANTS_INCOMPLETE'];
 /** Server error → { kind: error|warn, text, field (form key or line:<id>), retry (reuse the Idempotency-Key) }. */
 export function cqSaveError(status, body, en = false) {

@@ -276,7 +276,10 @@ final class QuoteReadRepository
         foreach ($policies as &$p) { $p['version_number'] = (int) $p['version_number']; $p['rules'] = $p['rules_json'] === null ? null : json_decode((string) $p['rules_json'], true); unset($p['rules_json'], $p['id']); }
         unset($p);
         $issuer = $this->rows('SELECT legal_name,tax_identifier,phone,email,postal_address FROM organizations WHERE id=? LIMIT 1', [$org])[0] ?? null;
-        return ['issuer' => $issuer, 'fx' => $fx ? ['usd_mxn' => $fx[0]['usd_mxn_rate'], 'eur_mxn' => $fx[0]['eur_mxn_rate'], 'date' => $fx[0]['exchange_rate_date'], 'source' => $fx[0]['exchange_rate_source'], 'folio' => $fx[0]['folio']] : null, 'policies' => $policies];
+        // Tarjeta 6 · «Revisó» y «Autorizó»: usuarios activos con acceso (nombre y puesto).
+        $people = $this->rows("SELECT u.public_id AS id,p.display_name AS name,p.position_title AS position FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id
+            WHERE u.organization_id=? AND u.access_enabled=1 AND u.status_code='active' ORDER BY p.display_name,u.id", [$org]);
+        return ['issuer' => $issuer, 'people' => $people, 'fx' => $fx ? ['usd_mxn' => $fx[0]['usd_mxn_rate'], 'eur_mxn' => $fx[0]['eur_mxn_rate'], 'date' => $fx[0]['exchange_rate_date'], 'source' => $fx[0]['exchange_rate_source'], 'folio' => $fx[0]['folio']] : null, 'policies' => $policies];
     }
 
     private function facet(string $sql, int $org): array
@@ -526,7 +529,9 @@ final class QuoteReadRepository
             (SELECT cc.value FROM party_contact_channels cc WHERE cc.organization_id=c.organization_id AND cc.owner_entity_id=c.id AND cc.channel_type=\'phone\' ORDER BY cc.is_primary DESC,cc.source_ordinal,cc.id LIMIT 1) AS client_phone,
             (SELECT p.position_title FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.prepared_by AND u.organization_id=v.organization_id) AS prepared_by_position,
             (SELECT p.position_title FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.reviewed_by AND u.organization_id=v.organization_id) AS reviewed_by_position,
-            (SELECT p.position_title FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.approved_by AND u.organization_id=v.organization_id) AS approved_by_position
+            (SELECT p.position_title FROM users u JOIN people p ON p.id=u.person_id AND p.organization_id=u.organization_id WHERE u.id=v.approved_by AND u.organization_id=v.organization_id) AS approved_by_position,
+            JSON_VALUE(v.people_snapshots,\'$.reviewerAssigned\') AS reviewer_assigned,JSON_VALUE(v.people_snapshots,\'$.reviewerAssignedPosition\') AS reviewer_assigned_position,
+            JSON_VALUE(v.people_snapshots,\'$.approverAssigned\') AS approver_assigned,JSON_VALUE(v.people_snapshots,\'$.approverAssignedPosition\') AS approver_assigned_position
             FROM customer_quote_versions v JOIN business_entities e ON e.id=v.id AND e.organization_id=v.organization_id' . sprintf(self::REQ, 'v') . ' WHERE v.organization_id=? AND e.public_id=? LIMIT 1', [$org, $id]);
         if (! $h) {
             return null;
@@ -550,7 +555,8 @@ final class QuoteReadRepository
     {
         $h = $this->rows("SELECT ve.public_id AS id,v.id AS db_id,ve.row_version AS version,v.folio,COALESCE(v.legacy_revision_number,v.version_number-1) AS revision,re.public_id AS requisition_id,
               v.quote_date,v.valid_until,v.currency_code AS currency,v.exchange_rate_date,v.usd_mxn_rate,v.eur_mxn_rate,v.exchange_rate_source,
-              (SELECT u.public_id FROM users u WHERE u.id=v.prepared_by AND u.organization_id=v.organization_id) AS preparer_id,v.delivery_place,v.lead_time_text,v.payment_terms,v.warranty_text,
+              (SELECT u.public_id FROM users u WHERE u.id=v.prepared_by AND u.organization_id=v.organization_id) AS preparer_id,
+              JSON_VALUE(v.people_snapshots,'$.reviewerAssignedId') AS reviewer_id,JSON_VALUE(v.people_snapshots,'$.approverAssignedId') AS approver_id,v.delivery_place,v.lead_time_text,v.payment_terms,v.warranty_text,
               v.inclusions_text,v.exclusions_text,v.notes,v.discount_rate_pct,v.tax_rate_pct,v.service_fee_enabled,v.service_fee_rate_pct,v.service_fee_comments,v.total_amount,v.approval_evaluation_snapshot
             FROM customer_quote_versions v JOIN business_entities ve ON ve.id=v.id AND ve.organization_id=v.organization_id JOIN business_entities re ON re.id=v.requisition_id AND re.organization_id=v.organization_id
             WHERE v.organization_id=? AND ve.public_id=? AND ve.imported_at IS NULL AND ve.legacy_id IS NULL AND v.document_status='draft' AND v.internal_approval_status='not_requested'

@@ -31,14 +31,17 @@ export function docTotals(v = {}) {
   return { tpGross: r2(tpTaxable + disc), discount: disc, tpTaxable, tpTax, tpTotal, vatRate, sfOn: sfOn && (sfSub !== 0 || sfTax !== 0), sfRate: n(v.service_fee_rate_pct), sfSub, sfTax, sfTotal: r2(sfSub + sfTax), genSub, genTax, total: n(v.total_amount) ?? r2(genSub + genTax) };
 }
 
-/** Electronic signature state: buyer signs when the quote has a preparer; review/authorization when recorded. */
+/**
+ * Electronic signature state: buyer signs when the quote has a preparer; review/authorization only when RECORDED
+ * (reviewed_by/approved_by). The people assigned in card 6 (reviewer_assigned/approver_assigned) show their name as «Pendiente».
+ */
 export function signatures(v = {}, en = false) {
   const L = (es, e) => (en ? e : es);
   const approved = String(v.internal_approval_status || '').toLowerCase() === 'approved';
   return [
     { role: L('Comprador', 'Buyer'), name: v.prepared_by || '', position: v.prepared_by_position || '', signed: Boolean(v.prepared_by) },
-    { role: L('Revisó', 'Reviewed'), name: v.reviewed_by || '', position: v.reviewed_by_position || '', signed: Boolean(v.reviewed_by) && (approved || Boolean(v.approved_by)) },
-    { role: L('Autorizó', 'Authorized'), name: v.approved_by || '', position: v.approved_by_position || '', signed: Boolean(v.approved_by) && approved },
+    { role: L('Revisó', 'Reviewed'), name: v.reviewed_by || v.reviewer_assigned || '', position: (v.reviewed_by ? v.reviewed_by_position : v.reviewer_assigned_position) || '', signed: Boolean(v.reviewed_by) && (approved || Boolean(v.approved_by)) },
+    { role: L('Autorizó', 'Authorized'), name: v.approved_by || v.approver_assigned || '', position: (v.approved_by ? v.approved_by_position : v.approver_assigned_position) || '', signed: Boolean(v.approved_by) && approved },
   ];
 }
 

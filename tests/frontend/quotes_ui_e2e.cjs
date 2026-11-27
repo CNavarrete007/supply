@@ -89,8 +89,11 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
       await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(f); await resp;
       const row = page.getByRole('row').filter({ hasText: f }); await row.waitFor(); return flat(await row.innerText());
     };
-    const overdue = rfqs.items.find(r => !r.responded && r.deadline < new Date().toISOString().slice(0, 10));
-    const answered = rfqs.items.find(r => r.responded);
+    // Las RFQ sintéticas del día (vencen hoy) llenan la página 1: si ahí no hay una vencida/respondida se usan las sembradas.
+    const seededRfqs = (await api('/api/v1/quotes/rfqs?page=1&page_size=50&q=RFQ-QA')).items;
+    const isOverdue = r => !r.responded && r.deadline < new Date().toISOString().slice(0, 10);
+    const overdue = rfqs.items.find(isOverdue) || seededRfqs.find(isOverdue);
+    const answered = rfqs.items.find(r => r.responded) || seededRfqs.find(r => r.responded);
     check('RFQ vencida sin respuesta marcada', overdue && (await rfqRowOf(overdue.folio)).includes('Vencida'));
     check('RFQ respondida muestra la cotización', answered && (await rfqRowOf(answered.folio)).includes(`Respondida · ${answered.quote_folio}`));
     const searched = page.waitForResponse(r => /\/quotes\/rfqs\?.*q=RFQ-QA-0004/.test(r.url()));
@@ -400,6 +403,11 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('Guardar incompleto: marca lo pendiente (margen) sin enviar nada', flat(await page.getByTestId('cq-status').innerText()).startsWith('No se puede guardar. Pendiente:') && writes.length === 0);
     for (const l of lines6) { await page.getByLabel(`% margen partida ${l.line_number}`).fill('20'); await page.getByLabel(`Entrega / manipulación partida ${l.line_number}`).fill('150'); }
     await page.getByRole('combobox', { name: 'Comprador', exact: true }).selectOption({ index: 1 });
+    // Revisó y Autorizó: obligatorios y distintos del Comprador y entre sí (segregación de funciones).
+    const prepVal = await page.getByRole('combobox', { name: 'Comprador', exact: true }).inputValue();
+    const pplVals = (await page.getByRole('combobox', { name: 'Revisó' }).locator('option').evaluateAll(os => os.map(o => o.value))).filter(v => v && v !== prepVal);
+    await page.getByRole('combobox', { name: 'Revisó' }).selectOption(pplVals[0]);
+    await page.getByRole('combobox', { name: 'Autorizó' }).selectOption(pplVals[1]);
     await page.getByLabel('Service Fee %').fill('5');
     const f6 = { ...cqModel.emptyCq('2026-01-01'), currency: await page.getByRole('combobox', { name: 'Moneda de cotización / cliente' }).inputValue(), usd_mxn: await page.getByRole('textbox', { name: '1 USD = MXN' }).inputValue(), eur_mxn: await page.getByRole('textbox', { name: '1 EUR = MXN' }).inputValue(), sf_pct: '5' };
     const priced6 = cqModel.linesFromComparison(cmp6.lines, f6).map(l => ({ ...l, margin: '20', handling: '150' })); // mejor oferta en MXN con el tipo de cambio de la tarjeta
@@ -481,11 +489,11 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('"Abrir todas": todas las revisiones (página 1) y leyenda', await page.getByTestId('cqm-row').count() === Math.min(m8.total, 25) && flat(await page.getByTestId('cqm-matrix').innerText()).includes(`Mostrando ${m8.total} cotización(es) registradas`));
     const heads8 = (await page.getByTestId('cqm-matrix').locator('thead th').allInnerTexts()).map(x => flat(x).toUpperCase());
     check('matriz: 15 columnas del diseño', JSON.stringify(heads8) === JSON.stringify(['COTIZACIÓN', 'REV.', 'CLIENTE', 'REQUISICIÓN', 'REFERENCIA INTERNA', 'EMISIÓN', 'VIGENCIA', 'TOTAL', 'ESTATUS', 'COMPRADOR', 'REVISÓ', 'AUTORIZÓ', 'DECISIÓN DEL CLIENTE', 'PDF', 'ACCIONES']), heads8.join('|'));
-    const row8 = rowOf(cur.folio);
+    const row8 = await rowOn(cur.folio);
     const r8 = flat(await row8.innerText());
     check('fila vigente: folio, Rev., cliente, requisición, fechas, total, estatus y decisión', [cur.folio, `Rev. ${cur.revision}`, `v${cur.version_number} / ${cur.versions}`, cur.client_name, cur.requisition, cur.quote_date, cur.valid_until, usd(cur.total_amount), 'Aprobada', (cur.prepared_by || '—').toUpperCase(), String(cur.last_decision_at || '').slice(0, 16)].every(x => r8.includes(x)), r8);
     const old = cqAll.items.find(v => v.series === cur.series && v.id !== cur.id);
-    if (old) check('la revisión sustituida aparece como "Sustituida"', flat(await rowOf(old.folio).innerText()).includes('Sustituida'));
+    if (old) check('la revisión sustituida aparece como "Sustituida"', flat(await (await rowOn(old.folio)).innerText()).includes('Sustituida'));
     const bySt = page.waitForResponse(r => /\/customer-quotes\?.*status=superseded/.test(r.url()));
     await page.getByRole('combobox', { name: 'Estatus' }).selectOption('superseded');
     const st8 = await (await bySt).json();
@@ -503,8 +511,9 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('button', { name: `Abrir cliente: ${c8.name}` }).click();
     const cl8 = await (await byCl).json(); await page.waitForTimeout(300);
     check('"Abrir cliente": solo sus cotizaciones (filtro en el servidor)', cl8.total === c8.total && cl8.items.every(x => x.client_id === c8.id) && flat(await page.getByTestId('cqm-matrix').innerText()).includes(`Mostrando detalle de cotizaciones para ${c8.name}`));
+    const allBack = page.waitForResponse(r => /\/quotes\/customer-quotes\?.*scope=all/.test(r.url()) && !r.url().includes(`client=${c8.id}`));
     await page.getByRole('button', { name: /Abrir todas/ }).click();
-    await row8.waitFor();
+    await allBack; await page.waitForTimeout(400); await rowOn(cur.folio); await row8.waitFor();
     // VER PDF → visor formal (iframe aislado)
     const pdf8 = page.waitForResponse(r => r.url().endsWith(`/quotes/customer-quotes/${cur.id}`));
     await row8.getByRole('button', { name: 'VER PDF' }).click();
@@ -513,7 +522,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByTestId('rev-pdf').getByRole('button', { name: 'Cerrar' }).click();
     // MODIFICAR DESDE REQ. → revisión sustituida: motivo; vigente: formulario R3A real o motivo
     if (old) {
-      await rowOf(old.folio).getByRole('button', { name: /MODIFICAR DESDE REQ\./ }).click();
+      await (await rowOn(old.folio)).getByRole('button', { name: /MODIFICAR DESDE REQ\./ }).click();
       await page.getByTestId('rev-blocked').waitFor();
       check('MODIFICAR DESDE REQ. en revisión sustituida remite a la vigente', flat(await page.getByTestId('rev-blocked').innerText()).includes(`sustituida por ${cur.folio}`));
       await page.getByRole('button', { name: 'Entendido' }).click();
@@ -572,7 +581,11 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('KPI: familias, Rev. N, aprobadas y ligadas a CR desde el servidor', [[S1.families, 'Familias de cotización'], [S1.with_rev_n, 'Con Rev. N'], [S1.approved, 'Aprobadas vigentes/históricas'], [S1.linked_cr, 'Ligadas a Change Request']].every(([n, t], i) => kpis[i].startsWith(String(n)) && kpis[i].includes(t)), kpis.join(' | '));
     check('una tarjeta por familia (página 1)', await page.getByTestId('rev-family').count() === Math.min(fam.total, 24));
     check('familia sintética con Rev. 0 y revisión vigente', !!f0 && f0.revisions === cqAll.items.filter(v => v.series === cur.series).length && f0.current_id === cur.id && (!old || Number(f0.rev0_total) === Number(old.total_amount)));
-    const famCard = page.getByTestId('rev-family').filter({ hasText: f0.current_folio });
+    // Cada borrador sintético crea su familia: si la sembrada no está en la página 1 se busca por folio.
+    const famOn = async () => { const fam = page.getByTestId('rev-family').filter({ hasText: f0.current_folio }); await page.waitForTimeout(300);
+      if (!(await fam.count())) { const w = page.waitForResponse(r => /\/quotes\/revisions\?.*q=/.test(r.url())); await page.getByRole('searchbox', { name: 'Buscar' }).fill(f0.current_folio); await w; await fam.first().waitFor(); }
+      return fam; };
+    const famCard = await famOn();
     const fc = flat(await famCard.innerText());
     const amt = v => Number(v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     check('tarjeta: folio · cliente, requisición · CR, Rev. N · estatus', fc.includes(`${f0.current_folio} · ${f0.client_name}`) && fc.includes(`${f0.requisition} · ${f0.change_request || 'Sin Change Request'}`) && fc.includes(`Rev. ${f0.current_rev} · ${f0.status_label}`), fc);
@@ -593,7 +606,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const grp = await (await byGroup).json();
     check('filtro de estatus en el servidor (aprobadas)', grp.total === S1.current_approved && grp.items.every(x => x.status_group === 'approved'));
     await page.getByRole('combobox', { name: 'Estatus' }).selectOption('all');
-    await page.getByTestId('rev-family').filter({ hasText: f0.current_folio }).waitFor();
+    await (await famOn()).first().waitFor();
     // VER PDF → vista previa de la revisión vigente (sin costos internos)
     const pdfResp = page.waitForResponse(r => r.url().endsWith(`/quotes/customer-quotes/${f0.current_id}`));
     await famCard.getByRole('button', { name: 'VER PDF' }).click();

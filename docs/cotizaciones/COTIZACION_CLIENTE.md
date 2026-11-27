@@ -53,6 +53,26 @@ reutiliza `customerQuoteHtml` (ahora con comentarios y modo vista previa).
 Las cotizaciones al cliente **registradas** se consultan en la tarjeta 7 *Formato para el cliente* (la tarjeta 1
 "ABRIR REV. VIGENTE" abre ahí la versión vigente).
 
+## Comprador, Revisó y Autorizó (27 nov 2026)
+
+A petición del usuario, el formulario tiene tres responsables obligatorios, mostrados como «NOMBRE · PUESTO»:
+
+| Campo | Quién puede ser | Qué se guarda |
+| --- | --- | --- |
+| **Comprador** | Usuario activo con rol Comprador o Master Admin | `prepared_by` (elabora la cotización) |
+| **Revisó** | Cualquier usuario activo con acceso (en los datos originales los roles son admin/compras/consulta) | Persona **asignada** en `people_snapshots.reviewerAssigned*` |
+| **Autorizó** | Cualquier usuario activo con acceso | Persona **asignada** en `people_snapshots.approverAssigned*` |
+
+- **Segregación de funciones:** Comprador, Revisó y Autorizó deben ser **tres personas distintas** (nadie se revisa ni
+  se autoriza a sí mismo). La tarjeta lo marca en rojo y el servidor responde `422 SEGREGATION_REQUIRED` con el campo.
+- **Asignados, no firmados:** Revisó y Autorizó quedan como responsables asignados. `reviewed_by` / `approved_by` (la firma
+  electrónica de que ya revisó o autorizó) **no se llenan**: la revisión y la autorización siguen bloqueadas. En el
+  formato (vista previa, tarjeta 7 y VER PDF) aparecen con su nombre y puesto y el estado **«Pendiente»**.
+- Errores del servidor: `422 INVALID_CUSTOMER_QUOTE` (campo `reviewer_id`/`approver_id` faltante o inválido),
+  `422 REVIEWER_UNAVAILABLE` / `APPROVER_UNAVAILABLE` (no es un usuario activo con acceso).
+- La lista sale de `GET /api/v1/quotes/customer-quote-setup` (`people`: id, nombre y puesto). La cuenta `quotewrite` no
+  necesitó permisos nuevos (ya leía `users`/`people` y escribe `people_snapshots`).
+
 ## Selector de requisiciones: qué se puede guardar (27 nov 2026)
 
 Antes de elegir, cada requisición del selector indica qué pasará al guardar:
@@ -130,9 +150,9 @@ tipo de cambio sintético en `CQ-QA-0001-R1` para ejercitar el nivel de aprobaci
 
 | Prueba | Resultado |
 | --- | --- |
-| `node --test tests/frontend/customer_quote_builder.test.mjs` | 13/13 |
+| `node --test tests/frontend/customer_quote_builder.test.mjs` | 16/16 |
 | `tests/frontend/quotes_ui_e2e.cjs` (aborta toda escritura; el POST del borrador se corta y no se da por guardado) | 239/239 |
-| `tests/customer_quote_write_http_check.py` (escribe en la base sintética) | 37/37 |
-| `tests/frontend/customer_quote_write_ui_e2e.cjs` (escribe en la base sintética) | 28/28 |
+| `tests/customer_quote_write_http_check.py` (escribe en la base sintética) | 45/45 |
+| `tests/frontend/customer_quote_write_ui_e2e.cjs` (escribe en la base sintética) | 29/29 |
 | `tests/quotewrite_contract_check.py` | 11/11 |
 | `tests/quotes_http_check.py` | 91/91 |

@@ -96,7 +96,7 @@ final class CustomerQuoteInput
         if (! is_array($j) || array_is_list($j)) {
             self::bad('body');
         }
-        $allowed = ['requisition_id', 'issue_date', 'valid_until', 'currency', 'preparer_id', 'lead_time', 'delivery_place', 'payment_terms', 'warranty', 'inclusions', 'exclusions', 'notes',
+        $allowed = ['requisition_id', 'issue_date', 'valid_until', 'currency', 'preparer_id', 'reviewer_id', 'approver_id', 'lead_time', 'delivery_place', 'payment_terms', 'warranty', 'inclusions', 'exclusions', 'notes',
             'fx_date', 'usd_mxn', 'eur_mxn', 'fx_source', 'discount', 'vat', 'sf_enabled', 'sf_pct', 'sf_comments', 'lines'];
         if (array_diff(array_keys($j), $allowed) !== []) {
             self::bad('body');
@@ -114,8 +114,11 @@ final class CustomerQuoteInput
         if (! is_string($currency) || preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
             self::bad('currency');
         }
-        if (! self::uuid($j['preparer_id'] ?? null)) {
-            self::bad('preparer_id');
+        // Comprador, Revisó y Autorizó (obligatorios): personas ASIGNADAS; la revisión y la autorización no se registran aquí.
+        foreach (['preparer_id', 'reviewer_id', 'approver_id'] as $k) {
+            if (! self::uuid($j[$k] ?? null)) {
+                self::bad($k);
+            }
         }
         $sfOn = $j['sf_enabled'] ?? false;
         if (! is_bool($sfOn)) {
@@ -152,7 +155,7 @@ final class CustomerQuoteInput
                 'margin' => self::pct($l['margin'] ?? null, $f, 1000), 'brand_model' => trim($brand)];
         }
         return [
-            'requisition_id' => $edit ? null : $req, 'issue_date' => $issue, 'valid_until' => $valid, 'currency' => $currency, 'preparer_id' => $j['preparer_id'],
+            'requisition_id' => $edit ? null : $req, 'issue_date' => $issue, 'valid_until' => $valid, 'currency' => $currency, 'preparer_id' => $j['preparer_id'], 'reviewer_id' => $j['reviewer_id'], 'approver_id' => $j['approver_id'],
             'lead_time' => self::text($j, 'lead_time', 500), 'delivery_place' => self::text($j, 'delivery_place', 500), 'payment_terms' => self::text($j, 'payment_terms', 500),
             'warranty' => self::text($j, 'warranty', 500), 'inclusions' => self::text($j, 'inclusions', 4000), 'exclusions' => self::text($j, 'exclusions', 4000), 'notes' => self::text($j, 'notes', 4000),
             'fx_date' => self::date($j['fx_date'] ?? null, 'fx_date', false), 'usd_mxn' => self::rate($j['usd_mxn'] ?? null, 'usd_mxn'), 'eur_mxn' => self::rate($j['eur_mxn'] ?? null, 'eur_mxn'),

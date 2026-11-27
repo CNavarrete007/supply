@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { emptyCq, addDays, convert, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData, CQ_STATUSES, DEFAULT_PDF_NOTES, CQ_SAVE_STATUS, cqPayload, cqFromDraft, cqExistingBlock, cqSavedText, cqSaveError, cqReqOption, cqReqSummary, bestOffer } from '../../src/views/quotes/customerQuoteBuilder.mjs';
 import { customerQuoteHtml } from '../../src/views/quotes/model.mjs';
 
-const f0 = { ...emptyCq('2026-09-24'), buyer: 'b', requisition: 'r', preparer: 'u', currency: 'USD', usd_mxn: '17.25', eur_mxn: '18.9', sf_pct: '5' };
+const f0 = { ...emptyCq('2026-09-24'), buyer: 'b', requisition: 'r', preparer: 'u', reviewer: 'rv', approver: 'ap', currency: 'USD', usd_mxn: '17.25', eur_mxn: '18.9', sf_pct: '5' };
 const cmpLines = [
   { id: 'l1', line_number: 1, description: 'Material', quantity: '3.000000', unit_label: 'pza', category: 'Materiales', line_status: 'active', award: { quote_id: 'A', supplier_name: 'Aceros', quantity: '3.000000', unit_price: '500.000000', currency: 'USD' }, offers: [] },
   { id: 'l2', line_number: 2, description: 'Flete', quantity: '1.000000', unit_label: 'viaje', line_status: 'active', award: null, offers: [{ quote_id: 'B', supplier_name: 'Equipos', offered: true, unit_price: '9000', currency: 'MXN' }, { quote_id: 'C', supplier_name: 'Otro', offered: true, unit_price: '9500', currency: 'MXN' }] },
@@ -85,7 +85,7 @@ test('vista previa para el cliente: sin costos, manipulación ni margen y con co
 test('payload del borrador: sin precios ni totales (el servidor los recalcula), tipo de cambio solo si se usa', () => {
   const l = linesFromComparison(cmpLines).map(x => ({ ...x, margin: '20', handling: ' 150 ', brand_model: ' ACME X ' }));
   const p = cqPayload({ ...f0, lead_time: ' 5 días ' }, l);
-  assert.equal(p.requisition_id, 'r'); assert.equal(p.preparer_id, 'u'); assert.equal(p.lead_time, '5 días');
+  assert.equal(p.requisition_id, 'r'); assert.equal(p.preparer_id, 'u'); assert.deepEqual([p.reviewer_id, p.approver_id], ['rv', 'ap']); assert.equal(p.lead_time, '5 días');
   assert.equal(p.usd_mxn, '17.25'); assert.equal(p.eur_mxn, null, 'EUR no se usa: no se envía');
   assert.deepEqual(p.lines[0], { line_id: 'l1', source: 'award', quote_id: 'A', qty: '3', handling: '150', margin: '20', brand_model: 'ACME X' });
   assert.ok(!JSON.stringify(p).match(/unit_price|subtotal|total|status/), 'ni precios, ni totales, ni estatus');
@@ -99,10 +99,11 @@ test('payload del borrador: sin precios ni totales (el servidor los recalcula), 
 
 test('abrir el borrador registrado: formulario y partidas sobre el comparativo vigente', () => {
   const draft = { item: { id: 'q1', version: 3, folio: 'COT-2026-0007', revision: 0, requisition_id: 'r', quote_date: '2026-11-20', valid_until: '2026-12-20', currency: 'USD', exchange_rate_date: '2026-11-19',
-    usd_mxn_rate: '18.500000', eur_mxn_rate: null, exchange_rate_source: 'Banxico', preparer_id: 'u2', delivery_place: 'Planta', lead_time_text: '5 días', payment_terms: '30 días', warranty_text: '1 año',
+    usd_mxn_rate: '18.500000', eur_mxn_rate: null, exchange_rate_source: 'Banxico', preparer_id: 'u2', reviewer_id: 'r2', approver_id: 'a2', delivery_place: 'Planta', lead_time_text: '5 días', payment_terms: '30 días', warranty_text: '1 año',
     inclusions_text: 'Flete', exclusions_text: '', notes: 'n', discount_rate_pct: '2.5000', tax_rate_pct: '16.0000', service_fee_enabled: true, service_fee_rate_pct: '5.0000', service_fee_comments: 'sf' },
     items: [{ line_id: 'l1', brand_model: 'ACME', quantity: '2.000000', handling: '10.00', margin: '15.0000' }] };
   const { form, lines } = cqFromDraft(draft, linesFromComparison(cmpLines), { ...f0, usd_mxn: '17' });
+  assert.deepEqual([form.reviewer, form.approver], ['r2', 'a2']);
   assert.deepEqual([form.revision, form.issue_date, form.currency, form.preparer, form.usd_mxn, form.eur_mxn, form.discount, form.vat, form.sf_pct, form.status, form.fx_source],
     ['0', '2026-11-20', 'USD', 'u2', '18.5', '18.9', '2.5', '16', '5', 'Borrador', 'Banxico']);
   assert.deepEqual([lines[0].qty, lines[0].handling, lines[0].margin, lines[0].brand_model, lines[0].source], ['2', '10', '15', 'ACME', 'award']);
@@ -131,6 +132,7 @@ test('mensajes de resultado y errores del servidor', () => {
   assert.equal(cqSaveError(503, { error: { code: 'QUOTE_WRITE_NOT_PROVISIONED', message: 'No habilitado.' } }).kind, 'warn');
   assert.equal(cqSaveError(412, {}).kind, 'warn');
   assert.deepEqual(cqSaveError(422, { error: { code: 'INVALID_CUSTOMER_QUOTE', field: 'preparer_id' } }).field, 'preparer');
+  assert.equal(cqSaveError(422, { error: { code: 'SEGREGATION_REQUIRED', message: 'x', field: 'approver_id' } }).field, 'approver');
   assert.equal(cqSaveError(422, { error: { code: 'INVALID_CUSTOMER_QUOTE', field: 'line:abc' } }).field, 'line:abc');
   assert.equal(cqSaveError(409, { error: { code: 'COST_SOURCE_CHANGED', message: 'Cambió el costo.', field: 'line:l2' } }).field, 'line:l2');
   assert.equal(cqSaveError(409, { error: { code: 'DRAFT_EXISTS', message: 'Ya existe.' } }).text, 'Ya existe.');
@@ -160,4 +162,24 @@ test('mejor oferta con monedas distintas: se compara en MXN con el tipo de cambi
   const cmp = [{ id: 'x', line_number: 1, description: 'Bomba', quantity: '2', unit_label: 'pza', line_status: 'active', award: null, offers: [A, B] }];
   assert.deepEqual(linesFromComparison(cmp, { usd_mxn: '18' }).map(l => [l.quote_id, l.cost_unit, l.cost_currency]), [['A', '1200', 'MXN']]);
   assert.deepEqual(linesFromComparison(cmp, { usd_mxn: '17' }).map(l => [l.quote_id, l.cost_unit, l.cost_currency]), [['B', '70', 'USD']]);
+});
+
+test('Revisó y Autorizó: obligatorios y tres personas distintas (segregación de funciones)', () => {
+  const l = linesFromComparison(cmpLines).slice(0, 2).map(x => ({ ...x, margin: '10' }));
+  const ok = validateCq(f0, l); assert.equal(ok.errors.reviewer, undefined); assert.equal(ok.errors.approver, undefined);
+  assert.match(validateCq({ ...f0, reviewer: '' }, l).errors.reviewer, /Selecciona quién revisa/);
+  assert.match(validateCq({ ...f0, approver: '' }, l).errors.approver, /Selecciona quién autoriza/);
+  assert.match(validateCq({ ...f0, reviewer: 'u' }, l).errors.reviewer, /no puede ser el mismo comprador/);
+  assert.match(validateCq({ ...f0, approver: 'u' }, l).errors.approver, /distinto del comprador y de quien revisa/);
+  assert.match(validateCq({ ...f0, approver: 'rv' }, l).errors.approver, /distinto del comprador y de quien revisa/);
+  assert.deepEqual([emptyCq('2026-01-01').reviewer, emptyCq('2026-01-01').approver], ['', '']);
+});
+
+test('documento: Revisó/Autorizó asignados aparecen como «Pendiente», sin firma, hasta que se registren', async () => {
+  const { signatures } = await import('../../src/views/quotes/quoteDocument.mjs');
+  const s = signatures({ prepared_by: 'Comprador X', reviewer_assigned: 'Revisora Y', reviewer_assigned_position: 'Contabilidad', approver_assigned: 'Director Z', internal_approval_status: 'not_requested' });
+  assert.deepEqual(s.map(x => [x.name, x.signed]), [['Comprador X', true], ['Revisora Y', false], ['Director Z', false]]);
+  assert.equal(s[1].position, 'Contabilidad');
+  const r = signatures({ prepared_by: 'C', reviewed_by: 'R real', reviewer_assigned: 'otro', approved_by: 'A real', internal_approval_status: 'approved' });
+  assert.deepEqual(r.map(x => [x.name, x.signed]), [['C', true], ['R real', true], ['A real', true]], 'lo registrado manda sobre lo asignado');
 });

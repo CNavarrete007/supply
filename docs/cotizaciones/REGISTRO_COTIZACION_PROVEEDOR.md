@@ -49,7 +49,7 @@
 | `PUT` | `/api/v1/quotes/supplier-quotes/{id}` | Edición. `If-Match: "<versión>"` (428 si falta, 412 si cambió); 409 `IMPORTED_READ_ONLY`, `AWARDED_READ_ONLY`, `STATUS_READ_ONLY` |
 | `GET` | `/api/v1/quotes/supplier-quotes/{id}/document` | PDF vigente (adjunto, `no-store`, `nosniff`, verificado por tamaño y SHA-256); 404 sin PDF, 409 si el archivo no está en este equipo |
 | `GET` | `/api/v1/quotes/supplier-quotes/{id}` | (ampliado) `version`, `editable`, `edit_block`, `rfq_id`, `requisition_id` y `document` |
-| `POST` | `/api/v1/quotes/customer-quotes` | Tarjeta 6 · alta de la cotización al cliente como **borrador interno** (201). Errores: 422 `INVALID_CUSTOMER_QUOTE` con `field` (o `line:<id>`), 422 `PREPARER_UNAVAILABLE`, `EXCHANGE_RATE_REQUIRED`; 404 requisición; 409 `DRAFT_EXISTS`, `CUSTOMER_QUOTE_EXISTS`, `LINES_CHANGED`, `COST_SOURCE_CHANGED`, `REQUISITION_ARCHIVED` |
+| `POST` | `/api/v1/quotes/customer-quotes` | Tarjeta 6 · alta de la cotización al cliente como **borrador interno** (201). Errores: 422 `INVALID_CUSTOMER_QUOTE` con `field` (o `line:<id>`), 422 `PREPARER_UNAVAILABLE`, `REVIEWER_UNAVAILABLE`, `APPROVER_UNAVAILABLE`, `SEGREGATION_REQUIRED`, `EXCHANGE_RATE_REQUIRED`; 404 requisición; 409 `DRAFT_EXISTS`, `CUSTOMER_QUOTE_EXISTS`, `LINES_CHANGED`, `COST_SOURCE_CHANGED`, `REQUISITION_ARCHIVED` |
 | `PUT` | `/api/v1/quotes/customer-quotes/{id}` | Tarjeta 6 · edición del borrador. `If-Match: "<versión>"` (428 si falta, 412 si cambió); 409 `IMPORTED_READ_ONLY`, `NOT_A_DRAFT` |
 | `GET` | `/api/v1/quotes/customer-quotes/{id}/draft` | Tarjeta 6 · datos internos del borrador de SupplyFlow para editarlo (cuenta de lectura; 404 para cualquier otra cotización) |
 
@@ -161,8 +161,8 @@ automáticamente si existe su secreto.
 | Prueba | Tipo | Resultado (sandbox sintético) |
 |---|---|---|
 | `tests/rfq_write_http_check.py` | HTTP, **escribe** (`SF_SYNTHETIC_WRITES=1`); crea sus requisiciones y validaciones por la API | 36/36 |
-| `tests/customer_quote_write_http_check.py` | HTTP, **escribe**: borrador de la cotización al cliente (fórmula, monedas, idempotencia, 409/412/428/422, sin rutas de emisión) | 37/37 |
-| `tests/frontend/customer_quote_write_ui_e2e.cjs` | Navegador, **escribe**: borrador desde la tarjeta 6 con fallo de red y reintento, edición con If-Match, 412 con recarga y tarjeta 8 | 28/28 |
+| `tests/customer_quote_write_http_check.py` | HTTP, **escribe**: borrador de la cotización al cliente (fórmula, monedas, idempotencia, 409/412/428/422, sin rutas de emisión) | 45/45 |
+| `tests/frontend/customer_quote_write_ui_e2e.cjs` | Navegador, **escribe**: borrador desde la tarjeta 6 con fallo de red y reintento, edición con If-Match, 412 con recarga y tarjeta 8 | 29/29 |
 | `tests/frontend/rfq_write_ui_e2e.cjs` | Navegador, **escribe**: RFQ en Borrador con fallo de red y reintento con la misma clave, otra Enviada, Marcar enviada (If-Match) y disponibilidad en la tarjeta 4 | 19/19 |
 | `tests/supplier_quote_write_http_check.py` | HTTP, **escribe**; registra sus propias RFQ por la API | 41/41 |
 | `tests/frontend/supplier_quote_write_ui_e2e.cjs` | Navegador, **escribe**: alta con fallo de red y reintento, edición con If-Match, PDF reemplazado y descargado | 23/23 |
