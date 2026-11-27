@@ -9,7 +9,7 @@ reutiliza `customerQuoteHtml` (ahora con comentarios y modo vista previa).
 | Origen | Uso |
 | --- | --- |
 | `GET /api/v1/quotes/rfq-setup` | compradores (validación del contratista) y usuarios Comprador / Master Admin para "Comprador" |
-| `GET /api/v1/quotes/rfq-requisitions?buyer=&rfq=quoted` | requisiciones validadas del comprador **con cotizaciones de proveedor** |
+| `GET /api/v1/quotes/rfq-requisitions?buyer=&rfq=quoted` | requisiciones validadas del comprador **con cotizaciones de proveedor**; desde el 27 nov cada una trae `customer_quote` (folio, revisión, estatus, `imported`, `editable_draft`; null si no tiene) y `unquoted_items` (partidas vigentes sin adjudicación ni oferta con precio) |
 | `GET /api/v1/quotes/comparison?requisition=` | cliente, RFC, proyecto, lugar de entrega, moneda, partidas vigentes con **adjudicación vigente** u ofertas, y la cotización al cliente vigente (`customer_quote`) para proponer la siguiente revisión |
 | `GET /api/v1/quotes/customer-quote-setup` (nuevo) | último tipo de cambio registrado en una cotización (`usd_mxn_rate`, `eur_mxn_rate`, fecha, fuente) y políticas de aprobación vigentes (`approval_policy_versions`) |
 | `GET /api/v1/quotes/customer-quotes/{id}/draft` (26 nov) | datos internos del **borrador de SupplyFlow** para seguir editándolo (versión, condiciones, tipos de cambio, % de descuento/IVA/Service Fee y, por partida, marca, cantidad, manipulación y margen). Solo borradores registrados en SupplyFlow; cualquier otra cotización → 404 |
@@ -46,6 +46,21 @@ reutiliza `customerQuoteHtml` (ahora con comentarios y modo vista previa).
 
 Las cotizaciones al cliente **registradas** se consultan en la tarjeta 7 *Formato para el cliente* (la tarjeta 1
 "ABRIR REV. VIGENTE" abre ahí la versión vigente).
+
+## Selector de requisiciones: qué se puede guardar (27 nov 2026)
+
+Antes de elegir, cada requisición del selector indica qué pasará al guardar:
+
+| Marca en el selector | Significado |
+| --- | --- |
+| `REQ - Cliente` | Se puede guardar un borrador nuevo |
+| `· borrador COT-… (editar)` | Ya tiene su borrador de SupplyFlow: se abre para editarlo |
+| `· N partida(s) sin costo` | Seleccionable para revisarla, pero no se guarda hasta registrar la cotización del proveedor (tarjeta 4) de esas partidas |
+| `· ya tiene COT-… (importada, solo consulta)` / `(estatus)` | **Deshabilitada**: ya tiene cotización al cliente; se consulta en las tarjetas 7 y 8 |
+
+Debajo, un resumen: «N requisición(es) con cotizaciones de proveedor: X se pueden guardar; Y con partidas sin costo; Z ya
+tienen cotización al cliente». Motivo: con datos importados, la mayoría de las requisiciones con cotización de proveedor
+ya tienen su cotización al cliente, y el selector no lo mostraba hasta elegirlas.
 
 ## Guardado como borrador interno (26 nov 2026)
 
@@ -109,9 +124,9 @@ tipo de cambio sintético en `CQ-QA-0001-R1` para ejercitar el nivel de aprobaci
 
 | Prueba | Resultado |
 | --- | --- |
-| `node --test tests/frontend/customer_quote_builder.test.mjs` | 12/12 |
-| `tests/frontend/quotes_ui_e2e.cjs` (aborta toda escritura; el POST del borrador se corta y no se da por guardado) | 237/237 |
-| `tests/customer_quote_write_http_check.py` (escribe en la base sintética) | 35/35 |
-| `tests/frontend/customer_quote_write_ui_e2e.cjs` (escribe en la base sintética) | 26/26 |
+| `node --test tests/frontend/customer_quote_builder.test.mjs` | 13/13 |
+| `tests/frontend/quotes_ui_e2e.cjs` (aborta toda escritura; el POST del borrador se corta y no se da por guardado) | 238/238 |
+| `tests/customer_quote_write_http_check.py` (escribe en la base sintética) | 37/37 |
+| `tests/frontend/customer_quote_write_ui_e2e.cjs` (escribe en la base sintética) | 28/28 |
 | `tests/quotewrite_contract_check.py` | 11/11 |
 | `tests/quotes_http_check.py` | 91/91 |

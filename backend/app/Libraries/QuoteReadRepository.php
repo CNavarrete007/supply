@@ -187,7 +187,14 @@ final class QuoteReadRepository
         (SELECT COUNT(*) FROM requisition_items i WHERE i.organization_id=r.organization_id AND i.requisition_id=r.id AND i.line_status='active') AS item_count,
         (SELECT COUNT(*) FROM rfqs f WHERE f.organization_id=r.organization_id AND f.requisition_id=r.id) AS rfq_count,
         (SELECT COUNT(*) FROM supplier_quotes q WHERE q.organization_id=r.organization_id AND q.requisition_id=r.id) AS quote_count,
-        EXISTS(SELECT 1 FROM purchase_order_requisitions pr WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id) AS has_po";
+        EXISTS(SELECT 1 FROM purchase_order_requisitions pr WHERE pr.organization_id=r.organization_id AND pr.requisition_id=r.id) AS has_po,
+        (SELECT COUNT(*) FROM requisition_items i WHERE i.organization_id=r.organization_id AND i.requisition_id=r.id AND i.line_status='active'
+          AND NOT EXISTS (SELECT 1 FROM awards aw WHERE aw.organization_id=i.organization_id AND aw.requisition_item_id=i.id AND aw.status_code='active' AND aw.superseded_at IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM supplier_quote_items it WHERE it.organization_id=i.organization_id AND it.requisition_item_id=i.id AND it.offered=1 AND it.unit_price IS NOT NULL)) AS unquoted_items,
+        (SELECT JSON_OBJECT('folio',v.folio,'revision',COALESCE(v.legacy_revision_number,v.version_number-1),'status',COALESCE(v.legacy_status,v.document_status),'document_status',v.document_status,
+            'internal_approval_status',v.internal_approval_status,'client_decision_status',v.client_decision_status,'imported',(ve.imported_at IS NOT NULL OR ve.legacy_id IS NOT NULL))
+          FROM customer_quote_versions v JOIN business_entities ve ON ve.id=v.id AND ve.organization_id=v.organization_id
+          WHERE v.organization_id=r.organization_id AND v.requisition_id=r.id ORDER BY v.version_number DESC,v.id DESC LIMIT 1) AS customer_quote";
     private const RFQ_REQ_FROM = ' JOIN requisitions r ON r.id=V.requisition_id AND r.organization_id=V.org_id JOIN business_entities re ON re.id=r.id AND re.organization_id=r.organization_id
         JOIN clients c ON c.id=r.client_id AND c.organization_id=r.organization_id';
 
@@ -197,8 +204,15 @@ final class QuoteReadRepository
 
     private static function rfqReqRow(array $i): array
     {
-        foreach (['item_count', 'rfq_count', 'quote_count', 'min_quotes'] as $k) { $i[$k] = (int) $i[$k]; }
+        foreach (['item_count', 'rfq_count', 'quote_count', 'min_quotes', 'unquoted_items'] as $k) { $i[$k] = (int) $i[$k]; }
         $i['has_po'] = (bool) $i['has_po'];
+        // Tarjeta 6: cotización al cliente vigente de la requisición (null = ninguna) y si es el borrador editable de SupplyFlow.
+        $cq = $i['customer_quote'] === null ? null : json_decode((string) $i['customer_quote'], true);
+        if (is_array($cq)) {
+            $cq['revision'] = (int) $cq['revision']; $cq['imported'] = (bool) $cq['imported'];
+            $cq['editable_draft'] = ! $cq['imported'] && $cq['document_status'] === 'draft' && $cq['internal_approval_status'] === 'not_requested' && $cq['client_decision_status'] === 'not_recorded';
+        }
+        $i['customer_quote'] = is_array($cq) ? $cq : null;
         return $i;
     }
 

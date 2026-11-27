@@ -129,6 +129,9 @@ try:
     s, r = adm.call('POST', C, {**OK, 'usd_mxn': None})
     check('costo en USD sin tipo de cambio: 422 EXCHANGE_RATE_REQUIRED (usd_mxn)', s == 422 and r['error']['code'] == 'EXCHANGE_RATE_REQUIRED' and r['error'].get('field') == 'usd_mxn', f'{s} {r}')
 
+    lrow = lambda: next((x for x in adm.get(f"{B}/rfq-requisitions?page=1&page_size=10&rfq=quoted&q={req['folio']}")['items'] if x['id'] == req['id']), {})
+    l1 = lrow()
+    check('lista de la tarjeta 6: sin cotización al cliente y todas las partidas con costo', l1.get('customer_quote', 'x') is None and l1.get('unquoted_items') == 0, json.dumps(l1)[:200])
     key = str(uuid.uuid4())
     s, a = adm.call('POST', C, OK, key=key)
     check('alta: 201 borrador Rev. 0 con folio COT-AAAA-NNNN y total calculado en el servidor', s == 201 and re.fullmatch(rf'COT-{TODAY.year}-\d{{4,}}', a.get('folio', '')) and a.get('revision') == 0
@@ -149,6 +152,8 @@ try:
           and dr['items'][0]['original_cost_currency'] == 'USD' and float(dr['items'][0]['original_cost_amount']) == 6 and qb['supplier'] in dr['items'][0]['cost_source_text']
           and float(dr['items'][0]['handling']) == 50 and float(dr['items'][0]['margin']) == 20 and dr['items'][0]['brand_model'] == f'Marca X {RUN}', json.dumps(dr, ensure_ascii=False)[:400])
     cmp = adm.get(f"{B}/comparison?requisition={req['id']}")['customer_quote']
+    l2 = lrow().get('customer_quote') or {}
+    check('lista de la tarjeta 6: muestra el borrador editable (folio, no importado)', l2.get('folio') == a['folio'] and l2.get('editable_draft') is True and l2.get('imported') is False, json.dumps(l2))
     check('comparativo: el borrador es la cotización vigente y editable', cmp.get('folio') == a['folio'] and cmp.get('editable_draft') is True and cmp.get('imported') is False, json.dumps(cmp))
     row = next((x for x in adm.get(f"{C}?q={a['folio']}&page=1&page_size=10&scope=all")['items'] if x['folio'] == a['folio']), {})
     check('matriz de cotizaciones al cliente: aparece en Borrador', row.get('legacy_status') == 'Borrador' and row.get('document_status') == 'draft' and float(row.get('total_amount') or 0) == EXP['total'], json.dumps(row, ensure_ascii=False)[:300])

@@ -80,6 +80,7 @@ const fmt = n => Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, m
     await buyerSel.selectOption(det.item.buyer_key);
     const reqSel = page.getByRole('combobox', { name: 'Requisición del cliente' });
     await reqSel.locator(`option[value="${req.id}"]`).waitFor({ state: 'attached', timeout: 15000 });
+    check('selector: la requisición sintética se ofrece para guardar (sin marca de bloqueo)', !(await reqSel.locator(`option[value="${req.id}"]`).evaluate(e => e.disabled)) && (await reqSel.locator(`option[value="${req.id}"]`).getAttribute('data-kind')) === 'new');
     await reqSel.selectOption(req.id);
     await page.getByTestId('cq-line').nth(1).waitFor();
     check('nueva captura: Rev. 0, folio automático, estatus Borrador fijo, sin bloqueo ni edición',
@@ -118,6 +119,8 @@ const fmt = n => Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, m
     check('mensaje: guardada como borrador interno, no enviada', flat(await page.getByTestId('cq-result').innerText()).includes(`${out.folio} (Rev. 0) guardada en MariaDB como borrador interno`) && flat(await page.getByTestId('cq-result').innerText()).includes('No se envió a revisión ni al cliente'));
     // 2) Se reabre como borrador editable (versión 1).
     await page.getByTestId('cq-edit-banner').waitFor();
+    await page.locator(`select[aria-label="Requisición del cliente"] option[value="${req.id}"][data-kind="draft"]`).waitFor({ state: 'attached' });
+    check('selector: la requisición ahora indica «borrador … (editar)»', flat(await reqSel.locator(`option[value="${req.id}"]`).innerText()).includes(`borrador ${out.folio} (editar)`));
     check('se abre en modo edición: folio, Rev. 0, versión 1', flat(await page.getByTestId('cq-edit-banner').innerText()).startsWith(`Editando el borrador ${out.folio} · Rev. 0 · versión 1`) && (await page.getByRole('textbox', { name: 'Folio de cotización' }).inputValue()) === out.folio);
     check('el borrador conserva lo capturado (margen, manipulación, marca, entrega)', (await page.getByLabel('% margen partida 1').inputValue()) === '20' && (await page.getByLabel('Entrega / manipulación partida 1').inputValue()) === '150'
       && (await page.getByLabel('Marca / modelo partida 1').inputValue()) === `ACME UI ${RUN}` && (await page.getByLabel('Tiempo de entrega ofrecido').inputValue()) === `5 días hábiles ${RUN}`);

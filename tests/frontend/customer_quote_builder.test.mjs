@@ -1,7 +1,7 @@
 // Cotizaciones › Cotización formal al cliente · lógica pura. node --test tests/frontend/customer_quote_builder.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyCq, addDays, convert, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData, CQ_STATUSES, DEFAULT_PDF_NOTES, CQ_SAVE_STATUS, cqPayload, cqFromDraft, cqExistingBlock, cqSavedText, cqSaveError } from '../../src/views/quotes/customerQuoteBuilder.mjs';
+import { emptyCq, addDays, convert, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData, CQ_STATUSES, DEFAULT_PDF_NOTES, CQ_SAVE_STATUS, cqPayload, cqFromDraft, cqExistingBlock, cqSavedText, cqSaveError, cqReqOption, cqReqSummary } from '../../src/views/quotes/customerQuoteBuilder.mjs';
 import { customerQuoteHtml } from '../../src/views/quotes/model.mjs';
 
 const f0 = { ...emptyCq('2026-09-24'), buyer: 'b', requisition: 'r', preparer: 'u', currency: 'USD', usd_mxn: '17.25', eur_mxn: '18.9', sf_pct: '5' };
@@ -134,4 +134,17 @@ test('mensajes de resultado y errores del servidor', () => {
   assert.equal(cqSaveError(422, { error: { code: 'INVALID_CUSTOMER_QUOTE', field: 'line:abc' } }).field, 'line:abc');
   assert.equal(cqSaveError(409, { error: { code: 'COST_SOURCE_CHANGED', message: 'Cambió el costo.', field: 'line:l2' } }).field, 'line:l2');
   assert.equal(cqSaveError(409, { error: { code: 'DRAFT_EXISTS', message: 'Ya existe.' } }).text, 'Ya existe.');
+});
+
+test('selector de requisiciones: anticipa si se puede guardar', () => {
+  const r = (x = {}) => ({ id: 'r', folio: 'REQ-1', client_name: 'ACME', unquoted_items: 0, customer_quote: null, ...x });
+  assert.deepEqual(cqReqOption(r()), { label: 'REQ-1 - ACME', disabled: false, kind: 'new' });
+  assert.deepEqual(cqReqOption(r({ customer_quote: { folio: 'COT-2025-0007', imported: true, editable_draft: false, status: 'Borrador' } })),
+    { label: 'REQ-1 - ACME · ya tiene COT-2025-0007 (importada, solo consulta)', disabled: true, kind: 'locked' });
+  assert.equal(cqReqOption(r({ customer_quote: { folio: 'COT-2026-0009', imported: false, editable_draft: false, status: 'Enviada al cliente' } })).label, 'REQ-1 - ACME · ya tiene COT-2026-0009 (Enviada al cliente)');
+  assert.equal(cqReqOption(r({ customer_quote: { folio: 'CQ-1', imported: false, editable_draft: false, status: 'issued' } })).label, 'REQ-1 - ACME · ya tiene CQ-1 (Emitida)', 'código → etiqueta en español');
+  assert.deepEqual(cqReqOption(r({ customer_quote: { folio: 'COT-2026-0010', imported: false, editable_draft: true } })), { label: 'REQ-1 - ACME · borrador COT-2026-0010 (editar)', disabled: false, kind: 'draft' });
+  assert.deepEqual(cqReqOption(r({ unquoted_items: 8 })), { label: 'REQ-1 - ACME · 8 partida(s) sin costo', disabled: false, kind: 'uncosted' });
+  const items = [r(), r({ customer_quote: { folio: 'A', imported: true } }), r({ customer_quote: { folio: 'B', imported: true } }), r({ unquoted_items: 2 }), r({ customer_quote: { folio: 'C', editable_draft: true } })];
+  assert.equal(cqReqSummary(items, 5), '5 requisición(es) con cotizaciones de proveedor: 2 se pueden guardar; 1 con borrador para editar; 1 con partidas sin costo (registra la cotización del proveedor en la tarjeta 4); 2 ya tienen cotización al cliente (consulta en tarjetas 7 y 8).');
 });

@@ -3,6 +3,7 @@
 // entrega/manipulación y % de margen; descuento, IVA, Service Fee y nivel de aprobación según la política vigente.
 // Los costos internos nunca salen en el formato del cliente. «Guardar» la registra como BORRADOR INTERNO en MariaDB (el
 // servidor toma el costo de la adjudicación u oferta registrada y recalcula todo); emitir, autorizar y enviar siguen bloqueados.
+import { label } from './model.mjs';
 
 export const CQ_STATUSES = [['Borrador', 'Draft'], ['En revisión interna', 'Under internal review'], ['Pendiente de autorización', 'Pending authorization'], ['Enviada al cliente', 'Sent to the client'],
   ['Aprobada', 'Approved'], ['Rechazada', 'Rejected'], ['Solicitud de modificación', 'Change request'], ['Sustituida', 'Superseded'], ['Vencida', 'Expired']];
@@ -169,6 +170,34 @@ export function cqExistingBlock(prior, en = false) {
   }
   return m(`La requisición ya tiene la cotización ${q}. No se crea otra: una nueva revisión se origina con «Solicitar modificación» (tarjetas 1 u 8).`,
     `The requisition already has quote ${q}. No other is created: a new revision starts with "Request modification" (cards 1 or 8).`);
+}
+
+/**
+ * Opción del selector de requisiciones (GET …/rfq-requisitions?rfq=quoted): qué pasará al guardar, antes de elegirla.
+ * { label, disabled, kind: new|draft|locked|uncosted }. Con cotización importada/enviada: deshabilitada (no se crea otra).
+ */
+export function cqReqOption(r, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const base = `${t(r?.folio)} - ${t(r?.client_name)}`;
+  const q = r?.customer_quote;
+  if (q && !q.editable_draft) {
+    const st = label(t(q.status), en);
+    return { label: `${base} · ${m(`ya tiene ${t(q.folio)}${q.imported ? ' (importada, solo consulta)' : ` (${st})`}`, `already has ${t(q.folio)}${q.imported ? ' (imported, read-only)' : ` (${st})`}`)}`, disabled: true, kind: 'locked' };
+  }
+  if (q) return { label: `${base} · ${m(`borrador ${t(q.folio)} (editar)`, `draft ${t(q.folio)} (edit)`)}`, disabled: false, kind: 'draft' };
+  if (Number(r?.unquoted_items) > 0) return { label: `${base} · ${m(`${r.unquoted_items} partida(s) sin costo`, `${r.unquoted_items} item(s) without cost`)}`, disabled: false, kind: 'uncosted' };
+  return { label: base, disabled: false, kind: 'new' };
+}
+
+/** Resumen bajo el selector: cuántas se pueden guardar y por qué no las demás. */
+export function cqReqSummary(items = [], total = 0, en = false) {
+  const m = (es, e) => (en ? e : es);
+  const k = items.map(r => cqReqOption(r, en).kind); const n = x => k.filter(y => y === x).length;
+  const parts = [m(`${n('new') + n('draft')} se pueden guardar`, `${n('new') + n('draft')} can be saved`)];
+  if (n('draft')) parts.push(m(`${n('draft')} con borrador para editar`, `${n('draft')} with a draft to edit`));
+  if (n('uncosted')) parts.push(m(`${n('uncosted')} con partidas sin costo (registra la cotización del proveedor en la tarjeta 4)`, `${n('uncosted')} with items without cost (record the supplier quote in card 4)`));
+  if (n('locked')) parts.push(m(`${n('locked')} ya tienen cotización al cliente (consulta en tarjetas 7 y 8)`, `${n('locked')} already have a client quote (see cards 7 and 8)`));
+  return m(`${total} requisición(es) con cotizaciones de proveedor: ${parts.join('; ')}.`, `${total} requisition(s) with supplier quotes: ${parts.join('; ')}.`);
 }
 
 export function cqSavedText(out, en = false) {

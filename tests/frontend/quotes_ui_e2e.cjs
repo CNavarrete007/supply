@@ -360,25 +360,23 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     let buyer6 = null; let reqs6 = null; let req6 = null; let cmp6 = null; let blocked6 = null;
     for (const b of st6.buyers) {
       const l = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&rfq=quoted&buyer=${b.key}`);
-      for (const r of l.items.slice(0, 40)) {
-        if (req6 && blocked6) break;
-        const c = await api(`/api/v1/quotes/comparison?requisition=${r.id}`);
-        if (!req6 && !c.customer_quote && c.lines.length) { buyer6 = b; reqs6 = l; req6 = r; cmp6 = c; }
-        else if (!blocked6 && c.customer_quote && !c.customer_quote.editable_draft) blocked6 = { buyer: b, list: l, req: r, cmp: c };
-      }
+      // La lista ya trae la cotización al cliente vigente y las partidas sin cotizar: se elige sin depender del orden.
+      const fresh = l.items.find(r => !r.customer_quote && r.item_count > 0);
+      const locked = l.items.find(r => r.customer_quote && !r.customer_quote.editable_draft);
+      if (!req6 && fresh) { buyer6 = b; reqs6 = l; req6 = fresh; cmp6 = await api(`/api/v1/quotes/comparison?requisition=${fresh.id}`); }
+      if (!blocked6 && locked) blocked6 = { buyer: b, list: l, req: locked, cmp: await api(`/api/v1/quotes/comparison?requisition=${locked.id}`) };
       if (req6 && blocked6) break;
     }
     check('cotización al cliente: requisiciones del comprador con cotizaciones de proveedor', reqs6 && reqs6.items.every(r => r.quote_count > 0));
     if (blocked6) {
+      // El selector anticipa el bloqueo: la requisición que ya tiene cotización al cliente (importada/enviada) aparece deshabilitada con el motivo.
       await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(blocked6.buyer.key);
       await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Requisición del cliente"] option').length === n + 1, blocked6.list.items.length);
-      await page.getByRole('combobox', { name: 'Requisición del cliente' }).selectOption(blocked6.req.id);
-      await page.getByTestId('cq-block').waitFor();
-      const b6 = flat(await page.getByTestId('cq-block').innerText());
-      const imp6 = !!blocked6.cmp.customer_quote.imported;
-      check(`requisición con cotización existente (${imp6 ? 'importada: expediente en consulta, se recaptura la requisición' : 'nueva revisión con «Solicitar modificación»'}): no se crea otra`, b6.includes(`ya tiene la cotización ${blocked6.cmp.customer_quote.folio}`)
-        && (imp6 ? b6.includes('importada del sistema original') && b6.includes('Registro de requisición') : b6.includes('nueva revisión se origina con «Solicitar modificación»'))
-        && await page.getByRole('button', { name: /Guardar cotización al cliente/ }).isDisabled() && (await page.getByRole('textbox', { name: 'Revisión' }).inputValue()) === String(blocked6.cmp.customer_quote.revision + 1), b6);
+      const opt6 = page.locator(`select[aria-label="Requisición del cliente"] option[value="${blocked6.req.id}"]`);
+      const o6 = flat(await opt6.innerText()); const q6 = blocked6.cmp.customer_quote;
+      check(`selector: requisición con cotización existente deshabilitada («ya tiene ${q6.folio}${q6.imported ? ' (importada, solo consulta)' : ''}»)`, await opt6.evaluate(e => e.disabled) && o6.includes(`ya tiene ${q6.folio}`) && (q6.imported ? o6.includes('importada, solo consulta') : !/\((issued|draft|sent|superseded)\)/.test(o6)), o6);
+      const sum6 = flat(await page.getByRole('combobox', { name: 'Requisición del cliente' }).locator('xpath=ancestor::label').innerText());
+      check('selector: resumen de cuántas se pueden guardar y cuántas ya tienen cotización', sum6.includes('se pueden guardar') && sum6.includes('ya tienen cotización al cliente (consulta en tarjetas 7 y 8)'), sum6);
     }
     await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer6.key);
     await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Requisición del cliente"] option').length === n + 1, reqs6.items.length);
@@ -842,7 +840,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('detalle: partidas con precio unitario del proveedor y aviso interno', dd11.includes('Material sintético') && dd11.includes(usd(q4.total_amount)) && dd11.includes('no compartir con el cliente') && (await page.getByTestId('sqm-doc').getAttribute('sandbox')) === '');
     check('EDITAR: la cotización importada o sin RFQ se conserva (detalle con el motivo, sin edición)', /se conserva como expediente/.test(await page.getByTestId('sqm-detail').innerText()) && await page.getByTestId('quote-edit-banner').count() === 0);
     await page.getByTestId('sqm-detail').getByRole('button', { name: 'Cerrar' }).click();
-    const aw11 = m11.items.find(x => x.awarded);
+    const aw11 = m11.items.find(x => x.awarded) || (x4 && x4.awarded ? x4 : null); // COT-QA-0004 (adjudicada sembrada) si la página 1 ya no tiene adjudicadas
     if (aw11) {
       await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(aw11.folio);
       await r11(aw11.folio).getByRole('button', { name: 'ELIMINAR' }).click();
