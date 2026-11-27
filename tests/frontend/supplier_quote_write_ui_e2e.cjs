@@ -145,7 +145,8 @@ const pdfBytes = label => Buffer.from(`%PDF-1.4\n% SupplyFlow UI ${label}\n1 0 o
 
     // 3) Las importadas / sin RFQ se conservan: EDITAR muestra el detalle con el motivo.
     const list = await api('/api/v1/quotes/supplier-quotes?page=1&page_size=50');
-    const keep = list.items.find(x => x.imported || !x.rfq_folio || x.source_kind !== 'explicit');
+    const isKeep = x => x.imported || !x.rfq_folio || x.source_kind !== 'explicit';
+    const keep = list.items.find(isKeep) || (await api('/api/v1/quotes/supplier-quotes?page=1&page_size=50&q=COT-QA')).items.find(isKeep); // sembradas, si la página 1 ya solo tiene sintéticas
     if (keep) {
       await page.getByRole('button', { name: /Matriz interna de proveedores/ }).first().click();
       await page.getByRole('button', { name: 'Abrir todas: Todas las cotizaciones' }).click();

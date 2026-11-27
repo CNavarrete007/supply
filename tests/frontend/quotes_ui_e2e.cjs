@@ -361,7 +361,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     for (const b of st6.buyers) {
       const l = await api(`/api/v1/quotes/rfq-requisitions?page=1&page_size=50&rfq=quoted&buyer=${b.key}`);
       // La lista ya trae la cotización al cliente vigente y las partidas sin cotizar: se elige sin depender del orden.
-      const fresh = l.items.find(r => !r.customer_quote && r.item_count > 0);
+      const fresh = l.items.find(r => !r.customer_quote && r.item_count > 0 && r.unquoted_items === 0); // guardable: sin cotización al cliente y todas las partidas con costo
       const locked = l.items.find(r => r.customer_quote && !r.customer_quote.editable_draft);
       if (!req6 && fresh) { buyer6 = b; reqs6 = l; req6 = fresh; cmp6 = await api(`/api/v1/quotes/comparison?requisition=${fresh.id}`); }
       if (!blocked6 && locked) blocked6 = { buyer: b, list: l, req: locked, cmp: await api(`/api/v1/quotes/comparison?requisition=${locked.id}`) };
@@ -410,7 +410,8 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const pol6 = (cqSetup.policies || []).find(p => /customer|client|cotiz/i.test(p.applies_to));
     const lv6 = cqModel.approvalLevel(pol6, priced6, f6, t6); const lvText = flat(await page.getByTestId('cq-level').innerText());
     check('nivel de aprobación según la política vigente', lv6.status === 'within' ? lvText.startsWith('Nivel 1 · Solo Comprador') : lv6.status === 'exceeds' ? lvText.startsWith('Requiere autorización interna adicional') : lvText.includes('Sin política de aprobación vigente'), lvText);
-    check('lista para guardarse como borrador interno', flat(await page.getByTestId('cq-status').innerText()).includes('Lista para guardarse como borrador interno'));
+    const ready6 = flat(await page.getByTestId('cq-status').innerText());
+    check('lista para guardarse como borrador interno', ready6.includes('Lista para guardarse como borrador interno'), ready6);
     // Solo lectura: el POST del borrador se corta en el navegador (ruta del contexto); la tarjeta no lo da por guardado y MariaDB no cambia.
     await page.getByRole('button', { name: /Guardar cotización al cliente/ }).click();
     await page.locator('[data-testid="cq-result"][data-kind="error"]').waitFor();
@@ -455,6 +456,8 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
 
     // 8 · Matriz de cotizaciones al cliente (tarjetas por cliente → matriz con todas las revisiones)
     const rowOf = f => page.locator(`[data-testid="cqm-row"][data-folio="${f}"]`);
+    // Las pruebas de escritura agregan borradores sintéticos recientes: si la fila no está en la página 1 se busca por folio.
+    const rowOn = async f => { if (!(await rowOf(f).count())) { await page.getByRole('searchbox', { name: 'Buscar cotización al cliente' }).fill(f); await rowOf(f).first().waitFor(); } return rowOf(f).first(); };
     const m8 = await api('/api/v1/quotes/customer-quotes?page=1&page_size=50&scope=all');
     const cards8 = m8.summary.client_cards; const sum8 = k => cards8.reduce((n, c) => n + c[k], 0);
     const first8 = page.waitForResponse(r => /\/quotes\/customer-quotes\?.*scope=all/.test(r.url()));
@@ -534,7 +537,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('VALIDAR COMPRADOR solo en borradores/revisión interna', await row8.getByRole('button', { name: /VALIDAR COMPRADOR/ }).count() === 0);
     const draft8 = m8.items.find(x => x.status_key === 'draft' && x.versions === 1 && !String(x.series).startsWith('sf:'));
     if (draft8) {
-      const dRow = rowOf(draft8.folio);
+      const dRow = await rowOn(draft8.folio);
       check('borrador: estatus "Borrador" y aprobación interna pendiente', flat(await dRow.innerText()).includes('Borrador') && flat(await dRow.innerText()).includes('Aprob. interna: Pendiente'));
       await dRow.getByRole('button', { name: /VALIDAR COMPRADOR/ }).click();
       check('VALIDAR COMPRADOR: escritura bloqueada, no se registró nada', /No se registró nada/.test(await page.getByTestId('cqm-notice').innerText()) && writes.length === 0);
@@ -549,7 +552,8 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
       await dlg.getByRole('button', { name: 'Cancelar' }).click();
     }
     const exp8 = m8.items.find(x => x.status_key === 'expired');
-    if (exp8) check('vigencia vencida sin decisión del cliente: "Vencida"', flat(await rowOf(exp8.folio).innerText()).includes('Vencida'));
+    if (exp8) check('vigencia vencida sin decisión del cliente: "Vencida"', flat(await (await rowOn(exp8.folio)).innerText()).includes('Vencida'));
+    await page.getByRole('searchbox', { name: 'Buscar cotización al cliente' }).fill('');
     await shot(page, 'cot_8_matriz_cliente');
     await page.getByRole('button', { name: 'Cerrar matriz' }).click();
     check('✕ cierra la matriz', await page.getByTestId('cqm-matrix').count() === 0);
@@ -652,8 +656,16 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     check('"Todos los clientes": cotizaciones por atender (servidor)', await page.getByTestId('cqd-quote').count() === Math.min(attAll.total, 25) && attAll.items.every(x => G9.attention.includes(x.status_key))
       && flat(await page.getByTestId('cqd-card').innerText()).includes(`${s9('attention')} cotización(es) por atender`) && await page.getByRole('button', { name: '← Volver a tarjetas' }).count() === 1);
     const q9 = f => page.locator(`[data-testid="cqd-quote"][data-folio="${f}"]`);
+    // Los borradores sintéticos recientes (preparación interna) ocupan la página 1: se recorren las páginas hasta encontrar la cotización.
+    const q9On = async f => {
+      if (await q9(f).count()) return q9(f);
+      const prev = page.getByRole('button', { name: 'Página anterior' }); const next = page.getByRole('button', { name: 'Página siguiente' });
+      for (let i = 0; i < 20 && await prev.count() && await prev.isEnabled(); i++) { await prev.click(); await page.waitForTimeout(250); }
+      for (let i = 0; i < 20 && !(await q9(f).count()) && await next.count() && await next.isEnabled(); i++) { await next.click(); await page.waitForTimeout(350); }
+      await q9(f).first().waitFor({ timeout: 10000 }); return q9(f);
+    };
     const att0 = attAll.items[0];
-    if (att0) check('tarjeta de cotización: folio · Rev., cliente · referencia · total y estatus', flat(await q9(att0.folio).innerText()).includes(`${att0.folio} · Rev. ${att0.revision}`) && flat(await q9(att0.folio).innerText()).includes(att0.client_name));
+    if (att0) check('tarjeta de cotización: folio · Rev., cliente · referencia · total y estatus', flat(await (await q9On(att0.folio)).innerText()).includes(`${att0.folio} · Rev. ${att0.revision}`) && flat(await (await q9On(att0.folio)).innerText()).includes(att0.client_name));
     const byG = page.waitForResponse(r => /\/customer-quotes\?.*group=client/.test(r.url()));
     await page.getByRole('button', { name: 'Sin respuesta', exact: true }).click();
     const g9 = await (await byG).json(); await page.waitForTimeout(300);
@@ -662,18 +674,18 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.waitForTimeout(500);
     const auth9 = attAll.items.find(x => x.status_key === 'authorized');
     if (auth9) {
-      await q9(auth9.folio).getByRole('button', { name: /Enviar al cliente/i }).click();
+      await (await q9On(auth9.folio)).getByRole('button', { name: /Enviar al cliente/i }).click();
       check('ENVIAR AL CLIENTE: escritura bloqueada, no se envió nada', (await page.getByTestId('cqd-notice').innerText()).includes('No se envió nada') && writes.length === 0);
     }
     const sent9 = attAll.items.find(x => G9.client.includes(x.status_key));
     if (sent9) {
-      await q9(sent9.folio).getByRole('button', { name: 'Editar' }).click();
+      await (await q9On(sent9.folio)).getByRole('button', { name: 'Editar' }).click();
       check('Editar en cotización enviada: no se edita, usar Rev. N', /ya fue enviada o decidida: no se edita/.test(await page.getByTestId('cqd-notice').innerText()));
       const pdf9 = page.waitForResponse(r => r.url().endsWith(`/quotes/customer-quotes/${sent9.id}`));
-      await q9(sent9.folio).getByRole('button', { name: 'Ver PDF' }).click();
+      await (await q9On(sent9.folio)).getByRole('button', { name: 'Ver PDF' }).click();
       check('Ver PDF consulta la revisión (200) y muestra el folio', (await pdf9).status() === 200 && flat(await page.getByTestId('rev-pdf').frameLocator('iframe').locator('body').innerText()).includes(sent9.folio));
       await page.getByTestId('rev-pdf').getByRole('button', { name: 'Cerrar' }).click();
-      await q9(sent9.folio).getByRole('button', { name: /Registrar decisión/i }).click();
+      await (await q9On(sent9.folio)).getByRole('button', { name: /Registrar decisión/i }).click();
       const dm = page.getByTestId('cqd-decision'); await dm.waitFor();
       await dm.getByRole('button', { name: /Registrar decisión/ }).click();
       check('decisión: obligatorios (decisión y quién decide)', await dm.getByText('Selecciona la decisión del cliente.').count() === 1 && (sent9.client_id === cc9.id && cc9.contact ? (await dm.getByRole('textbox', { name: 'Quién decide por el cliente' }).inputValue()) === cc9.contact : true));
@@ -693,19 +705,19 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     }
     const chg9 = attAll.items.find(x => x.status_key === 'change_requested');
     if (chg9) {
-      await q9(chg9.folio).getByRole('button', { name: 'Historial' }).click();
-      await q9(chg9.folio).getByTestId('cqd-history').waitFor();
-      check('Historial: decisión "Cambios solicitados" con canal y nota', /Cambios solicitados.*email/.test(flat(await q9(chg9.folio).getByTestId('cqd-history').innerText())));
-      await q9(chg9.folio).getByRole('button', { name: /Modificar desde req\./i }).click();
+      await (await q9On(chg9.folio)).getByRole('button', { name: 'Historial' }).click();
+      await (await q9On(chg9.folio)).getByTestId('cqd-history').waitFor();
+      check('Historial: decisión "Cambios solicitados" con canal y nota', /Cambios solicitados.*email/.test(flat(await (await q9On(chg9.folio)).getByTestId('cqd-history').innerText())));
+      await (await q9On(chg9.folio)).getByRole('button', { name: /Modificar desde req\./i }).click();
       if (chg9.can_request_change) { const m9 = page.getByTestId('change-modal'); await m9.getByTestId('change-line').first().waitFor(); check('MODIFICAR DESDE REQ. abre la modificación R3A', flat(await m9.innerText()).includes(chg9.requisition)); await m9.getByRole('button', { name: 'X Cerrar' }).click(); }
       else { await page.getByTestId('rev-blocked').waitFor(); check('MODIFICAR DESDE REQ. bloqueado con motivo', /importado|RF1|Solo quien capturó|pendiente de revisión/.test(await page.getByTestId('rev-blocked').innerText())); await page.getByRole('button', { name: 'Entendido' }).click(); }
     }
     // Aprobadas → historial de la revisión aprobada (canal, responsable y nota reales)
     const apr9 = page.waitForResponse(r => /\/customer-quotes\?.*group=approved/.test(r.url()));
     await page.getByRole('button', { name: 'Aprobadas', exact: true }).click(); await apr9;
-    await q9(cur.folio).getByRole('button', { name: 'Historial' }).click();
-    await q9(cur.folio).getByTestId('cqd-history').waitFor();
-    const dt = flat(await q9(cur.folio).getByTestId('cqd-history').innerText());
+    await (await q9On(cur.folio)).getByRole('button', { name: 'Historial' }).click();
+    await (await q9On(cur.folio)).getByTestId('cqd-history').waitFor();
+    const dt = flat(await (await q9On(cur.folio)).getByTestId('cqd-history').innerText());
     check('historial de decisión con canal y responsable', ['Aprobada', 'email', 'QA Admin A', 'Aprobación sintética'].every(x => dt.includes(x)), dt);
     const byC9 = page.waitForResponse(r => r.url().includes(`client=${cc9.id}`));
     await page.getByTestId('cqd-client-card').filter({ hasText: cc9.name }).click();
@@ -717,7 +729,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const prep9 = attAll.items.find(x => G9.prep.includes(x.status_key));
     if (prep9) {
       await page.getByTestId('cqd-client-card').first().click();
-      await q9(prep9.folio).getByRole('button', { name: 'Editar' }).click();
+      await (await q9On(prep9.folio)).getByRole('button', { name: 'Editar' }).click();
       check('Editar (preparación interna) abre la tarjeta 6', (await page.getByRole('button', { name: /Cotización al cliente/ }).first().getAttribute('aria-pressed')) === 'true');
     }
 
