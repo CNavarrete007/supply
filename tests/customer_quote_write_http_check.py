@@ -175,6 +175,10 @@ try:
         oc = adm.get(f"{B}/comparison?requisition={other['requisition_id']}").get('customer_quote') or {}
         s, r = adm.call('POST', C, {**OK, 'requisition_id': other['requisition_id']})
         check('requisición con cotización al cliente existente: 409 (no se crea otra; nueva revisión vía Solicitar modificación)', s == 409 and r['error']['code'] in ('CUSTOMER_QUOTE_EXISTS', 'DRAFT_EXISTS', 'LINES_CHANGED'), f'{s} {r}')
+        if r.get('error', {}).get('code') == 'CUSTOMER_QUOTE_EXISTS':
+            msg = r['error']['message']
+            check('409: importada → expediente en consulta y recaptura; propia → «Solicitar modificación»',
+                  ('expediente importado' in msg and 'Registro de requisición' in msg) if oc.get('imported') else ('nueva revisión se origina con «Solicitar modificación»' in msg), msg)
         if oc and not oc.get('editable_draft'):
             s, r = adm.call('PUT', f"{C}/{oc['id']}", E, ifm=oc.get('row_version') or 1)
             check('cotización importada o ya no borrador: 409 al editar', s == 409 and r['error']['code'] in ('IMPORTED_READ_ONLY', 'NOT_A_DRAFT'), f'{s} {r}')

@@ -192,7 +192,10 @@ final class CustomerQuoteWriteRepository extends QuoteWriteBase
                 $draft = ! (int) $prior['imported'] && $prior['document_status'] === 'draft' && $prior['internal_approval_status'] === 'not_requested' && $prior['client_decision_status'] === 'not_recorded';
                 throw $draft
                     ? new QuoteConflict('DRAFT_EXISTS', "La requisición {$req['folio']} ya tiene el borrador {$prior['folio']}: ábrelo de nuevo en la tarjeta para editarlo.", 409, 'requisition_id')
-                    : new QuoteConflict('CUSTOMER_QUOTE_EXISTS', "La requisición {$req['folio']} ya tiene la cotización {$prior['folio']} (Rev. {$prior['revision']} · {$prior['status']}). No se crea otra: una nueva revisión se origina con «Solicitar modificación» (tarjetas 1 u 8).", 409, 'requisition_id');
+                    : new QuoteConflict('CUSTOMER_QUOTE_EXISTS', "La requisición {$req['folio']} ya tiene la cotización {$prior['folio']} (Rev. {$prior['revision']} · {$prior['status']}). No se crea otra: "
+                        . ((int) $prior['imported']
+                            ? 'es un expediente importado del sistema original y se conserva en consulta; «Solicitar modificación» solo aplica a requisiciones capturadas en SupplyFlow (para continuar, captura la requisición en «Registro de requisición»).'
+                            : 'una nueva revisión se origina con «Solicitar modificación» (tarjetas 1 u 8).'), 409, 'requisition_id');
             }
             $this->currency($p['currency']);
             $prep = $this->preparer($org, $p['preparer_id']);

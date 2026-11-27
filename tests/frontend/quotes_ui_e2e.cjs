@@ -103,7 +103,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const rfqDoc = page.waitForResponse(r => /\/quotes\/rfqs\/[0-9a-f-]{36}$/.test(r.url()));
     await page.getByRole('button', { name: 'Ver formato RFQ-QA-0004' }).click();
     check('detalle de RFQ (200)', (await rfqDoc).status() === 200);
-    const rq4 = rfqs.items.find(r => r.folio === 'RFQ-QA-0004');
+    const rq4 = rfqs.items.find(r => r.folio === 'RFQ-QA-0004') || (await api('/api/v1/quotes/rfqs?page=1&page_size=50&q=RFQ-QA-0004')).items.find(r => r.folio === 'RFQ-QA-0004');
     const docText = flat(await page.getByTestId('rfq-doc').frameLocator('iframe').locator('body').innerText());
     check('RFQ registrada: folio, proveedor, requisición, partida y sin precios', ['RFQ-QA-0004', rq4.supplier_name, rq4.requisition, 'Material sintético', 'no incluye precios', 'SOLICITUD DE COTIZACIÓN'].every(x => docText.includes(x)) && !/\$\d|precio unitario/i.test(docText) && !docText.includes('NO REGISTRADA'), docText.slice(0, 300));
     check('RFQ registrada aislada en iframe sandbox', (await page.getByTestId('rfq-doc').locator('iframe').getAttribute('sandbox')) === '');
@@ -268,7 +268,8 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.locator('[data-testid="sqm-row"][data-folio="COT-QA-0004"]').waitFor();
     const r4 = flat(await page.locator('[data-testid="sqm-row"][data-folio="COT-QA-0004"]').innerText());
     await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill('');
-    const q4 = sqs.items.find(x => x.folio === 'COT-QA-0004');
+    // Los datos sintéticos crecen con las pruebas de escritura: si no está en la primera página se busca por folio.
+    const q4 = sqs.items.find(x => x.folio === 'COT-QA-0004') || (await api('/api/v1/quotes/supplier-quotes?page=1&page_size=50&q=COT-QA-0004')).items.find(x => x.folio === 'COT-QA-0004');
     check('cotización adjudicada: proveedor, total y estatus', [q4.supplier_name.toUpperCase(), usd(q4.total_amount), 'Adjudicada'].every(x => r4.includes(x)), r4);
     const sup = sqs.summary.suppliers.find(s => s.total > 1) || sqs.summary.suppliers[0];
     const bySup = page.waitForResponse(r => new RegExp(`supplier=${sup.id}`).test(r.url()));
@@ -374,7 +375,9 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
       await page.getByRole('combobox', { name: 'Requisición del cliente' }).selectOption(blocked6.req.id);
       await page.getByTestId('cq-block').waitFor();
       const b6 = flat(await page.getByTestId('cq-block').innerText());
-      check('requisición con cotización existente (importada/enviada): no se crea otra; nueva revisión con «Solicitar modificación»', b6.includes(`ya tiene la cotización ${blocked6.cmp.customer_quote.folio}`) && b6.includes('Solicitar modificación')
+      const imp6 = !!blocked6.cmp.customer_quote.imported;
+      check(`requisición con cotización existente (${imp6 ? 'importada: expediente en consulta, se recaptura la requisición' : 'nueva revisión con «Solicitar modificación»'}): no se crea otra`, b6.includes(`ya tiene la cotización ${blocked6.cmp.customer_quote.folio}`)
+        && (imp6 ? b6.includes('importada del sistema original') && b6.includes('Registro de requisición') : b6.includes('nueva revisión se origina con «Solicitar modificación»'))
         && await page.getByRole('button', { name: /Guardar cotización al cliente/ }).isDisabled() && (await page.getByRole('textbox', { name: 'Revisión' }).inputValue()) === String(blocked6.cmp.customer_quote.revision + 1), b6);
     }
     await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer6.key);
@@ -821,7 +824,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     const heads11 = (await page.getByTestId('sqm-matrix').locator('thead th').allInnerTexts()).map(x => flat(x).toUpperCase());
     check('matriz: 12 columnas del diseño', JSON.stringify(heads11) === JSON.stringify(['FOLIO', 'REQUISICIÓN', 'REFERENCIA INTERNA', 'PROVEEDOR', 'TOTAL', 'ENTREGA', 'TÉCNICO', 'DOCUMENTAL', 'PUNTAJE', 'ESTATUS', 'PDF COTIZACIÓN', 'ACCIONES']), heads11.join('|'));
     const r11 = f => page.locator(`[data-testid="sqm-row"][data-folio="${f}"]`);
-    const x4 = m11.items.find(x => x.id === q4.id);
+    const x4 = m11.items.find(x => x.id === q4.id) || (await api(`/api/v1/quotes/supplier-quotes?page=1&page_size=50&q=${q4.folio}`)).items.find(x => x.id === q4.id);
     const cmp4 = await api(`/api/v1/quotes/comparison?requisition=${x4.requisition_id}`);
     // Las pruebas de escritura agregan cotizaciones sintéticas: la fila se busca por folio (no se asume la página 1).
     await page.getByRole('searchbox', { name: 'Buscar en la matriz' }).fill(q4.folio);

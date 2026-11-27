@@ -74,6 +74,13 @@ enviar a revisión, autorizar, emitir/enviar al cliente y registrar su decisión
 - **Un borrador por requisición.** Si la requisición ya tiene una cotización al cliente que **no** es un borrador de
   SupplyFlow (importada, enviada, aprobada…), la tarjeta muestra el bloqueo y deshabilita Guardar; el servidor responde
   `409 CUSTOMER_QUOTE_EXISTS`. Una nueva revisión se origina con **«Solicitar modificación»** (R3A, tarjetas 1 u 8).
+- **Cotizaciones importadas, también las que siguen en «Borrador»** (decisión del usuario, 27 nov 2026): **no** se
+  continúan en la tarjeta 6; pasan por «Solicitar modificación». Como R3A solo aplica a requisiciones capturadas en
+  SupplyFlow (las importadas responden «Expediente histórico importado: permanece en consulta»), en la práctica se
+  conservan como expediente de consulta. Para continuar ese proceso se captura la requisición en **«Registro de
+  requisición»** y se sigue el flujo (validación, RFQ, cotizaciones) hasta esta tarjeta. «Crear desde historial» no
+  sirve aquí: solo toma cotizaciones **aprobadas**. La tarjeta y el servidor muestran este mensaje específico cuando
+  la cotización existente es importada.
 - Si ya tiene su borrador de SupplyFlow, la tarjeta lo **abre en modo edición** (banner *Editando el borrador … versión N*)
   y `PUT` lo actualiza con `If-Match` = versión; un alta duplicada responde `409 DRAFT_EXISTS`.
 - Edición: solo borradores de SupplyFlow sin enviar (`IMPORTED_READ_ONLY`, `NOT_A_DRAFT` en otro caso). Sin `If-Match`
@@ -104,7 +111,7 @@ tipo de cambio sintético en `CQ-QA-0001-R1` para ejercitar el nivel de aprobaci
 | --- | --- |
 | `node --test tests/frontend/customer_quote_builder.test.mjs` | 12/12 |
 | `tests/frontend/quotes_ui_e2e.cjs` (aborta toda escritura; el POST del borrador se corta y no se da por guardado) | 237/237 |
-| `tests/customer_quote_write_http_check.py` (escribe en la base sintética) | 34/34 |
+| `tests/customer_quote_write_http_check.py` (escribe en la base sintética) | 35/35 |
 | `tests/frontend/customer_quote_write_ui_e2e.cjs` (escribe en la base sintética) | 26/26 |
 | `tests/quotewrite_contract_check.py` | 11/11 |
 | `tests/quotes_http_check.py` | 91/91 |

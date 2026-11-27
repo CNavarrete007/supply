@@ -154,12 +154,21 @@ export function cqFromDraft(draft, compLines = [], f = {}) {
   return { form, lines };
 }
 
-/** Why the requisition cannot get a new draft here ('' = it can): it already has a client quote that is not a SupplyFlow draft. */
+/**
+ * Why the requisition cannot get a new draft here ('' = it can): it already has a client quote that is not a SupplyFlow draft.
+ * Decisión del usuario (27 nov 2026): las existentes pasan por «Solicitar modificación» (R3A). R3A solo aplica a requisiciones
+ * capturadas en SupplyFlow; una cotización importada (incluidas las que siguen en «Borrador») se conserva en consulta.
+ */
 export function cqExistingBlock(prior, en = false) {
   if (!prior || prior.editable_draft) return '';
   const m = (es, e) => (en ? e : es);
-  return m(`La requisición ya tiene la cotización ${t(prior.folio)} (Rev. ${prior.revision} · ${t(prior.legacy_status) || t(prior.document_status)}). No se crea otra: una nueva revisión se origina con «Solicitar modificación» (tarjetas 1 u 8); las importadas se conservan como expediente.`,
-    `The requisition already has quote ${t(prior.folio)} (Rev. ${prior.revision}). No other is created: a new revision starts with "Request modification" (cards 1 or 8).`);
+  const q = `${t(prior.folio)} (Rev. ${prior.revision} · ${t(prior.legacy_status) || t(prior.document_status)})`;
+  if (prior.imported) {
+    return m(`La requisición ya tiene la cotización ${q}, importada del sistema original: se conserva como expediente en consulta y no se crea otra. «Solicitar modificación» solo aplica a requisiciones capturadas en SupplyFlow; para continuar este proceso, captura la requisición en «Registro de requisición» y sigue el flujo (validación, RFQ y cotizaciones) hasta esta tarjeta.`,
+      `The requisition already has quote ${q}, imported from the original system: it is kept as a read-only record and no other is created. "Request modification" only applies to requisitions captured in SupplyFlow; to continue this process, capture the requisition in "Requisition record" and follow the flow (validation, RFQ and quotes) up to this card.`);
+  }
+  return m(`La requisición ya tiene la cotización ${q}. No se crea otra: una nueva revisión se origina con «Solicitar modificación» (tarjetas 1 u 8).`,
+    `The requisition already has quote ${q}. No other is created: a new revision starts with "Request modification" (cards 1 or 8).`);
 }
 
 export function cqSavedText(out, en = false) {

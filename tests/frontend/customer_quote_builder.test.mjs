@@ -112,8 +112,13 @@ test('abrir el borrador registrado: formulario y partidas sobre el comparativo v
 test('cotización existente: importada/enviada bloquea; borrador de SupplyFlow se edita', () => {
   assert.equal(cqExistingBlock(null), ''); assert.equal(cqExistingBlock({ editable_draft: true, folio: 'COT-1', revision: 0 }), '');
   const b = cqExistingBlock({ editable_draft: false, folio: 'COT-2025-0001', revision: 1, legacy_status: 'Enviada' });
-  assert.match(b, /COT-2025-0001 \(Rev\. 1 · Enviada\)/); assert.match(b, /Solicitar modificación/);
+  assert.match(b, /COT-2025-0001 \(Rev\. 1 · Enviada\)/); assert.match(b, /nueva revisión se origina con «Solicitar modificación»/);
   assert.match(cqExistingBlock({ folio: 'X', revision: 0 }, true), /Request modification/);
+  // Importada (aunque siga en «Borrador»): expediente en consulta; R3A no aplica; se recaptura la requisición.
+  const i = cqExistingBlock({ editable_draft: false, imported: true, folio: 'COT-2025-0002', revision: 0, legacy_status: 'Borrador' });
+  assert.match(i, /COT-2025-0002 \(Rev\. 0 · Borrador\), importada del sistema original: se conserva como expediente en consulta/);
+  assert.match(i, /solo aplica a requisiciones capturadas en SupplyFlow/); assert.match(i, /Registro de requisición/);
+  assert.doesNotMatch(i, /nueva revisión se origina/);
 });
 
 test('mensajes de resultado y errores del servidor', () => {

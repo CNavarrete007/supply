@@ -161,7 +161,7 @@ automáticamente si existe su secreto.
 | Prueba | Tipo | Resultado (sandbox sintético) |
 |---|---|---|
 | `tests/rfq_write_http_check.py` | HTTP, **escribe** (`SF_SYNTHETIC_WRITES=1`); crea sus requisiciones y validaciones por la API | 36/36 |
-| `tests/customer_quote_write_http_check.py` | HTTP, **escribe**: borrador de la cotización al cliente (fórmula, monedas, idempotencia, 409/412/428/422, sin rutas de emisión) | 34/34 |
+| `tests/customer_quote_write_http_check.py` | HTTP, **escribe**: borrador de la cotización al cliente (fórmula, monedas, idempotencia, 409/412/428/422, sin rutas de emisión) | 35/35 |
 | `tests/frontend/customer_quote_write_ui_e2e.cjs` | Navegador, **escribe**: borrador desde la tarjeta 6 con fallo de red y reintento, edición con If-Match, 412 con recarga y tarjeta 8 | 26/26 |
 | `tests/frontend/rfq_write_ui_e2e.cjs` | Navegador, **escribe**: RFQ en Borrador con fallo de red y reintento con la misma clave, otra Enviada, Marcar enviada (If-Match) y disponibilidad en la tarjeta 4 | 19/19 |
 | `tests/supplier_quote_write_http_check.py` | HTTP, **escribe**; registra sus propias RFQ por la API | 41/41 |
