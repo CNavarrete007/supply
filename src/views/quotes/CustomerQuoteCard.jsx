@@ -54,12 +54,23 @@ export function CustomerQuoteCard({ en = false, notify, onMatrix, refresh = 0 })
   // A newly loaded requisition brings its items/costs, currency, delivery place and the next revision number.
   useEffect(() => {
     if (!R) return;
-    setLines(linesFromComparison(comp.data.lines));
+    setLines(linesFromComparison(comp.data.lines, form));
     setForm(f => ({ ...f, currency: CURRENCIES.some(c => c[0] === R.currency) ? R.currency : f.currency, delivery_place: f.delivery_place || R.delivery_place || '', revision: String(prior?.editable_draft ? prior.revision : prior ? prior.revision + 1 : 0), status: CQ_SAVE_STATUS }));
   }, [R?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // The registered draft fills the form and the lines (costs keep coming from the current award / registered offer).
-  const applyDraft = () => { if (!base || !comp.data) return; setForm(f => cqFromDraft(draft.data, [], f).form); setLines(cqFromDraft(draft.data, linesFromComparison(comp.data.lines)).lines); setTouched({}); setSrvErr({}); };
+  const applyDraft = () => {
+    if (!base || !comp.data) return;
+    const df = cqFromDraft(draft.data, [], form).form; // los tipos de cambio con que se guardó el borrador eligen la mejor oferta
+    setForm(f => cqFromDraft(draft.data, [], f).form); setLines(cqFromDraft(draft.data, linesFromComparison(comp.data.lines, df)).lines); setTouched({}); setSrvErr({});
+  };
   useEffect(() => { applyDraft(); }, [base?.id, base?.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Al cambiar el tipo de cambio se recalcula qué oferta es la mejor (en MXN) sin tocar lo capturado (margen, manipulación, marca).
+  useEffect(() => {
+    if (!comp.data || !R) return;
+    const fresh = Object.fromEntries(linesFromComparison(comp.data.lines, form).map(x => [x.key, x]));
+    setLines(ls => ls.map(l => { const n = fresh[l.key]; return n && l.source === 'offer' && n.source === 'offer' && n.quote_id !== l.quote_id
+      ? { ...l, quote_id: n.quote_id, cost_unit: n.cost_unit, cost_currency: n.cost_currency, supplier: n.supplier } : l; }));
+  }, [form.usd_mxn, form.eur_mxn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const v = useMemo(() => validateCq(form, lines, en), [form, lines, en]);
   const totals = useMemo(() => cqTotals(lines, form), [lines, form]);

@@ -402,7 +402,7 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     await page.getByRole('combobox', { name: 'Comprador', exact: true }).selectOption({ index: 1 });
     await page.getByLabel('Service Fee %').fill('5');
     const f6 = { ...cqModel.emptyCq('2026-01-01'), currency: await page.getByRole('combobox', { name: 'Moneda de cotización / cliente' }).inputValue(), usd_mxn: await page.getByRole('textbox', { name: '1 USD = MXN' }).inputValue(), eur_mxn: await page.getByRole('textbox', { name: '1 EUR = MXN' }).inputValue(), sf_pct: '5' };
-    const priced6 = lines6.map(l => ({ ...l, margin: '20', handling: '150' }));
+    const priced6 = cqModel.linesFromComparison(cmp6.lines, f6).map(l => ({ ...l, margin: '20', handling: '150' })); // mejor oferta en MXN con el tipo de cambio de la tarjeta
     const t6 = cqModel.cqTotals(priced6, f6);
     const fmt6 = n => n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     check('precio de venta por partida calculado', flat(await page.getByTestId('cq-line').first().innerText()).includes(usd(cqModel.priceLine(priced6[0], f6).unit).replace('USD', f6.currency)), flat(await page.getByTestId('cq-line').first().innerText()));

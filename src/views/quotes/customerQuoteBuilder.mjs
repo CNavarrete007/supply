@@ -35,10 +35,22 @@ export function convert(amount, from, to, f) {
 }
 
 /** Lines from GET /api/v1/quotes/comparison?requisition=: cost of the current award, else the best offer, else none. */
-export function linesFromComparison(lines = []) {
+/**
+ * Mejor oferta registrada de una partida: el menor precio unitario. Si las ofertas vienen en monedas distintas se comparan
+ * convertidas a MXN con los tipos de cambio de la tarjeta (antes se comparaba el número sin moneda: 70 USD «ganaba» a
+ * 1,200 MXN). Una oferta en una moneda sin tipo de cambio válido no se puede comparar y queda fuera.
+ */
+export function bestOffer(offers = [], rates = null) {
+  const same = new Set(offers.map(o => o.currency || '')).size <= 1;
+  const mxn = o => { const r = !o.currency || o.currency === 'MXN' ? 1 : o.currency === 'USD' ? num(rates?.usd_mxn) : o.currency === 'EUR' ? num(rates?.eur_mxn) : null; return r && r > 0 ? num(o.unit_price) * r : null; };
+  return offers.map(o => ({ o, v: same ? num(o.unit_price) : mxn(o) })).filter(x => x.v !== null).sort((a, b) => a.v - b.v)[0]?.o;
+}
+
+/** Partidas vigentes con su costo: adjudicación vigente o, si no hay, la mejor oferta (`rates`: { usd_mxn, eur_mxn }). */
+export function linesFromComparison(lines = [], rates = null) {
   return lines.filter(l => !l.line_status || l.line_status === 'active').map(l => {
     const offers = (l.offers || []).filter(o => o.offered && num(o.unit_price) !== null);
-    const best = [...offers].sort((a, b) => num(a.unit_price) - num(b.unit_price))[0];
+    const best = bestOffer(offers, rates);
     const src = l.award ? { source: 'award', qty: l.award.quantity, cost: l.award.unit_price, currency: l.award.currency, supplier: l.award.supplier_name, quote_id: l.award.quote_id || '' }
       : best ? { source: 'offer', qty: l.quantity, cost: best.unit_price, currency: best.currency, supplier: best.supplier_name, quote_id: best.quote_id || '' } : { source: 'none', qty: l.quantity, cost: '', currency: '', supplier: '', quote_id: '' };
     return { key: l.id, line_number: l.line_number, description: l.description, brand_model: '', unit: l.unit_label, category: l.category || '', qty: normQty(src.qty), cost_unit: src.cost === '' ? '' : String(Number(src.cost)),

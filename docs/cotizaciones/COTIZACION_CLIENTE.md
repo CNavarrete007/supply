@@ -19,6 +19,12 @@ reutiliza `customerQuoteHtml` (ahora con comentarios y modo vista previa).
 
 - **Costo del producto** por partida: precio unitario de la adjudicación vigente; si no hay, la mejor oferta registrada;
   si no hay oferta, "sin costo" (bloquea la validación). Se muestra el costo original y su moneda.
+- **Mejor oferta con monedas distintas** (corregido el 27 nov 2026): si las ofertas de una partida vienen en monedas
+  distintas se comparan **convertidas a MXN** con el tipo de cambio de la tarjeta; antes se comparaba el número sin moneda
+  (70 USD «ganaba» a 1,200 MXN aunque a 18 equivale a 1,260 MXN). Al cambiar el tipo de cambio o pulsar «Actualizar tipo de
+  cambio» se vuelve a elegir la mejor oferta sin borrar margen, manipulación ni marca; una oferta en una moneda sin tipo de
+  cambio válido no se compara. El tipo de cambio inicial es 1: captúralo (o actualízalo desde MariaDB) antes de guardar
+  cuando haya costos en USD/EUR.
 - **Conversión**: los costos se convierten a la moneda del cliente vía MXN con *1 USD = MXN* y *1 EUR = MXN*.
   "Actualizar tipo de cambio" carga el último registrado en MariaDB (con su folio de origen); si no hay, se captura a mano.
 - **Precio venta unitario** = (costo convertido × cantidad + entrega/manipulación de la partida) × (1 + % margen) ÷

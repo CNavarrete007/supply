@@ -88,7 +88,7 @@ const fmt = n => Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, m
       && await page.getByRole('combobox', { name: 'Estatus' }).isDisabled() && (await page.getByRole('combobox', { name: 'Estatus' }).inputValue()) === 'Borrador'
       && await page.getByTestId('cq-block').count() === 0 && await page.getByTestId('cq-edit-banner').count() === 0);
     // Captura: margen, manipulación, marca, comprador, tipo de cambio USD y Service Fee.
-    const lines = cq.linesFromComparison(cmp.lines);
+    const lines = cq.linesFromComparison(cmp.lines, { usd_mxn: '18.5' }); // la tarjeta elige la mejor oferta en MXN con el tipo de cambio capturado
     await page.getByLabel('% margen partida 1').fill('20'); await page.getByLabel('Entrega / manipulación partida 1').fill('150'); await page.getByLabel('Marca / modelo partida 1').fill(`ACME UI ${RUN}`);
     await page.getByLabel('% margen partida 2').fill('10');
     await page.getByRole('combobox', { name: 'Comprador', exact: true }).selectOption({ index: 1 });

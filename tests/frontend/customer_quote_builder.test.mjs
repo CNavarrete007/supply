@@ -1,7 +1,7 @@
 // Cotizaciones › Cotización formal al cliente · lógica pura. node --test tests/frontend/customer_quote_builder.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyCq, addDays, convert, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData, CQ_STATUSES, DEFAULT_PDF_NOTES, CQ_SAVE_STATUS, cqPayload, cqFromDraft, cqExistingBlock, cqSavedText, cqSaveError, cqReqOption, cqReqSummary } from '../../src/views/quotes/customerQuoteBuilder.mjs';
+import { emptyCq, addDays, convert, linesFromComparison, priceLine, cqTotals, approvalLevel, validateCq, previewData, CQ_STATUSES, DEFAULT_PDF_NOTES, CQ_SAVE_STATUS, cqPayload, cqFromDraft, cqExistingBlock, cqSavedText, cqSaveError, cqReqOption, cqReqSummary, bestOffer } from '../../src/views/quotes/customerQuoteBuilder.mjs';
 import { customerQuoteHtml } from '../../src/views/quotes/model.mjs';
 
 const f0 = { ...emptyCq('2026-09-24'), buyer: 'b', requisition: 'r', preparer: 'u', currency: 'USD', usd_mxn: '17.25', eur_mxn: '18.9', sf_pct: '5' };
@@ -147,4 +147,17 @@ test('selector de requisiciones: anticipa si se puede guardar', () => {
   assert.deepEqual(cqReqOption(r({ unquoted_items: 8 })), { label: 'REQ-1 - ACME · 8 partida(s) sin costo', kind: 'uncosted' });
   const items = [r(), r({ customer_quote: { folio: 'A', imported: true } }), r({ customer_quote: { folio: 'B', imported: true } }), r({ unquoted_items: 2 }), r({ customer_quote: { folio: 'C', editable_draft: true } })];
   assert.equal(cqReqSummary(items, 5), '5 requisición(es) con cotizaciones de proveedor: 2 se pueden guardar; 1 con borrador para editar; 1 con partidas sin costo (registra la cotización del proveedor en la tarjeta 4); 2 ya tienen cotización al cliente (se abren solo para consulta).');
+});
+
+test('mejor oferta con monedas distintas: se compara en MXN con el tipo de cambio de la tarjeta', () => {
+  const A = { quote_id: 'A', offered: true, unit_price: '1200', currency: 'MXN', supplier_name: 'Aceros' };
+  const B = { quote_id: 'B', offered: true, unit_price: '70', currency: 'USD', supplier_name: 'Bombas' };
+  assert.equal(bestOffer([A, B], { usd_mxn: '18' }).quote_id, 'A', '70 USD = 1,260 MXN > 1,200 MXN');
+  assert.equal(bestOffer([A, B], { usd_mxn: '17' }).quote_id, 'B', '70 USD = 1,190 MXN < 1,200 MXN');
+  assert.equal(bestOffer([A, B], { usd_mxn: '' }).quote_id, 'A', 'sin tipo de cambio USD la oferta en USD no se puede comparar');
+  assert.equal(bestOffer([B, { ...B, quote_id: 'C', unit_price: '65' }]).quote_id, 'C', 'misma moneda: precio directo, sin tipo de cambio');
+  assert.equal(bestOffer([]), undefined);
+  const cmp = [{ id: 'x', line_number: 1, description: 'Bomba', quantity: '2', unit_label: 'pza', line_status: 'active', award: null, offers: [A, B] }];
+  assert.deepEqual(linesFromComparison(cmp, { usd_mxn: '18' }).map(l => [l.quote_id, l.cost_unit, l.cost_currency]), [['A', '1200', 'MXN']]);
+  assert.deepEqual(linesFromComparison(cmp, { usd_mxn: '17' }).map(l => [l.quote_id, l.cost_unit, l.cost_currency]), [['B', '70', 'USD']]);
 });
