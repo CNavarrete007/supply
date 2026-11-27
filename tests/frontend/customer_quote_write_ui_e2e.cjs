@@ -80,7 +80,7 @@ const fmt = n => Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, m
     await buyerSel.selectOption(det.item.buyer_key);
     const reqSel = page.getByRole('combobox', { name: 'Requisición del cliente' });
     await reqSel.locator(`option[value="${req.id}"]`).waitFor({ state: 'attached', timeout: 15000 });
-    check('selector: la requisición sintética se ofrece para guardar (sin marca de bloqueo)', !(await reqSel.locator(`option[value="${req.id}"]`).evaluate(e => e.disabled)) && (await reqSel.locator(`option[value="${req.id}"]`).getAttribute('data-kind')) === 'new');
+    check('selector: la requisición sintética se ofrece para guardar (sin marca de bloqueo)', (await reqSel.locator(`option[value="${req.id}"]`).getAttribute('data-kind')) === 'new');
     await reqSel.selectOption(req.id);
     await page.getByTestId('cq-line').nth(1).waitFor();
     check('nueva captura: Rev. 0, folio automático, estatus Borrador fijo, sin bloqueo ni edición',

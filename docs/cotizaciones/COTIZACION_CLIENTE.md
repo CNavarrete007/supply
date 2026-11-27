@@ -56,10 +56,10 @@ Antes de elegir, cada requisición del selector indica qué pasará al guardar:
 | `REQ - Cliente` | Se puede guardar un borrador nuevo |
 | `· borrador COT-… (editar)` | Ya tiene su borrador de SupplyFlow: se abre para editarlo |
 | `· N partida(s) sin costo` | Seleccionable para revisarla, pero no se guarda hasta registrar la cotización del proveedor (tarjeta 4) de esas partidas |
-| `· ya tiene COT-… (importada, solo consulta)` / `(estatus)` | **Deshabilitada**: ya tiene cotización al cliente; se consulta en las tarjetas 7 y 8 |
+| `· ya tiene COT-… (importada, solo consulta)` / `(estatus, solo consulta)` | Ya tiene cotización al cliente: se puede abrir para ver el cálculo y la vista previa, pero muestra el aviso de bloqueo y **Guardar queda deshabilitado** (no se crea otra). Al principio aparecía deshabilitada en el selector; el 27 nov se volvió a habilitar a petición del usuario |
 
 Debajo, un resumen: «N requisición(es) con cotizaciones de proveedor: X se pueden guardar; Y con partidas sin costo; Z ya
-tienen cotización al cliente». Motivo: con datos importados, la mayoría de las requisiciones con cotización de proveedor
+tienen cotización al cliente (se abren solo para consulta)». Motivo: con datos importados, la mayoría de las requisiciones con cotización de proveedor
 ya tienen su cotización al cliente, y el selector no lo mostraba hasta elegirlas.
 
 ## Guardado como borrador interno (26 nov 2026)
@@ -125,7 +125,7 @@ tipo de cambio sintético en `CQ-QA-0001-R1` para ejercitar el nivel de aprobaci
 | Prueba | Resultado |
 | --- | --- |
 | `node --test tests/frontend/customer_quote_builder.test.mjs` | 13/13 |
-| `tests/frontend/quotes_ui_e2e.cjs` (aborta toda escritura; el POST del borrador se corta y no se da por guardado) | 238/238 |
+| `tests/frontend/quotes_ui_e2e.cjs` (aborta toda escritura; el POST del borrador se corta y no se da por guardado) | 239/239 |
 | `tests/customer_quote_write_http_check.py` (escribe en la base sintética) | 37/37 |
 | `tests/frontend/customer_quote_write_ui_e2e.cjs` (escribe en la base sintética) | 28/28 |
 | `tests/quotewrite_contract_check.py` | 11/11 |

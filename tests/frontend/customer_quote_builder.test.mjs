@@ -138,13 +138,13 @@ test('mensajes de resultado y errores del servidor', () => {
 
 test('selector de requisiciones: anticipa si se puede guardar', () => {
   const r = (x = {}) => ({ id: 'r', folio: 'REQ-1', client_name: 'ACME', unquoted_items: 0, customer_quote: null, ...x });
-  assert.deepEqual(cqReqOption(r()), { label: 'REQ-1 - ACME', disabled: false, kind: 'new' });
+  assert.deepEqual(cqReqOption(r()), { label: 'REQ-1 - ACME', kind: 'new' });
   assert.deepEqual(cqReqOption(r({ customer_quote: { folio: 'COT-2025-0007', imported: true, editable_draft: false, status: 'Borrador' } })),
-    { label: 'REQ-1 - ACME · ya tiene COT-2025-0007 (importada, solo consulta)', disabled: true, kind: 'locked' });
-  assert.equal(cqReqOption(r({ customer_quote: { folio: 'COT-2026-0009', imported: false, editable_draft: false, status: 'Enviada al cliente' } })).label, 'REQ-1 - ACME · ya tiene COT-2026-0009 (Enviada al cliente)');
-  assert.equal(cqReqOption(r({ customer_quote: { folio: 'CQ-1', imported: false, editable_draft: false, status: 'issued' } })).label, 'REQ-1 - ACME · ya tiene CQ-1 (Emitida)', 'código → etiqueta en español');
-  assert.deepEqual(cqReqOption(r({ customer_quote: { folio: 'COT-2026-0010', imported: false, editable_draft: true } })), { label: 'REQ-1 - ACME · borrador COT-2026-0010 (editar)', disabled: false, kind: 'draft' });
-  assert.deepEqual(cqReqOption(r({ unquoted_items: 8 })), { label: 'REQ-1 - ACME · 8 partida(s) sin costo', disabled: false, kind: 'uncosted' });
+    { label: 'REQ-1 - ACME · ya tiene COT-2025-0007 (importada, solo consulta)', kind: 'locked' });
+  assert.equal(cqReqOption(r({ customer_quote: { folio: 'COT-2026-0009', imported: false, editable_draft: false, status: 'Enviada al cliente' } })).label, 'REQ-1 - ACME · ya tiene COT-2026-0009 (Enviada al cliente, solo consulta)');
+  assert.equal(cqReqOption(r({ customer_quote: { folio: 'CQ-1', imported: false, editable_draft: false, status: 'issued' } })).label, 'REQ-1 - ACME · ya tiene CQ-1 (Emitida, solo consulta)', 'código → etiqueta en español');
+  assert.deepEqual(cqReqOption(r({ customer_quote: { folio: 'COT-2026-0010', imported: false, editable_draft: true } })), { label: 'REQ-1 - ACME · borrador COT-2026-0010 (editar)', kind: 'draft' });
+  assert.deepEqual(cqReqOption(r({ unquoted_items: 8 })), { label: 'REQ-1 - ACME · 8 partida(s) sin costo', kind: 'uncosted' });
   const items = [r(), r({ customer_quote: { folio: 'A', imported: true } }), r({ customer_quote: { folio: 'B', imported: true } }), r({ unquoted_items: 2 }), r({ customer_quote: { folio: 'C', editable_draft: true } })];
-  assert.equal(cqReqSummary(items, 5), '5 requisición(es) con cotizaciones de proveedor: 2 se pueden guardar; 1 con borrador para editar; 1 con partidas sin costo (registra la cotización del proveedor en la tarjeta 4); 2 ya tienen cotización al cliente (consulta en tarjetas 7 y 8).');
+  assert.equal(cqReqSummary(items, 5), '5 requisición(es) con cotizaciones de proveedor: 2 se pueden guardar; 1 con borrador para editar; 1 con partidas sin costo (registra la cotización del proveedor en la tarjeta 4); 2 ya tienen cotización al cliente (se abren solo para consulta).');
 });

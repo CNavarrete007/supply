@@ -369,14 +369,20 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
     }
     check('cotización al cliente: requisiciones del comprador con cotizaciones de proveedor', reqs6 && reqs6.items.every(r => r.quote_count > 0));
     if (blocked6) {
-      // El selector anticipa el bloqueo: la requisición que ya tiene cotización al cliente (importada/enviada) aparece deshabilitada con el motivo.
+      // El selector anticipa el bloqueo («ya tiene … solo consulta») pero la requisición se puede abrir: aviso de bloqueo y Guardar deshabilitado.
       await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(blocked6.buyer.key);
       await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Requisición del cliente"] option').length === n + 1, blocked6.list.items.length);
       const opt6 = page.locator(`select[aria-label="Requisición del cliente"] option[value="${blocked6.req.id}"]`);
       const o6 = flat(await opt6.innerText()); const q6 = blocked6.cmp.customer_quote;
-      check(`selector: requisición con cotización existente deshabilitada («ya tiene ${q6.folio}${q6.imported ? ' (importada, solo consulta)' : ''}»)`, await opt6.evaluate(e => e.disabled) && o6.includes(`ya tiene ${q6.folio}`) && (q6.imported ? o6.includes('importada, solo consulta') : !/\((issued|draft|sent|superseded)\)/.test(o6)), o6);
+      check(`selector: requisición con cotización existente marcada y seleccionable («ya tiene ${q6.folio} … solo consulta»)`, !(await opt6.evaluate(e => e.disabled)) && o6.includes(`ya tiene ${q6.folio}`) && o6.includes('solo consulta') && !/\((issued|draft|sent|superseded)[,)]/.test(o6), o6);
       const sum6 = flat(await page.getByRole('combobox', { name: 'Requisición del cliente' }).locator('xpath=ancestor::label').innerText());
-      check('selector: resumen de cuántas se pueden guardar y cuántas ya tienen cotización', sum6.includes('se pueden guardar') && sum6.includes('ya tienen cotización al cliente (consulta en tarjetas 7 y 8)'), sum6);
+      check('selector: resumen de cuántas se pueden guardar y cuántas ya tienen cotización', sum6.includes('se pueden guardar') && sum6.includes('ya tienen cotización al cliente (se abren solo para consulta)'), sum6);
+      await page.getByRole('combobox', { name: 'Requisición del cliente' }).selectOption(blocked6.req.id);
+      await page.getByTestId('cq-block').waitFor();
+      const b6 = flat(await page.getByTestId('cq-block').innerText());
+      check(`al abrirla: aviso de bloqueo (${q6.imported ? 'importada: expediente en consulta, se recaptura la requisición' : 'nueva revisión con «Solicitar modificación»'}) y Guardar deshabilitado`, b6.includes(`ya tiene la cotización ${q6.folio}`)
+        && (q6.imported ? b6.includes('importada del sistema original') && b6.includes('Registro de requisición') : b6.includes('nueva revisión se origina con «Solicitar modificación»'))
+        && await page.getByRole('button', { name: /Guardar cotización al cliente/ }).isDisabled() && await page.getByTestId('cq-line').count() > 0, b6);
     }
     await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer6.key);
     await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Requisición del cliente"] option').length === n + 1, reqs6.items.length);
