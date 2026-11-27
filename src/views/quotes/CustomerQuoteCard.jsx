@@ -109,6 +109,8 @@ export function CustomerQuoteCard({ en = false, notify, onMatrix, refresh = 0 })
     notify?.(tx('Cotización no guardada', 'Quote not saved'), e.text, 'warning');
   };
   useEffect(() => { if (msg && msg.kind !== 'info') setTimeout(() => document.querySelector('[data-testid="cq-result"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 0); }, [msg]);
+  const saveOff = saving ? tx('Guardando…', 'Saving…') : block ? tx('No se guarda: la requisición ya tiene cotización al cliente (ver aviso arriba).', 'Not saved: the requisition already has a client quote (see notice above).')
+    : prior?.editable_draft && !base ? (draft.error ? tx('No se pudo abrir el borrador guardado; vuelve a seleccionar la requisición.', 'The saved draft could not be opened; select the requisition again.') : tx('Abriendo el borrador guardado…', 'Opening the saved draft…')) : '';
   const preparerRec = (S.contacts || []).find(c => c.id === form.preparer); const preparerName = preparerRec?.name || '';
   const docHtml = useMemo(() => (preview ? quoteDocHtml(docModel(previewData({ form, lines, totals, req: R, preparerName, preparerPosition: preparerRec?.position || '', issuer: cqSetup.data?.issuer, en }), en), en, { preview: true, logoUrl: `${window.location.origin}/image_923273.svg` }).html : ''), [preview, form, lines, totals, R, preparerName, preparerRec, cqSetup.data, en]);
   const print = () => {
@@ -141,6 +143,7 @@ export function CustomerQuoteCard({ en = false, notify, onMatrix, refresh = 0 })
     {base && <div data-testid="cq-edit-banner" className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/70 text-xs text-indigo-950"><strong>{tx('Editando el borrador', 'Editing draft')} {base.folio}</strong> · Rev. {base.revision} · {tx('versión', 'version')} {base.version} · {tx('borrador interno: no se ha enviado a revisión ni al cliente.', 'internal draft: not sent for review nor to the client.')}</div>}
     {block && <p role="alert" data-testid="cq-block" className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs"><Lock className="w-4 h-4 shrink-0 mt-0.5" /><span>{block}</span></p>}
     {(setup.error || cqSetup.error || reqs.error || comp.error) && <p role="alert" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{(setup.error || cqSetup.error || reqs.error || comp.error).message}</p>}
+    {prior?.editable_draft && draft.error && <p role="alert" data-testid="cq-draft-error" className="text-xs text-rose-700 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" />{tx(`No se pudo abrir el borrador ${prior.folio}: ${draft.error.message}`, `Could not open draft ${prior.folio}: ${draft.error.message}`)}</p>}
 
     <div className="p-5 border border-slate-200 rounded-2xl space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -246,11 +249,11 @@ export function CustomerQuoteCard({ en = false, notify, onMatrix, refresh = 0 })
     </div>}
 
     <div className="flex flex-wrap items-center gap-3 text-sm font-medium" data-testid="cq-actions">
-      <button type="button" onClick={save} disabled={saving || !!block || (prior?.editable_draft && !base)} className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"><span aria-hidden="true">{saving ? '⏳' : '💾'}</span>{tx('Guardar cotización al cliente', 'Save client quote')}</button>
+      <button type="button" onClick={save} disabled={!!saveOff} title={saveOff || undefined} className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-700 hover:to-fuchsia-700 text-white rounded-xl shadow-md flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"><span aria-hidden="true">{saving ? '⏳' : '💾'}</span>{tx('Guardar cotización al cliente', 'Save client quote')}</button>
       <button type="button" onClick={clear} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-2xs text-slate-800 flex items-center gap-2"><span aria-hidden="true">🧹</span>{tx('Limpiar', 'Clear')}</button>
       <button type="button" onClick={() => setPreview(true)} disabled={!R} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-2xs text-slate-800 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"><span aria-hidden="true">👁️</span>{tx('Vista previa', 'Preview')}</button>
       <button type="button" onClick={() => onMatrix?.()} className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-2xs text-slate-800 flex items-center gap-2"><span aria-hidden="true">📋</span>{tx('Ver matriz', 'View matrix')}</button>
-    </div>
+    {saveOff && !saving && <span data-testid="cq-save-why" className="basis-full text-[11px] text-slate-500">{saveOff}</span>}</div>
 
     {preview && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onMouseDown={e => { if (e.target === e.currentTarget) setPreview(false); }}>
       <div role="dialog" aria-modal="true" aria-label={tx('Vista previa de la cotización al cliente', 'Client quote preview')} data-testid="cq-preview" className="bg-white w-full max-w-5xl h-[92vh] rounded-xl shadow-2xl flex flex-col overflow-hidden">

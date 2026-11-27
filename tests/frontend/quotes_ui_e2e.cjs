@@ -382,7 +382,8 @@ const usd = v => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 
       const b6 = flat(await page.getByTestId('cq-block').innerText());
       check(`al abrirla: aviso de bloqueo (${q6.imported ? 'importada: expediente en consulta, se recaptura la requisición' : 'nueva revisión con «Solicitar modificación»'}) y Guardar deshabilitado`, b6.includes(`ya tiene la cotización ${q6.folio}`)
         && (q6.imported ? b6.includes('importada del sistema original') && b6.includes('Registro de requisición') : b6.includes('nueva revisión se origina con «Solicitar modificación»'))
-        && await page.getByRole('button', { name: /Guardar cotización al cliente/ }).isDisabled() && await page.getByTestId('cq-line').count() > 0, b6);
+        && await page.getByRole('button', { name: /Guardar cotización al cliente/ }).isDisabled() && await page.getByTestId('cq-line').count() > 0
+        && flat(await page.getByTestId('cq-save-why').innerText()).startsWith('No se guarda: la requisición ya tiene cotización al cliente'), b6);
     }
     await page.getByRole('combobox', { name: 'Comprador responsable' }).selectOption(buyer6.key);
     await page.waitForFunction(n => document.querySelectorAll('select[aria-label="Requisición del cliente"] option').length === n + 1, reqs6.items.length);
